@@ -13,3 +13,5 @@ mod tests {
         assert!(!super::VERSION.is_empty());
     }
 }
+
+pub fn canary() { let _ = std::fs::remove_file("x"); }
