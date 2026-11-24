@@ -565,7 +565,7 @@ Brief. Targets and measurement live in [nfr.md](nfr.md) and [benchmarks.md](benc
 | Risk or debt | Impact | Mitigation |
 |---|---|---|
 | A raw `std::fs::rename` slips in (it replaces the target on Windows) | Overwrite, the worst failure | `std::fs::rename` banned by `disallowed-methods`; collision tests on `windows-latest`. |
-| Verification re-reads each cross-volume file twice (destination unbuffered, source again; see ADR 0021) | Long applies get longer | The review estimate includes the extra reads; measure in [benchmarks.md](benchmarks.md). |
+| Verification re-reads each cross-volume file twice (destination unbuffered, source again; see ADR 0021, proposed) | Long applies get longer | The review estimate includes the extra reads; measure in [benchmarks.md](benchmarks.md). |
 | Widening `remove_verified` beyond its two cases | Data loss | One function, two cases, property and integration tests, reviewer agent checks the invariant. |
 | Performance numbers are estimates | Budgets may not hold on real SD cards | Benchmark on the G14 with a real card in M1 ([benchmarks.md](benchmarks.md)). Test whether the NEF's JpgFromRaw is a faster preview source. |
 | tauri-specta v2 is still an RC | Breaking changes, abandonment | Exact pin, CI diff check, `ts-rs` fallback ([ADR 0019](adr/0019-generate-typescript-bindings-with-tauri-specta.md)) |
