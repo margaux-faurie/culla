@@ -1,3 +1,5 @@
+> Historical input, written before the decisions were settled. Where it disagrees with `docs/SPEC.md` or an ADR, those win.
+
 # Photo Swipe Sorter — Draft Technical Spec (v0)
 
 ## 1. Goal

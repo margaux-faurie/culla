@@ -1,3 +1,5 @@
+> Historical input, written before the decisions were settled. Where it disagrees with `docs/SPEC.md` or an ADR, those win.
+
 # Critique of spec-draft v0
 
 The core idea is sound: decide everything first, review, then apply. The weak spots are undo, the pairing model and session identity. The swipe is not the differentiator. [QuickRawPicker](https://github.com/RawLabo/QuickRawPicker) (open source, cross-platform) already does keyboard culling and copies the picks along with their JPEGs and .xmp files. [Louppe](https://github.com/alexander-markin-meow/louppe/releases) (open source, Mac only) recovers interrupted moves and protects sidecars. [FastRawViewer](https://fastrawviewer.com/node/318) treats RAW+JPEG as one unit. What would make this one stand out: **a provably safe, pair- and sidecar-aware apply engine on Windows, with a review step before anything moves.** Write the spec around that.

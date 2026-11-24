@@ -1,3 +1,5 @@
+> Historical input, written before the decisions were settled. Where it disagrees with `docs/SPEC.md` or an ADR, those win.
+
 # Pre-implementation documents for Culla
 
 Research note, 24 Nov 2026. Question: which documents should exist before coding starts, and which ones are worth it for a solo OSS project of Culla's size.

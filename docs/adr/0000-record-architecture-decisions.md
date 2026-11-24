@@ -24,7 +24,7 @@ Rules:
 - One decision per file, numbered in order, never renumbered.
 - An accepted ADR is not edited in substance. A new ADR supersedes it, and the old one gets `status: superseded by NNNN`.
 - A PR that changes a recorded decision must include the superseding ADR.
-- `docs/adr/README.md` keeps the index.
+- `docs/adr/README.md` keeps the index (added with ADRs 0001+).
 
 ### Consequences
 

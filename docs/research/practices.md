@@ -1,3 +1,5 @@
+> Historical input, written before the decisions were settled. Where it disagrees with `docs/SPEC.md` or an ADR, those win.
+
 # Culla: practices research (Claude Code, security, architecture)
 
 Researched 2026-11-24. Links are the pages actually read.

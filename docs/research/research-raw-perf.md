@@ -1,3 +1,5 @@
+> Historical input, written before the decisions were settled. Where it disagrees with `docs/SPEC.md` or an ADR, those win.
+
 # Research: RAW previews, decode performance, serving, I/O, file ops (Nov 2026)
 
 ## 1. NEF previews + EXIF

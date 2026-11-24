@@ -19,7 +19,7 @@ A Windows desktop app that culls a folder of Nikon photos (JPEG + NEF) one photo
 | Apply | Queue → review screen → explicit confirm → apply |
 | RAW pairing | Per-session toggle "RAW follows JPEG". When off, the NEF is left untouched. |
 | Lone NEF | Shown via its embedded JPEG preview, sorted like any photo |
-| Sidecars | Always follow their photo (`.xmp`, `.NEF.xmp`, `.pp3`, NX Studio `NKSC_PARAM/*.nksc`) |
+| Sidecars | Always follow the file they describe (`.xmp`, `.NEF.xmp`, `.pp3`, NX Studio `NKSC_PARAM/*.nksc`), see §3.1 |
 | Subfolders | Included (recursive scan) |
 | Volume | Thousands of photos, often on SD card or external drive |
 | v1 extras | Zoom to 100%, EXIF overlay, resume a session later |
@@ -34,6 +34,11 @@ A **group** is the unit the user decides on. It holds:
 - `sidecars`: every sidecar file that matches.
 
 Pairing is by case-insensitive basename **within the same folder only**. Nikon file counters roll over, so the same name can appear in two folders. Unknown extensions are ignored and listed in the review screen.
+
+Sidecar matching (case-insensitive, same folder):
+- `X.xmp`, `X.pp3` describe the group: they follow the group's primary.
+- `X.NEF.xmp`, `X.JPG.xmp` and `NKSC_PARAM/X.NEF.nksc` / `NKSC_PARAM/X.JPG.nksc` describe one file: they follow that file. So when "RAW follows JPEG" is off, the NEF's sidecars stay with the NEF.
+- A collision suffix is applied inside sidecar names too (`X_1.NEF.xmp`, `NKSC_PARAM/X_1.NEF.nksc`).
 
 ### 3.2 Decisions and history
 - Group state: `undecided | kept | rejected`.
@@ -81,13 +86,17 @@ Rules:
 
 ```
 culla/
-  crates/core/      pure Rust: scan, grouping, sessions, plan, journal, apply. No Tauri dependency.
-  src-tauri/        Tauri 2 shell: commands, custom URI scheme for images, capabilities
+  crates/core/      package culla-core: domain, ports (traits), pure logic (grouping, decision log, plan,
+                    journal state machine). No I/O, no Tauri. Tests run on any OS.
+  crates/adapters/  package culla-adapters: Windows file ops, EXIF/NEF parsing, decode, SQLite store.
+                    No Tauri. Integration tests on windows-latest.
+  src-tauri/        Tauri 2 shell, wiring only: commands, culla:// image scheme, capabilities
   src/              React + TypeScript UI (one Vite app, two build modes: desktop | demo)
   docs/             SPEC.md, adr/, research/
 ```
 
-### 5.1 Rust core (`crates/core`)
+### 5.1 Rust core and adapters (`crates/core`, `crates/adapters`)
+The items below describe behaviour; the pure parts live in `culla-core` and the I/O in `culla-adapters`.
 - **Scan:** streamed and recursive. It yields groups in filename order right away, so the first photo appears in about a second. A background pass reads only the first ~128 KB of each file to get EXIF (DateTimeOriginal, orientation), then sorts by capture time. Once the user has started swiping, the list is never re-sorted.
 - **EXIF:** `kamadak-exif` (BSD-2) for JPEG and NEF. The lens comes from `LensModel`, falling back to `LensSpecification`.
 - **NEF preview:** our own TIFF/IFD walker (~200 lines). It reads the SubIFDs and the MakerNote PreviewIFD and picks the largest embedded JPEG. This works for HE/HE\* NEFs too, since they embed ordinary JPEG previews. `rawler` is LGPL, so it is avoided (licensing would be murky for an MIT binary).
@@ -105,11 +114,13 @@ culla/
    - no files are locked;
    - there are no symlinks or junctions (refuse to follow them).
 3. **Execute,** journalled with one row per file (`pending → copying → verified → done | failed`):
-   - Move on the same volume: a single atomic rename.
-   - Move across volumes: copy to `*.culla-partial` while hashing (xxh3/blake3), fsync, check the hash, rename into place, then delete the source.
+   - Every rename uses `MoveFileExW` **without** `MOVEFILE_REPLACE_EXISTING`, so an existing target makes it fail atomically (no check-then-rename race). Copies open their target with `create_new`. "Target exists" is a hard error for that group.
+   - Move on the same volume: a single such rename.
+   - Move across volumes: copy to `*.culla-partial` while hashing the source (xxh3/blake3), fsync, **read the destination back and compare its hash**, rename into place, then remove the source.
    - Copy: same as across volumes, but the source is kept. The mtime is preserved.
    - Sharing violations (Explorer, Defender, Lightroom): retry with backoff, then mark the file failed and continue.
 4. **Resume:** if an apply is interrupted (crash, card pulled), it rolls forward from the journal the next time the app opens. There is no rollback in v1.
+5. **Removal:** one audited function is the only code allowed to remove a file. It removes only (a) the source of a cross-volume move whose destination was verified, and (b) Culla's own `*.culla-partial` files (for example when resuming from `copying`). `std::fs::remove_*` is banned elsewhere by clippy `disallowed-methods`.
 
 ### 5.3 Image delivery to the webview
 A Tauri async **custom URI scheme** (`culla://preview/<id>`, which appears as `http://culla.localhost` on Windows) serves the pre-encoded previews from memory. Images never go through IPC strings, and the asset protocol is not used for originals. The CSP `img-src` allows only that origin. The UI calls `img.decode()` before animating a card in.
