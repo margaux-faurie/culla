@@ -3,8 +3,7 @@ name = "culla-app"
 description = "Culla desktop shell (Tauri 2): wiring only. Commands, culla:// scheme, capabilities."
 version.workspace = true
 edition.workspace = true
-# Tauri 2.12 needs Rust 1.90; the other crates keep the workspace minimum.
-rust-version = "1.90"
+rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 

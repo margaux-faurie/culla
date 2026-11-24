@@ -6,6 +6,14 @@ targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+  # quick-xml 0.38 via plist 1.8 (tauri, tauri-utils, tauri-codegen). plist parses Apple
+  # property lists (macOS Info.plist, build-time config); on Windows Culla never feeds it
+  # user-controlled input, so these DoS issues are not reachable. Remove once plist moves
+  # to quick-xml >= 0.41 (check on every Tauri update).
+  { id = "RUSTSEC-2026-0194", reason = "quick-xml via plist: no untrusted XML reaches it on Windows" },
+  { id = "RUSTSEC-2026-0195", reason = "quick-xml via plist: no untrusted XML reaches it on Windows" },
+]
 
 [licenses]
 version = 2

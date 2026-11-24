@@ -1,0 +1,31 @@
+name: Refresh Cargo.lock (temporary)
+
+# One-off: re-resolves Cargo.lock after raising rust-version (the dev container can't reach
+# crates.io) and pushes it back to this PR branch. Removed again before merge.
+
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  refresh:
+    name: Refresh Cargo.lock
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'm0/app'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Update time, plist and quick-xml to the newest compatible versions
+        run: cargo update -p time -p plist -p quick-xml
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          if git diff --cached --quiet; then echo "Cargo.lock unchanged."; exit 0; fi
+          git commit -m "build: refresh Cargo.lock (generated in CI)"
+          git push origin "HEAD:${{ github.head_ref }}"
