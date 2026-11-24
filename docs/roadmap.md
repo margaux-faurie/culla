@@ -43,6 +43,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
   - Workspace members also include `crates/cli` (`culla-cli`, binary `culla`) and `crates/bench` (`culla-bench`), empty ([ADR 0020](adr/0020-headless-cli-and-bench-crates.md)).
   - clippy `disallowed-methods` for `std::fs::remove_*` and raw `std::fs::rename`, enforced on `culla-core`, `culla-adapters`, `culla-cli` and `src-tauri` only (test code and `culla-bench` are outside it and work in temp dirs); `#![forbid(unsafe_code)]` in core; `cargo deny` bans `tauri` in the core and adapters trees and any I/O crate in core.
   - release-please with Conventional Commits; MIT `LICENSE`; README stub.
+  - A CI check that fails when any tracked file contains merge-conflict markers (`<<<<<<<`, `=======` on its own line, `>>>>>>>`).
   - Fixture generator skeleton (`cargo xtask fixtures`) and the VHDX mount script for Windows CI ([testing.md](testing.md) section 5.1).
   - Spike: detach a mounted VHDX on a hosted runner while a test process holds open handles on it (needed for the card-pull test). Fallbacks if it fails: `mountvol <L>: /p`, or the `setup-dev-drive` action.
 - **Exit criteria:**

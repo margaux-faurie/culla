@@ -44,7 +44,7 @@ Group decision state (`undecided | kept | rejected`) and the undo/redo stacks ar
 - One database per source: `%LOCALAPPDATA%\Culla\sessions\<key>.sqlite`, where `<key>` is the hex of the first 16 bytes of `blake3(serial ‖ rel_key)`. Always on the internal disk, never on the card, so the journal survives a pulled card and a write-protected card still gets a session.
 - Pragmas on open: `journal_mode=WAL`, `synchronous=FULL`, `foreign_keys=ON`, `application_id=0x43554C4C`, `user_version` for migrations. `mmap_size` stays 0. WAL with `synchronous=FULL` is proposed in ADR 0009 and NFR-REL-10; to confirm (§13).
 - Every decision event and every journal transition is its own transaction, committed before the next file system step starts (write-ahead).
-- Next to each database, `<key>.lock`: recovery and apply open it with share mode 0 and hold it for their whole duration, so no second process can recover or apply the same source. The app is also single-instance.
+- Next to each database, `<key>.lock`: recovery and apply open it with share mode 0 and hold it for their whole duration, so no second process can recover or apply the same source. It is taken before any plan status change (including `applying → interrupted` at launch). If it is already held, the plan is being applied by another instance: this instance changes nothing in that database and shows the source as busy. The app is also single-instance.
 - The plain-text apply log goes to `%LOCALAPPDATA%\Culla\logs\<date>-plan<id>.log`. To decide: whether a copy is also written into the destination (an extra write on the user's volume).
 
 ### 2.3 Schema (session database, v1)
@@ -331,11 +331,12 @@ Events as in [ADR 0005](../adr/0005-decision-state-as-append-only-event-log.md).
 | Event | Precondition (checked by the core before appending) | Effect in `fold` |
 |---|---|---|
 | `Decided {g, v}` | `state[g] = undecided`, `g` not locked or applied | `state[g] = kept/rejected`; push seq on `done`; clear `undone` |
-| `Cleared {g}` | `state[g] ≠ undecided`, `g` not locked or applied | `state[g] = undecided`; push seq on `done`; clear `undone` |
+| `Cleared {g}`, `cause = user` (U) | `state[g] ≠ undecided`, `g` not locked or applied | `state[g] = undecided`; push seq on `done`; clear `undone` |
+| `Cleared {g}`, `cause = reconcile` (§6.2, proposed) | `state[g] ≠ undecided`, `g` not locked or applied | `state[g] = undecided`; remove every seq that targets `g` from `done` and `undone`; push nothing. It never enters the stacks, so it cannot be undone, and the user's earlier `Decided` on `g` becomes un-undoable |
 | `Undo {t}` | `t = top(done)`, target group not locked or applied | Revert event `t` (`Decided` → undecided; `Cleared` → the state before it); move `t` from `done` to `undone` |
 | `Redo {t}` | `t = top(undone)`, target group not locked or applied | Re-apply event `t`; move `t` from `undone` to `done` |
 
-"The state before a `Cleared`" is recomputed by folding up to that event; it is well defined because each group's history is a strict alternation enforced by the preconditions. A precondition failure means no event is appended. `fold` treats a log that breaks a precondition as corrupt and stops at that event (it cannot happen through the core; it is tested with fixtures).
+"The state before a `Cleared`" is recomputed by folding up to that event; it is well defined because each group's history is a strict alternation of decided and undecided, enforced by the preconditions. A reconcile `Cleared` keeps the alternation (it needs a decided group and leaves it undecided). Because it also drops the group's earlier events from both stacks, `Undo` and `Redo` never target an event that a reconcile `Cleared` has overtaken, and the stacks hold no event for `g` older than it. A precondition failure means no event is appended. `fold` treats a log that breaks a precondition as corrupt and stops at that event (it cannot happen through the core; it is tested with fixtures).
 
 ### 5.2 Key behaviour
 
@@ -352,7 +353,7 @@ Each event is one `INSERT` in its own transaction. The TS reducer and the Rust `
 ### 5.4 Locked and applied groups
 
 - **Locked:** the group has an operation in an open plan (`confirmed`, `applying`, `paused`, `interrupted`).
-- **Applied:** any of its files was moved, copied or removed by Culla: some operation of the group, in any plan, is in `committed`, `source_removed`, `done` or `copied_source_kept`, or reached `renaming`, `copying` or `verifying`.
+- **Applied:** some operation of the group, in any plan, ever reached `committed` (read from the journal). Before `committed` no user file has moved or been copied into place; only Culla's partials existed, and they are removed on failure (§9.4).
 
 A locked or applied group's decision cannot change: `Decided`, `Cleared`, `Undo` and `Redo` that touch it are refused. If the top of `done` targets such a group, Ctrl+Z does nothing and the UI says "Already applied". Undoing an apply is a v2 candidate, and a decision that no longer matches the disk would make the next plan wrong. To confirm with the author: this also blocks Ctrl+Z on older, unapplied decisions behind it (U still works on them). When a plan closes, its untouched groups unlock.
 
@@ -374,13 +375,13 @@ Members are matched by (`folder_key`, file name folded). For each stored member:
 |---|---|
 | Present, same size and mtime | `present = 1` |
 | Present, size or mtime differs | `present = 1`, `changed = 1`; listed as "changed since scan" |
-| Present, but a `done` operation had moved it away | The move was reverted by the file system (an unflushed rename lost in a crash, §9.3). Listed as `reverted_move`; the group stays applied and the file is not touched again in v1 |
+| Present, but a `done` `rename` or `xmove` operation had moved it away | `rename`: the file system reverted an unflushed rename after a crash (§9.3). `xmove`: the unflushed source removal was lost, so the file is now at both S and F. Listed as `reverted_move`; the group stays applied and the file is not touched again in v1 (§13). Never applies to `copy`, whose source is meant to stay |
 | Absent, and a `done` or `source_removed` operation moved it | Expected; not reported |
 | Absent otherwise | `present = 0`; listed as missing; no operation for it |
 
 New files:
 
-- A new file whose folder and stem match an existing, not applied group joins it (a sidecar written by NX Studio since the last session, a JPEG next to a lone NEF). If the group was decided, reconciliation appends `Cleared {g}` with `cause = reconcile`: the group becomes undecided and the review lists why. The user decided on a different set of files, so the decision no longer holds.
+- A new file whose folder and stem match an existing, not applied group joins it (a sidecar written by NX Studio since the last session, a JPEG next to a lone NEF). Proposed (§13): if the group was decided, reconciliation appends `Cleared {g}` with `cause = reconcile` (§5.1): the group becomes undecided and the review lists why. The user decided on a different set of files, so the decision no longer holds.
 - A new file whose folder and stem match an applied group is not added: listed as `joins_applied_group`, never touched.
 - Other new files form new undecided groups, appended after the current order.
 
@@ -528,7 +529,8 @@ Adapter primitives (`culla-adapters::winfs`). All paths start with the run's `\\
 
 | Primitive | Behaviour |
 |---|---|
-| `rename_noreplace(h, target)` | `SetFileInformationByHandle(h, FileRenameInfoEx)` with flags 0, so without `FILE_RENAME_FLAG_REPLACE_IF_EXISTS`: an existing target fails atomically (`ERROR_ALREADY_EXISTS`), and a cross-volume target fails with `ERROR_NOT_SAME_DEVICE`. Where `FileRenameInfoEx` is not supported (to check on FAT32 and exFAT in adapter tests), `FileRenameInfo` with `ReplaceIfExists = FALSE`, which has the same semantics. `h` needs `DELETE` access. No check-then-rename. Equivalent to `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` or `MOVEFILE_COPY_ALLOWED`, but bound to the handle that was checked. |
+| `open_target_dir(root, rel)` | After `make_dirs`, opens the target folder with `FILE_FLAG_BACKUP_SEMANTICS \| FILE_FLAG_OPEN_REPARSE_POINT`, sharing read and write but not delete, and checks through the handle that it is a real directory (not a reparse point, not a placeholder). Returns `hD`, held until the rename has returned, so the folder cannot be renamed, removed or swapped for a junction meanwhile. |
+| `rename_noreplace(h, hD, name)` | `SetFileInformationByHandle(h, FileRenameInfoEx)` with `RootDirectory = hD` and `FileName` = the target's leaf name (relative), with flags 0, so without `FILE_RENAME_FLAG_REPLACE_IF_EXISTS`: an existing target fails atomically (`ERROR_ALREADY_EXISTS`), and a cross-volume target fails with `ERROR_NOT_SAME_DEVICE`. Where `FileRenameInfoEx` is not supported (to check on FAT32 and exFAT in adapter tests), `FileRenameInfo` with `ReplaceIfExists = FALSE`, which has the same semantics. `h` needs `DELETE` access. No check-then-rename. Same semantics as `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` or `MOVEFILE_COPY_ALLOWED`, but bound to the checked file handle and the checked folder handle; only the leaf name is resolved at rename time, and the OS refuses it if taken. Relative names with `RootDirectory` on FAT32 and exFAT are to check in adapter tests ([ADR 0022](../adr/0022-rename-through-the-checked-handle.md), proposed). |
 | `create_partial(p)` | `create_new` with `GENERIC_READ \| GENERIC_WRITE \| DELETE`, sharing read only. Returns `hP`, kept for the whole attempt. Never opens an existing file for writing. |
 | `copy_hashing(s, hP)` | Buffered sequential read of `s` through its own read-only handle (sharing read), in 1 MiB chunks, written to `hP`; BLAKE3 of the bytes read → H1. |
 | `set_times(hP, s)` | Modified, accessed and created times of `s` set on `hP` (`File::set_times`, `FileTimesExt::set_created`). |
@@ -541,8 +543,8 @@ Adapter primitives (`culla-adapters::winfs`). All paths start with the run's `\\
 `rename` (same-volume move of a user file, and every reject):
 
 1. Re-check P9 and P10. Journal `pending → renaming`.
-2. `make_dirs` for the target folder.
-3. Open `hS` with `DELETE | GENERIC_READ`, sharing read only; check size and mtime through it. `rename_noreplace(hS, dst)`. Close `hS`. Journal `renaming → committed` only after the call has returned.
+2. `make_dirs` for the target folder; `hD = open_target_dir`.
+3. Open `hS` with `DELETE | GENERIC_READ`, sharing read only; check size and mtime through it. `rename_noreplace(hS, hD, name)`. Close `hS` and `hD`. Journal `renaming → committed` only after the call has returned.
 4. Journal `committed → done`.
 
 The rename cannot be flushed: flushing needs write access to the user's file, which Culla never takes. On NTFS the rename is in the file system log; on FAT and exFAT it is a directory update that Windows writes back within seconds on removable media. A crash before that write-back can revert the rename (the file is back at S) or, on FAT, tear it. A reverted rename loses nothing; recovery (§10.2) redoes it if the journal is not yet `done`, and reconciliation reports it as `reverted_move` if it is (§6.2). A torn rename is reported and never acted on.
@@ -550,9 +552,9 @@ The rename cannot be flushed: flushing needs write access to the user's file, wh
 `copy` and `xmove`:
 
 1. Re-check P9 and P10. Remove stale partials of earlier attempts (§9.7). Journal `pending → copying` with the new attempt number and partial path.
-2. `make_dirs`; `hP = create_partial(partial)`; `copy_hashing(src, hP)`; `set_times`; `flush(hP)` (**flush 1**). Journal `copying → verifying` with H1 and the size written. Size ≠ `expected_size` → `failed (short_copy)`.
+2. `make_dirs`; `hD = open_target_dir`; `hP = create_partial(partial)` (created relative to `hD`); `copy_hashing(src, hP)`; `set_times`; `flush(hP)` (**flush 1**). Journal `copying → verifying` with H1 and the size written. Size ≠ `expected_size` → `failed (short_copy)`.
 3. `hS = open_source_verify(src)`; H3 = `hash_unbuffered(hS)` (ADR 0021, proposed). Open the partial a second time, read-only with `FILE_FLAG_NO_BUFFERING` (sharing read, write and delete, so it can coexist with `hP`); H2 = `hash_unbuffered`; close that handle. Require H1 = H2 = H3. On mismatch: `remove_own_partial` through `hP`, close `hS`, journal `verifying → failed (verify_mismatch)`. No automatic retry; the user can retry from the report.
-4. `rename_noreplace(hP, dst)`; `flush(hP)` (**flush 2**: the renamed file's metadata, through the same handle); close `hP`. Journal `verifying → committed`.
+4. `rename_noreplace(hP, hD, name)`; `flush(hP)` (**flush 2**: the renamed file's metadata, through the same handle); close `hP` and `hD`. Journal `verifying → committed`.
 5. `copy`: close `hS`. Journal `committed → done`.
 6. `xmove`: `hS` moves into a `VerifiedMove` proof (§9.7) with H1, H2, H3, the bound GUIDs and the target path. Wait until every operation of the group is `committed` (§9.5). Then `remove_verified_source(proof)`; journal `committed → source_removed`. Check the target exists with `expected_size`; journal `source_removed → done`.
 
@@ -586,6 +588,8 @@ These depend on the device honouring flush requests. A device that acknowledges 
 
 A failed operation fails its group (§9.5).
 
+Partial cleanup on failure: on every path from `copying` or `verifying` to `failed` (any row of this table, short copy, verify mismatch, group failure, and the recovery table), the current attempt's partial is removed with `remove_own_partial` while S is present and unchanged. If S is absent or changed, the partial is kept and reported (it may be the only copy). The one other exception is `failed (fs_inconsistent)` in recovery, where nothing is touched, because on a torn FAT volume the partial and the target can share clusters.
+
 While applying, the app asks Windows not to sleep (`SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)`). If the machine sleeps anyway, I/O errors after wake are handled by the table above.
 
 ### 9.5 Ordering, group failure, pause and cancel
@@ -593,7 +597,7 @@ While applying, the app asks Windows not to sleep (`SetThreadExecutionState(ES_C
 - One worker thread runs operations sequentially (parallel I/O slows SD cards).
 - Plan order: rejects before keeps (rejects are instant renames, so the card's state settles first), then by `folder_key`, `stem_key`, then member order: primary, raw, group sidecars, file sidecars. A group's operations run back to back.
 - For `rename` groups, all targets are re-checked just before the group's first rename.
-- **Group failure.** If any operation of a group fails, the group fails before any of its sources is removed: its remaining `pending` operations go to `failed (group_failed)` without starting; its `xmove` operations already `committed` go to `copied_source_kept` (their `VerifiedMove` proofs are dropped, closing `hS`); `copy` operations already committed finish to `done` (a copy keeps the source anyway). `rename` operations already `done` stay done, so a rename group can end split (some members moved, others not); the report lists each member's state. This matches SPEC §5.2 ("target exists is a hard error for that group") and NFR-REL-07.
+- **Group failure.** If any operation of a group fails, the group fails before any of its sources is removed: its remaining `pending` operations go to `failed (group_failed)` without starting; an operation of the group in `copying` or `verifying` stops and goes to `failed (group_failed)` with its partial removed as in §9.4; its `xmove` operations already `committed` go to `copied_source_kept` (their `VerifiedMove` proofs are dropped, closing `hS`); `copy` operations already committed finish to `done` (a copy keeps the source anyway). `rename` operations already `done` stay done, so a rename group can end split (some members moved, others not); the report lists each member's state. This matches SPEC §5.2 ("target exists is a hard error for that group") and NFR-REL-07.
 - Source removal for an `xmove` group starts only when every member is `committed`, so the rule above always holds.
 - Pause and cancel are checked between steps. The current operation finishes its current step and stops in a state the recovery table handles. Cancel then stops starting new operations (SPEC: "cancel stops after the current file"). An `xmove` group cut by a cancel is treated as a failed group: its committed members become `copied_source_kept`, so the files exist in both places, which is reported.
 
@@ -601,8 +605,8 @@ While applying, the app asks Windows not to sleep (`SetThreadExecutionState(ES_C
 
 The report lists per group: done, split, copied with source kept, failed with reason, held back, and leftover partials kept because their source vanished.
 
-- **Retry failed** (from the report): for a failed group in which no file was moved, copied or removed (all its operations are `failed` and none ever reached `renaming` or `verifying` with a committed result), its operations go `failed → pending` and run again in the same plan. Other failed groups are listed for the user to resolve.
-- **Apply remaining** (after a cancel, or when the report shows unstarted groups): the plan is closed and a new plan is built from the current decisions and disk state. Groups that are applied (§5.4) are not in it; their remaining files are listed.
+- **Retry failed** (from the report): for a failed group in which no operation ever reached `committed` (read from the journal: no entry with `to_state = 'committed'` for any operation of the group), its operations go `failed → pending` and run again in the same plan. Other failed groups are listed for the user to resolve.
+- **Apply remaining** (after a cancel, or when the report shows unstarted groups): the plan is closed and a new plan is built from the current decisions and disk state. Groups that are applied (§5.4) are not in it; their remaining files are listed. Neither action finishes a group with `copied_source_kept` members (§13).
 
 To decide: whether a session continues after a completed apply (cull the remaining undecided photos, apply again) or closes.
 
@@ -652,7 +656,7 @@ Enforcement:
 
 ### 10.1 When
 
-At launch, the app opens each session database read-only and looks for open plans. A plan in `applying` becomes `interrupted`. For each open plan, recovery takes the source lock file (§2.2), binds the volumes (§6.3) and waits until both are present ("Insert the card <label>"). The lock is held until the plan is paused or closed. SPEC §5.2 says it rolls forward the next time the app opens; to decide whether it starts on its own or after a confirm (also listed in [architecture.md](../architecture.md)).
+At launch, the app opens each session database read-only and looks for open plans. For each open plan, it first takes the source lock file (§2.2); if the lock is busy, the plan belongs to another instance and is left alone. Holding the lock, it sets a plan in `applying` to `interrupted`, binds the volumes (§6.3) and waits until both are present ("Insert the card <label>"). The lock is held until the plan is paused or closed. SPEC §5.2 says it rolls forward the next time the app opens; to decide whether it starts on its own or after a confirm (also listed in [architecture.md](../architecture.md)).
 
 ### 10.2 Algorithm
 
@@ -679,8 +683,8 @@ Then, with S = source present, P = the current attempt's partial present, F = ta
 | S | P | F | `pending`, `copying` | `verifying` | `committed` | `source_removed` (`xmove`) |
 |---|---|---|---|---|---|---|
 | 1 | 0 | 0 | (`copying` → `pending`), execute | partial lost: → `pending`, execute | target lost: → `pending`, execute | target lost, removal reverted: → `pending`, execute |
-| 1 | 1 | 0 | remove P, (→ `pending`), execute | re-run step 3 (H2 from P, H3 from S); match: rename, flush 2, → `committed`; mismatch: remove P, `failed (verify_mismatch)` | rename reverted: P = H1: rename, flush 2, stay `committed` and continue; else remove P, → `pending` | P = H1: rename, flush 2, then re-verify and remove S, → `done`; else remove P, → `pending` |
-| 1 | 0 | 1 | `failed (conflict)`: F is not ours, we rename only after verifying | F = H1: rename done, journal not: → `committed`; else `failed (conflict)` | `copy`: → `done`. `xmove`: wait for the group, re-verify (H2 from F, H3 from S), remove S, → `source_removed` | removal reverted: re-verify, remove S, → `done` |
+| 1 | 1 | 0 | remove P, (→ `pending`), execute | re-run step 3 (H2 from P, H3 from S); match: rename, flush 2, → `committed`; mismatch: remove P, `failed (verify_mismatch)` | rename reverted: P = H1: rename, flush 2, stay `committed` and continue; else remove P, → `pending` | P = H1: rename, flush 2, then re-verify (H2 from F, H3 from S): match: remove S, → `done`; mismatch: `failed (verify_mismatch)`, keep both. P ≠ H1: remove P, → `pending` |
+| 1 | 0 | 1 | `failed (conflict)`: F is not ours, we rename only after verifying | F = H1: rename done, journal not: → `committed`; else `failed (conflict)` | `copy`: → `done`. `xmove`: wait for the group, re-verify (H2 from F, H3 from S): match: remove S, → `source_removed`; mismatch: `failed (verify_mismatch)`, keep both | removal reverted: re-verify (H2 from F, H3 from S): match: remove S, → `done`; mismatch: `failed (verify_mismatch)`, keep both |
 | 1 | 1 | 1 | remove P, `failed (conflict)` | F = H1: `failed (fs_inconsistent)`, touch nothing; else remove P, `failed (conflict)` | `failed (fs_inconsistent)`, touch nothing | `failed (fs_inconsistent)`, touch nothing |
 | 0 | 0 | 0 | `failed (source_missing)` | `failed (lost)`, alarm | `failed (lost)`, alarm | `failed (lost)`, alarm |
 | 0 | 1 | 0 | keep P, `failed (source_missing)` | keep P (may be the only copy), `failed (source_missing)` | P = H1: rename, flush 2; `copy` → `done`, `xmove` → `source_removed` → `done`; else keep P, `failed (lost)` | P = H1: rename, flush 2, → `done`; else keep P, `failed (lost)` |
@@ -700,7 +704,7 @@ The rows are disjoint and cover all combinations. The table is written once as d
 | `committed` / `done` rename, not yet written back | The rename may be reverted on the card: recovery redoes it (`committed`) or reconciliation reports `reverted_move` (`done`). Nothing is lost | n/a |
 | `copying` | Read fails. Plan pauses; on return the row S1P1F0 removes P and restarts. S intact | Write fails. Same on return |
 | `verifying` | Re-read of S fails. On return verification re-runs | P may be lost or torn: re-verify, or back to `pending`. S intact |
-| `committed` (`xmove`, waiting for group) | S intact, F durable. On return: re-verify, remove S | F durable after flush 2, unless the device ignored the flush; on return F is re-hashed before S is removed |
+| `committed` (`xmove`, waiting for group) | S intact, F durable. On return: re-verify, then remove S (mismatch: failed, keep both) | F durable after flush 2, unless the device ignored the flush; on return F is re-hashed before S is removed |
 | During `remove_verified_source` | The FAT entry may be half-updated; F is already durable, so the photo is safe | n/a |
 | `source_removed` | Nothing left to do on S | F was durable before S was removed; on return → `done` |
 
@@ -721,12 +725,12 @@ Each invariant has at least one test in [testing.md](../testing.md): property te
 | INV-09 | A sidecar has an operation if and only if what it follows has one: group sidecars with the primary, file sidecars with the file they describe; same root, same folder (or its `NKSC_PARAM`), same suffix. |
 | INV-10 | No reparse point or cloud placeholder is followed, grouped or operated on. |
 | INV-11 | Under the durability model (unflushed changes may revert), at every instant the content of every planned file exists completely and durably in at least one of: S; F; or P with hash H1 and state ≥ `verifying`. A torn FAT rename of a user file is the only exception; the engine then touches nothing and reports it. |
-| INV-12 | A source is removed only through a `VerifiedMove` whose `hS` was opened before H3 and held until removal, after every member of its group is `committed` and H1 = H2 = H3. If any member of a group fails, none of the group's sources is removed. |
+| INV-12 | No source is removed after any member of its group has failed. A source is removed only through a `VerifiedMove` whose `hS` was opened before H3 and held until removal, after every member of its group is `committed`, and with H1 = H2 = H3. |
 | INV-13 | The journal state of an operation is never ahead of the disk, except for a user-file rename that the file system reverts after `committed`, which recovery and reconciliation detect. |
-| INV-14 | Interrupting execution or recovery at any point, any number of times, then recovering, ends with the same files at the same paths with the same content as one uninterrupted apply, and no stray files (the only partials left are those kept because their source vanished, and they are reported). |
+| INV-14 | Interrupting execution or recovery at any point, any number of times, then recovering, ends with the same files at the same paths with the same content as one uninterrupted apply, and no stray files. The only partials left are those kept because their source vanished or changed, or because recovery found the volume inconsistent; all are reported. |
 | INV-15 | Decision state and undo/redo stacks are a pure function of the event log, identical in Rust and TS for every golden fixture. |
 | INV-16 | The event log and the journal are append-only, and `operation.state` always equals the last journal entry's `to_state` (enforced by triggers). |
-| INV-17 | ←/→ on a decided group, U on an undecided group, and undo/redo with an empty stack append no event. No event changes a locked or applied group. A new file joining a decided group makes it undecided. |
+| INV-17 | ←/→ on a decided group, U on an undecided group, and undo/redo with an empty stack append no event. No event changes a locked or applied group. A new file joining a decided group makes it undecided (proposed, §13), and that reconcile event never enters the undo/redo stacks. |
 | INV-18 | Session identity does not depend on the drive letter; every path in a run starts with the volume GUID bound to the plan's serial, and a serial matching two mounted volumes pauses the run. |
 | INV-19 | `_rejected` folders, an in-source destination, hidden or system entries, reparse points and cloud placeholders never produce groups. |
 | INV-20 | Unknown extensions, orphan sidecars, same-basename unknown files, invalid names and foreign partials are never in a plan and are always listed in the review. |
@@ -782,8 +786,10 @@ Each invariant has at least one test in [testing.md](../testing.md): property te
 - `_rejected` excluded at any depth (§3.2).
 - `X.xmp` follows the primary even when "RAW follows" is off (§3.3).
 - Undo blocked behind a locked or applied group (§5.4).
-- `Cleared` with `cause = reconcile` when a new file joins a decided group (§6.2): an extension of ADR 0005.
+- Proposed: a new file joining a decided group makes the group undecided (§6.2; SPEC §3.3 marks it proposed). It is recorded as `Cleared` with `cause = reconcile`, which stays out of the undo/redo stacks and makes the user's earlier `Decided` on that group un-undoable (§5.1). This extends ADR 0005, which needs an update once accepted.
 - Nested sources: refused only while the other has an open plan (§6.1), or always while it has applied groups.
+- **Author decision: an unflushed user-file rename after `done`.** A same-volume rename (every reject, and keeps on the same volume) can be reverted by the file system after a crash, even once the journal says `done` (§9.3). Options: (a) hold the operation at `committed` until a later flush or a delay (for example 30 s, or the end of the plan) covers the rename, and let recovery redo it; (b) open the parent directory with write access and flush it, which is not documented to persist directory entries on FAT32 or exFAT; (c) accept it, and rely on reconciliation to report `reverted_move` (the file is never lost, only back at its old place). **Recommended: (a)**, with "end of the plan" as the trigger, because it keeps reverted renames inside the recovery table, where they are redone without the user, at the cost of `done` arriving later for rename groups. (c) is the fallback if (a) adds too much complexity.
+- **Author decision: groups left with `copied_source_kept` members.** Neither "Retry failed" nor "Apply remaining" can finish them: the files sit at both S and F. Options: (a) list them in the report only, and the user removes the sources by hand; (b) a "Finish moves" action that, once the failed member is resolved, re-verifies each `copied_source_kept` member from scratch (fresh `VerifiedMove`) and removes its source, which needs a `copied_source_kept → committed` edge and makes that state non-terminal; (c) treat them as copies and keep both, with no further action. **Recommended: (b)**, because removing sources by hand is the error-prone step Culla exists to avoid, and (b) reuses the one audited removal path. (a) is acceptable for v1 if time is short.
 - Session after a completed apply (§9.6); auto-resume or confirm (§10.1); log copy in the destination (§2.2).
 - `FileRenameInfoEx` support on FAT32 and exFAT, and the path form it accepts, to check in adapter tests.
 - NX Studio `.nksc` naming and `NKSC_PARAM` attributes, to verify on real files.

@@ -348,22 +348,28 @@ sequenceDiagram
   C->>DB: write all operations as pending (one transaction)
   loop Each operation, in order
     C->>FS: refuse links on the path
-    alt Move, same volume
-      C->>FS: no-replace rename via checked handle
+    alt Move, same volume, or reject
+      C->>DB: renaming
+      C->>FS: no-replace rename via checked file and folder handles
       Note right of FS: existing target = hard error for the whole group
-      C->>DB: done
+      C->>DB: committed, then done
     else Move across volumes, or copy
-      C->>DB: copying
-      C->>FS: copy to *.culla-partial (create_new), hash source while copying, fsync
-      C->>FS: unbuffered read-back of destination, hash it
-      C->>FS: re-read source, hash it again
-      C->>C: all three hashes match? (no = failed, source kept)
-      C->>DB: verified
-      C->>FS: rename partial into place via its handle, flush, preserve times
-      opt Move
+      C->>DB: copying (attempt, partial path)
+      C->>FS: copy to *.culla-partial (create_new), hash source while copying, set times, fsync
+      C->>DB: verifying (hash 1)
+      C->>FS: unbuffered read-back of destination (hash 2), unbuffered re-read of source (hash 3)
+      C->>C: all three hashes match? (no = failed, partial removed, source kept)
+      C->>FS: rename partial into place via its handle, flush
+      C->>DB: committed
+      alt Copy
+        C->>DB: done
+      else Move, once every member of the group is committed
         C->>FS: remove_verified(source)
+        C->>DB: source_removed, then done
       end
-      C->>DB: done
+    end
+    opt A member failed
+      C->>DB: rest of the group failed, committed moves copied_source_kept
     end
     C-->>UI: progress
     opt Sharing violation
@@ -373,7 +379,7 @@ sequenceDiagram
   C-->>UI: report + log file
 ```
 
-Pause holds the loop between files. Cancel stops after the current file. Undecided groups are never part of the plan.
+Pause holds the loop between files. Cancel stops after the current file. States, edges and the recovery table are owned by [design/file-engine.md](design/file-engine.md) §9–§10. Undecided groups are never part of the plan.
 
 ### 6.5 Resume after a crash or a pulled card
 
