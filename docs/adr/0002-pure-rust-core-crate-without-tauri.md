@@ -20,10 +20,10 @@ The file engine is the riskiest part of Culla and needs the most tests, includin
 
 Chosen option: "Three crates", because the domain stays pure and fast to test, the Windows adapters can be tested on their own without Tauri, and the Tauri layer stays thin.
 
-* `crates/core` (`culla-core`): domain types, port traits, pure logic (grouping, decision log and fold, `plan()`, journal state machine) and services that drive the ports. No I/O, no Tauri, `#![forbid(unsafe_code)]`. Tested with in-memory fakes on any OS.
+* `crates/core` (`culla-core`): domain types, port traits, pure logic (grouping, decision log and fold, `plan()`, journal state machine). Proposed addition, to confirm: the services that drive the ports (scan, session, apply executor) also live here. No I/O, no Tauri, `#![forbid(unsafe_code)]`. Tested with in-memory fakes on any OS.
 * `crates/adapters` (`culla-adapters`): Windows file operations, EXIF and NEF parsing, turbojpeg decode, the preview pipeline, the SQLite store. No Tauri. Integration-tested on `windows-latest` with `cargo test -p culla-adapters`. Win32 `unsafe` is confined here.
 * `src-tauri`: wiring only. Commands, the `culla://` scheme, capabilities, composition root.
-* `cargo deny` bans `tauri` from the dependency trees of both library crates.
+* Proposed addition, to confirm: `cargo deny` bans `tauri` from the dependency trees of both library crates.
 * Prior art: [mountain-loop/yaak](https://github.com/mountain-loop/yaak) keeps `crates/` apart from `crates-tauri/`.
 
 ### Consequences

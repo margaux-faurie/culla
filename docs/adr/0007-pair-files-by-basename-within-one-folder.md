@@ -22,6 +22,7 @@ Chosen option: "Case-insensitive basename within the same folder only", because 
 * A group has a `primary` (the JPEG if any, otherwise the NEF), an optional `raw` (the NEF) and its `sidecars`.
 * A sidecar follows the file it describes:
   * `X.xmp` and `X.pp3` follow the group.
+  * `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` follow the JPEG.
   * `X.NEF.xmp` and NX Studio's `NKSC_PARAM/X.NEF.nksc` follow the NEF, so they stay put when "RAW follows JPEG" is off.
 * A collision suffix is applied inside sidecar names too (`X_1.xmp`, `NKSC_PARAM/X_1.NEF.nksc`).
 * Unknown extensions are ignored and listed in the review screen.

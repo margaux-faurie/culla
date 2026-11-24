@@ -24,7 +24,7 @@ A file tool for photos must not lose a photo. Nikon counters roll over, so a des
 Chosen option: "Rejects to `_rejected/`, group suffix on collision, and let the OS refuse any overwrite", because the app then never deletes a photo and never overwrites one, without a check-then-act race.
 
 * Renames use `MoveFileExW` with only `MOVEFILE_WRITE_THROUGH`: no `MOVEFILE_REPLACE_EXISTING`, so an existing target is a hard error; no `MOVEFILE_COPY_ALLOWED`, so a cross-volume rename fails with `ERROR_NOT_SAME_DEVICE` instead of copying silently. Copies open targets with `create_new`.
-* The single audited removal function is `remove_verified` in `culla-adapters`. It removes only (a) the source of a cross-volume move once it is verified and (b) Culla's own `*.culla-partial` files. `std::fs::remove_*` and `std::fs::rename` are banned everywhere else with clippy `disallowed-methods`.
+* The single audited removal function is `remove_verified` in `culla-adapters`. It removes only (a) the source of a cross-volume move once it is verified and (b) Culla's own `*.culla-partial` files. `std::fs::remove_*` is banned outside `remove_verified`; `std::fs::rename` is banned everywhere (the adapters use the no-replace `MoveFileExW`). Both through clippy `disallowed-methods`.
 * Verified means: the destination is fsynced, read back unbuffered (`FILE_FLAG_NO_BUFFERING`) and hashed, the source is hashed a second time, and all three hashes (copy-time source, destination read-back, source re-read) match.
 * Every member of a group gets the same suffix, including inside sidecar names (`X_1.xmp`, `X_1.NEF.xmp`).
 * `_rejected/` and an in-source destination are excluded from scans.

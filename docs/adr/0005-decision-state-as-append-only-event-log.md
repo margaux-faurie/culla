@@ -36,4 +36,4 @@ Chosen option: "Append-only log of intent events", because undo, redo, autosave 
 * Bad, because there are two reducers (Rust and TS) to keep in step, guarded by shared fixtures.
 * Bad, because the log grows with every keystroke; fine at thousands of events, may need compaction later.
 
-Source: [SPEC.md §3.2](../SPEC.md), [practices.md §3](../research/practices.md). This event shape replaces the `{seq, groupId, from, to, ts}` record in SPEC §3.2. State machine details: [design/file-engine.md](../design/file-engine.md).
+Source: [SPEC.md §3.2](../SPEC.md), [practices.md §3](../research/practices.md). State machine details: [design/file-engine.md](../design/file-engine.md).

@@ -20,8 +20,8 @@ Every decision is autosaved, a session holds thousands of events, and the apply 
 
 Chosen option: "SQLite via `rusqlite`, one database per source", because it gives atomic, durable appends for both the event log and the journal with one dependency and one file.
 
-* `rusqlite` with the bundled SQLite. WAL mode, `synchronous=FULL` for journal writes.
-* One database per source, keyed by volume serial + relative path ([ADR 0008](0008-key-sessions-and-caches-by-volume-serial-and-relative-path.md)), stored under the local app data dir on the internal disk, never on the card.
+* `rusqlite` with the bundled SQLite. Proposed addition, to confirm: WAL mode, `synchronous=FULL` for journal writes.
+* One database per source, keyed by volume serial + relative path ([ADR 0008](0008-key-sessions-and-caches-by-volume-serial-and-relative-path.md)), stored in `%LOCALAPPDATA%\Culla\sessions` on the internal disk, never on the card.
 * The same database holds the session options, groups, decision events, plans and the journal, so a journal state change and its plan are in one transaction.
 * JSON rewrites risk torn files on crash. JSONL needs hand-written fsync and recovery logic for a partial last line, and two formats for two logs.
 * One global database would make a corrupted file affect every source.

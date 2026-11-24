@@ -29,6 +29,6 @@ Chosen option: "Per-user NSIS, `tauri-plugin-updater`, unsigned v1, then SignPat
 
 * Good, because releases cost nothing and updates work from day one.
 * Bad, because v1 users see a SmartScreen warning; the README explains it.
-* Bad, because losing the updater private key strands every installed user; custody is in [releasing.md](../releasing.md).
+* Bad, because losing the updater private key strands every installed user; custody is in [releasing.md](../releasing.md) (planned).
 
 Source: [research-stack-repo.md §4](../research/research-stack-repo.md), [SPEC.md §6](../SPEC.md).

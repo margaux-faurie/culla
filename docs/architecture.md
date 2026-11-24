@@ -8,11 +8,11 @@ Source of truth for product decisions: [SPEC.md](SPEC.md) and the [ADRs](adr/REA
 |---|---|
 | Problem, users, scope, no-gos | [PRD.md](PRD.md) |
 | Budgets and quality requirements | [nfr.md](nfr.md) |
-| Data model, state machines, apply algorithm, resume rules | [design/file-engine.md](design/file-engine.md) |
+| Data model, state machines, apply algorithm, resume rules | [design/file-engine.md](design/file-engine.md). Until it lands, SPEC §5.2 owns the journal states. |
 | Assets, trust boundaries, STRIDE | [threat-model.md](threat-model.md) |
 | Test strategy, Definition of Done | [testing.md](testing.md) |
-| Screen flows, motion spec | [ux.md](ux.md) |
-| Releases, updater key custody | [releasing.md](releasing.md) |
+| Screen flows, motion spec | [ux.md](ux.md) (planned) |
+| Releases, updater key custody | [releasing.md](releasing.md) (planned) |
 
 ## 1. Introduction and quality goals
 
@@ -22,7 +22,7 @@ Top quality goals, in priority order. Measurable targets are in [nfr.md](nfr.md)
 
 | # | Goal | What it means here |
 |---|---|---|
-| 1 | Data safety | No photo is ever lost or overwritten. The only removal is the source of a verified cross-volume move. |
+| 1 | Data safety | No photo is ever lost or overwritten. The only removals are the source of a verified cross-volume move and Culla's own `*.culla-partial` files. |
 | 2 | Recoverability | A session survives a restart and a drive-letter change. An interrupted apply rolls forward from its journal. |
 | 3 | Responsiveness | First photo on screen in about a second on an SD card. Swipe to next is served from memory. Input never waits for an animation. |
 | 4 | Accessibility | Keyboard-complete, visible Keep and Reject buttons as the non-drag alternative to a swipe, colour never the only signal, `prefers-reduced-motion` respected (WCAG 2.2 AA). |
@@ -32,7 +32,7 @@ Top quality goals, in priority order. Measurable targets are in [nfr.md](nfr.md)
 
 | Constraint | Consequence |
 |---|---|
-| Windows 10/11 first, target machine ROG Zephyrus G14 2024 (2880×1800 OLED) | WebView2 (evergreen Chromium). Windows file semantics drive the file engine (`rename` overwrites, sharing violations, `\\?\` paths). |
+| Windows 11 first; Windows 10 22H2 to decide. Target machine ROG Zephyrus G14 2024 (2880×1800 OLED) | WebView2 (evergreen Chromium). Windows file semantics drive the file engine (`rename` overwrites, sharing violations, `\\?\` paths). |
 | Source folders often on SD cards or external drives | Storage is the bottleneck. No memory-mapping of removable media. Identity cannot depend on the drive letter. |
 | MIT licence for the app binary | Dependencies must be permissive. LGPL and GPL crates (rawler, exiv2, exiftool-rs, libraw) are out. See [ADR 0017](adr/0017-mit-licence-and-cargo-deny-licence-allowlist.md). |
 | Solo maintainer, open source | Small doc set, small dependency set, automated checks over manual process. |
@@ -179,7 +179,7 @@ The port list is a starting point and may change during M0.
 | `culla://` scheme handler | Async custom URI scheme. Serves previews by ID from the current scan only. See [ADR 0013](adr/0013-deliver-images-through-a-custom-uri-scheme.md). |
 | App state | Registry of open sessions, the ID → path map of the current scan, the apply task handle (pause, cancel). |
 | Composition root | Builds the `culla-adapters` implementations and injects them into the core services. |
-| Capabilities and CSP | One capability for the `main` window, minimal `core:*` permissions, no fs or shell plugin, `AppManifest::commands` in `build.rs`. |
+| Capabilities and CSP | One capability for the `main` window, minimal `core:*` permissions, no fs or shell plugin, `AppManifest::commands` in `build.rs`, so each command needs an `allow-<command>` permission in the `main` capability. |
 | Updater | `tauri-plugin-updater`, checks `latest.json` on GitHub Releases. |
 
 The folder picker opens from Rust (dialog called by a command), so the webview never sends a path. This keeps the "IDs, not paths" rule without a dialog permission in the webview. To confirm during M0.
@@ -188,17 +188,17 @@ The folder picker opens from Rust (dialog called by a command), so the webview n
 
 | Component | Responsibility |
 |---|---|
-| Screens | Start, Swipe, Review, Apply ([ux.md](ux.md)). |
+| Screens | Start, Swipe, Review, Apply ([ux.md](ux.md) (planned)). |
 | Card stack | Motion `drag="x"`, at most 3 cards mounted, visible Keep and Reject buttons as the single-pointer alternative to dragging (WCAG 2.5.7), commit on offset or velocity threshold, `img.decode()` before a card enters. [ADR 0015](adr/0015-motion-for-swipe-physics.md) |
 | Keyboard controller | Key map from SPEC §4.1. Ignores `event.repeat` on decision keys. Drives the same exit animation as a drag. |
 | Decision store | Reducer over the event log. Commits first, then calls `Backend.recordEvent`. |
 | `Backend` interface | `TauriBackend` (generated bindings + `culla://` URLs) or `DemoBackend` (bundled samples, simulated apply), chosen at build time. |
 | Bindings | `src/bindings.ts`, generated from Rust. Never edited by hand. [ADR 0019](adr/0019-generate-typescript-bindings-with-tauri-specta.md) |
-| Styles | `src/styles/tokens.css` from the design system. See [8.5](#85-design-tokens). |
+| Styles | `src/styles/tokens.css` from the design system. See [8.6](#86-design-tokens). |
 
 ## 6. Runtime view
 
-Names of commands are illustrative. The exact journal states and transitions are owned by [file-engine.md](design/file-engine.md).
+Names of commands are illustrative. The exact journal states and transitions are owned by SPEC §5.2 until [file-engine.md](design/file-engine.md) lands, then by file-engine.md.
 
 ### 6.1 Open a folder and stream the scan
 
@@ -263,6 +263,7 @@ sequenceDiagram
   K->>R: decide(groupId, kept)
   alt Group already decided
     R-->>CS: shake + toast "Press U to undo"
+    Note over K,R: SPEC states this for ←/→. Same rule for drag and the Keep/Reject buttons is an extension, to confirm with the author
   else Undecided
     R->>R: append Decided {groupId, verdict}, clear redo stack, advance index
     R-->>CS: start exit animation (does not block input)
@@ -276,7 +277,7 @@ sequenceDiagram
   end
 ```
 
-If `record_event` fails, the UI keeps its state and surfaces the `IpcError`. Retry and user messaging are specified in [ux.md](ux.md) (to decide).
+If `record_event` fails, the UI keeps its state and surfaces the `IpcError`. Retry and user messaging are specified in [ux.md](ux.md) (planned) (to decide).
 
 ### 6.3 Image preview through `culla://`
 
@@ -342,7 +343,7 @@ sequenceDiagram
     C->>FS: refuse links on the path
     alt Move, same volume
       C->>FS: MoveFileExW (WRITE_THROUGH only)
-      Note right of FS: existing target = hard error, operation failed
+      Note right of FS: existing target = hard error for the whole group
       C->>DB: done
     else Move across volumes, or copy
       C->>DB: copying
@@ -427,8 +428,8 @@ flowchart LR
 | Node | Details |
 |---|---|
 | Installer | NSIS only, per-user, WebView2 through the default bootstrapper. Unsigned for v1 (SmartScreen note in README). |
-| Updater | `tauri-plugin-updater`, its own signing key (private key in CI secret `TAURI_SIGNING_PRIVATE_KEY`, public key in config). Key loss strands installed users: custody in [releasing.md](releasing.md). |
-| Local data | Preview cache in `%LOCALAPPDATA%\Culla\cache`. Session databases also under the local app data dir (exact path to decide). Nothing is written into the source folder except `_rejected/` on apply. |
+| Updater | `tauri-plugin-updater`, its own signing key (private key in CI secret `TAURI_SIGNING_PRIVATE_KEY`, public key in config). Key loss strands installed users: custody in [releasing.md](releasing.md) (planned). |
+| Local data | Preview cache in `%LOCALAPPDATA%\Culla\cache`. Session databases in `%LOCALAPPDATA%\Culla\sessions`, apply logs in `%LOCALAPPDATA%\Culla\logs`. Nothing is written into the source folder except `_rejected/` on apply. |
 | Web demo | Static assets on Cloudflare Workers, subdomain of margauxfaurie.com (to confirm). No server code. |
 | Later | winget manifest after v1; SignPath signing once v1 is released ([ADR 0016](adr/0016-per-user-nsis-and-signed-updater-code-signing-deferred.md)). |
 
@@ -473,20 +474,20 @@ Rust types and commands are the source. `tauri-specta` generates `src/bindings.t
 ### 8.4 Logging
 
 - Two logs, both local. No telemetry.
-  - Apply log: a plain-text record of every operation and its outcome, written at the end of an apply (and of a resume). Location to decide (the critique suggests the destination folder).
-  - Diagnostic log: rotating file under the local app data dir, for bug reports. Library and level to decide (`tracing` is the usual choice).
+  - Apply log: a plain-text record of every operation and its outcome, written at the end of an apply (and of a resume) to `%LOCALAPPDATA%\Culla\logs`, openable from the report.
+  - Diagnostic log: rotating file in `%LOCALAPPDATA%\Culla\logs`, for bug reports. Library and level to decide (`tracing` is the usual choice).
 - The decision event log in SQLite is data, not a log in this sense.
 
 ### 8.5 Security summary
 
 Full analysis in [threat-model.md](threat-model.md). The main controls:
 
-- The webview has no fs or shell plugin permissions. Commands take opaque IDs. `AppManifest::commands` limits what is callable.
+- The webview has no fs or shell plugin permissions. Commands take opaque IDs. `AppManifest::commands` limits what is callable: each command needs an `allow-<command>` permission in the `main` capability.
 - Strict CSP, nothing remote. `img-src` allows only `'self'` and the `culla` scheme origin (`http://culla.localhost` on Windows).
 - The scheme handler serves only IDs from the current scan.
 - Every destination comes from `plan()` and is checked to sit under its root. No link following at scan time or at apply time; links on the path are refused at apply time too.
 - No overwrite: renames use `MoveFileExW` with only `MOVEFILE_WRITE_THROUGH` (no replace, no copy-allowed), so the OS refuses an existing target; copies use `create_new`. There is no check-then-rename step.
-- `remove_verified` in `culla-adapters` is the single audited removal function. It removes only the source of a verified cross-volume move and Culla's own `*.culla-partial` files. `std::fs::remove_*` and `std::fs::rename` are banned elsewhere by clippy `disallowed-methods`.
+- `remove_verified` in `culla-adapters` is the single audited removal function. It removes only the source of a verified cross-volume move and Culla's own `*.culla-partial` files. `std::fs::remove_*` is banned outside `remove_verified`; `std::fs::rename` is banned everywhere (the adapters use the no-replace `MoveFileExW`). Both through clippy `disallowed-methods`.
 - Parsers (EXIF, IFD walker, embedded JPEG) are fuzzed with `cargo-fuzz`, with decode size limits.
 - Supply chain: cargo-deny, pnpm hardening, CodeQL, pinned or locked actions, Scorecard.
 - Updater artefacts are signed and served over HTTPS.
@@ -505,7 +506,7 @@ To decide (ADR candidate): Tauri isolation pattern. Culla loads no remote conten
 ### 8.7 Paths and identity
 
 - Inside the core, files are identified by (volume serial, relative path). Absolute paths are rebuilt from the current mount at use time.
-- Long paths: Rust std adds `\\?\` internally. Deep mirrored destinations are covered by tests.
+- Long paths: Rust std adds `\\?\` internally, but that does not cover raw Win32 calls. The adapters add the `\\?\` prefix themselves for `MoveFileExW` and `CreateFileW`. Deep mirrored destinations are covered by tests.
 - Files on removable media are read into buffers, never memory-mapped, and handles are released before any move.
 
 ## 9. Architecture decisions
@@ -523,7 +524,7 @@ ADR 0000 records how decisions are written. Index with status: [adr/README.md](a
 | [0007](adr/0007-pair-files-by-basename-within-one-folder.md) | Pair files by case-insensitive basename within the same folder only |
 | [0008](adr/0008-key-sessions-and-caches-by-volume-serial-and-relative-path.md) | Key sessions and caches by volume serial + relative path |
 | [0009](adr/0009-sqlite-per-source-for-sessions-and-journal.md) | SQLite (rusqlite) per source for sessions and the journal |
-| [0010](adr/0010-journaled-apply-with-roll-forward-only.md) | Journaled apply: copy, hash, fsync, rename; roll forward only |
+| [0010](adr/0010-journaled-apply-with-roll-forward-only.md) | Journaled apply: copy, hash, fsync, verify, rename; roll forward only |
 | [0011](adr/0011-own-ifd-walker-for-nef-previews-and-kamadak-exif.md) | Own TIFF/IFD walker for NEF previews; kamadak-exif for EXIF |
 | [0012](adr/0012-turbojpeg-scaled-decode-preview-pipeline.md) | turbojpeg scaled decode + fast_image_resize; no mmap on removable media |
 | [0013](adr/0013-deliver-images-through-a-custom-uri-scheme.md) | Deliver images through a custom URI scheme |
@@ -567,7 +568,7 @@ Brief. Targets and measurement live in [nfr.md](nfr.md) and [benchmarks.md](benc
 | Renamed files not detected | Shown as one missing + one new | Accepted for v1 |
 | Dual-slot setups (RAW and JPEG on two cards) | "RAW follows JPEG" does nothing | v2 candidate; warn if detected (to decide) |
 | Unsigned installer | SmartScreen friction, fewer installs | README note; SignPath after v1 |
-| Updater key loss | Installed users can no longer update | Backup and custody in [releasing.md](releasing.md) |
+| Updater key loss | Installed users can no longer update | Backup and custody in [releasing.md](releasing.md) (planned) |
 | Lightroom catalogs | Moved files show as missing | README warning |
 | Windows-only behaviour (junctions, locks, read-only) | Not covered by Linux CI | Adapter integration tests on `windows-latest` |
 | Two reducers (Rust and TS) | Drift | Shared golden fixtures run by `cargo test` and Vitest |
@@ -581,7 +582,7 @@ Brief. Targets and measurement live in [nfr.md](nfr.md) and [benchmarks.md](benc
 | Primary | The file shown for a group: the JPEG if there is one, otherwise the NEF (via its embedded JPEG). |
 | Raw | The NEF of a group, if any. Moves with the group only when "RAW follows JPEG" is on. |
 | Lone NEF | A group with a NEF and no JPEG. |
-| Sidecar | A file that follows the file it describes. `X.xmp` and `X.pp3` follow the group. `X.NEF.xmp` and `NKSC_PARAM/X.NEF.nksc` follow the NEF, so they stay put when "RAW follows JPEG" is off. A collision suffix is applied inside sidecar names too. |
+| Sidecar | A file that follows the file it describes. `X.xmp` and `X.pp3` follow the group. `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` follow the JPEG. `X.NEF.xmp` and `NKSC_PARAM/X.NEF.nksc` follow the NEF, so they stay put when "RAW follows JPEG" is off. A collision suffix is applied inside sidecar names too. |
 | Session | The stored state of one source: options, groups, decision events, plans and journal. Keyed by volume identity. |
 | Volume identity | Volume serial number + path relative to the volume root. Independent of the drive letter. |
 | Decision event | One appended record with a `seq`: `Decided {groupId, verdict}`, `Cleared {groupId}` (U), `Undo {targetSeq}` or `Redo {targetSeq}`. The current state is the fold of all events. |
