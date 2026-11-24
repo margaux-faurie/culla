@@ -12,7 +12,7 @@ A Windows desktop app that culls a folder of Nikon photos (JPEG + NEF) one photo
 
 | Topic | Decision |
 |---|---|
-| Platform | Windows 10/11 first (target machine: ROG Zephyrus G14 2024, 2880×1800 OLED) |
+| Platform | Windows 11 first; Windows 10 22H2 to decide (target machine: ROG Zephyrus G14 2024, 2880×1800 OLED) |
 | Choices | Binary: keep / reject |
 | Reject | Move to `<source>/_rejected/`, mirroring subfolders. The app never deletes a photo; the only removals are listed in §5.2 step 5. |
 | Keep | Move or copy, chosen per session; destination folder chosen per session (last one remembered); subfolder structure mirrored |
@@ -73,6 +73,7 @@ Sidecar matching (case-insensitive, same folder):
 | Esc | Leave zoom / overlay / review |
 
 Rules:
+- Single-key shortcuts (U, N, Z, I, F, ?) work only while the swipe view has focus (WCAG 2.1.4).
 - Auto-repeat on held keys is ignored for decisions, so holding → never keeps 40 photos.
 - Input is never blocked by an animation. Each decision is committed immediately; the animation catches up, and at most 3 cards are mounted.
 - Mouse/trackpad: drag the card horizontally. A swipe commits on an offset or velocity threshold; otherwise the card springs back.
@@ -80,9 +81,9 @@ Rules:
 
 ### 4.2 Screens
 1. **Start:** source folder, include subfolders, RAW follows JPEG, keep = move/copy, destination. If a session already exists for the folder, offer to resume it (or start fresh).
-2. **Swipe:** full-screen photo, progress bar (n / total, kept, rejected, undecided), decision badge, EXIF overlay, zoom.
+2. **Swipe:** full-screen photo, progress bar (n / total, kept, rejected, undecided), decision badge, EXIF overlay, zoom, and visible **Keep** and **Reject** buttons (a single-click alternative to dragging, WCAG 2.5.7).
 3. **Review:** counts; kept / rejected grids (click to jump back); the full operation plan; preflight results; estimated time and size; "Apply" needs a confirm dialog that states the counts. Undecided photos are never touched.
-4. **Apply:** progress per file, can be paused or cancelled (cancel stops after the current file). Ends with a report and a log file.
+4. **Apply:** progress per file, can be paused or cancelled (cancel stops after the current file). Ends with a report and a log file (`%LOCALAPPDATA%\Culla\logs`, openable from the report).
 
 ## 5. Architecture
 
@@ -103,8 +104,8 @@ The items below describe behaviour; the pure parts live in `culla-core` and the 
 - **EXIF:** `kamadak-exif` (BSD-2) for JPEG and NEF. The lens comes from `LensModel`, falling back to `LensSpecification`.
 - **NEF preview:** our own TIFF/IFD walker (~200 lines). It reads the SubIFDs and the MakerNote PreviewIFD and picks the largest embedded JPEG. This works for HE/HE\* NEFs too, since they embed ordinary JPEG previews. `rawler` is LGPL, so it is avoided (licensing would be murky for an MIT binary).
 - **Decode/resize:** `turbojpeg` with scaled decode, scaling to just above screen size (1/2 or 3/8 for 45 MP), then `fast_image_resize`, then JPEG encoding. EXIF orientation is applied at this point. The 100% zoom view loads the full image on demand.
-- **I/O:** 1–2 sequential reader threads, kept separate from the decode workers. Prefetch 5 ahead and 2 behind. The in-memory LRU holds about 12 screen previews. Thumbnails are cached on the internal disk (`%LOCALAPPDATA%\Culla\cache`), keyed by volume serial + path + size + mtime. Files on removable media are **never memory-mapped**.
-- **Sessions & journal:** SQLite (`rusqlite`), one database per source (volume serial + relative path).
+- **I/O:** 1–2 sequential reader threads, kept separate from the decode workers. Prefetch 5 ahead and 2 behind. The in-memory LRU holds about 12 screen previews. Thumbnails are cached on the internal disk (`%LOCALAPPDATA%\Culla\cache`), keyed by volume serial + path + size + mtime, capped at 2 GB with least-recently-used eviction. Files on removable media are **never memory-mapped**.
+- **Sessions & journal:** SQLite (`rusqlite`), one database per source (volume serial + relative path), stored in `%LOCALAPPDATA%\Culla\sessions`, never on the card. Uninstalling leaves this data unless the user ticks "remove my Culla data".
 
 ### 5.2 Apply engine
 1. **Plan:** each group expands to a list of operations (primary + raw if "RAW follows" + sidecars). Every member of a group gets the same target name. If a target name is taken, the whole group gets `_1`, `_2`… Nothing is ever overwritten.
@@ -122,7 +123,7 @@ The items below describe behaviour; the pure parts live in `culla-core` and the 
    - Copy: same as across volumes, but the source is kept. The mtime is preserved.
    - Sharing violations (Explorer, Defender, Lightroom): retry with backoff, then mark the file failed and continue.
 4. **Resume:** if an apply is interrupted (crash, card pulled), it rolls forward from the journal the next time the app opens. There is no rollback in v1.
-5. **Removal:** one audited function is the only code allowed to remove a file. It removes only (a) the source of a cross-volume move whose destination was verified, and (b) Culla's own `*.culla-partial` files (for example when resuming from `copying`). `std::fs::remove_*` is banned elsewhere by clippy `disallowed-methods`.
+5. **Removal:** one audited function, `remove_verified`, is the only code allowed to remove a file. It removes only (a) the source of a cross-volume move whose verification passed, and (b) Culla's own `*.culla-partial` files (for example when resuming from `copying`). `std::fs::remove_*` is banned elsewhere by clippy `disallowed-methods`.
 
 ### 5.3 Image delivery to the webview
 A Tauri async **custom URI scheme** (`culla://preview/<id>`, which appears as `http://culla.localhost` on Windows) serves the pre-encoded previews from memory. Images never go through IPC strings, and the asset protocol is not used for originals. The CSP `img-src` allows only that origin. The UI calls `img.decode()` before animating a card in.
@@ -148,7 +149,7 @@ Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsm
   - Loading states are drawn as dots, not spinners.
 - **Exception, the photo surround.** Judging a photo against cream shifts how its colour and exposure read. So the swipe and zoom screens use the system's **Night** theme (`paper` #0c0b0a, `ink` #f1e9d8), while the start, review and apply screens stay cream. This needs an addition to the design system ("photo viewing surfaces use Night").
 - **Keep and reject feedback (decided 24 Nov).**
-  - Keep gets a second colour, a soft sage green (`keep`, about #8fd3a8, contrast to be checked on Night and cream). Its only job is the keep feedback and the "Kept" badge. Orange stays the brand accent: Apply button, progress line.
+  - Keep gets a second colour, a soft sage green (`keep`, #8fd3a8; 11.3:1 on Night, but only 1.44:1 on cream, so it is a fill on dark screens only). On cream screens the "Kept" label uses a darker `keep-ink` (to define, at least 4.5:1). Orange stays the brand accent: the Apply button (a fill with ink text) and, on Night, the progress line; on cream the progress line uses `orange-ink`. Reject outlines and focus rings use `ink-muted` or `ink`, never `rule` (1.3:1).
   - Reject has no colour: a dimmed card, an outline badge and a "Rejected" label.
   - Colour is never the only signal. Every state also has a label, a direction and a shape (filled for keep, outline for reject), so the app stays usable with colour blindness.
   - Both additions (`keep`, and photo screens on Night) go back into the Portfolio Design System.
@@ -159,7 +160,7 @@ Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsm
 
 ## 6. Distribution
 - `tauri-action` builds an NSIS installer (per-user, no admin rights) as a draft GitHub Release.
-- `tauri-plugin-updater` with its own signing key, which works on unsigned builds.
+- `tauri-plugin-updater` with its own signing key, which works on unsigned builds. The update check can be turned off in settings; its default and frequency are to decide. No telemetry of any kind.
 - Windows code signing is postponed. Azure Artifact Signing is not open to individuals in the EU. Once v1 is out, apply to SignPath Foundation (free for OSS). The README explains the SmartScreen warning.
 - winget manifest after v1.
 
@@ -169,7 +170,7 @@ Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsm
 - CI on PRs: lint, test, build. Release via release-please with Conventional Commits. Dependabot (grouped). Action SHAs pinned. OpenSSF Scorecard.
 - MIT license, README with GIF, CONTRIBUTING, SECURITY.md, third-party licences file.
 - Decisions recorded as ADRs in `docs/adr/` (these also feed the blog enablement guide).
-- Agent practices, security and architecture conventions: see `docs/research/practices.md`. Key rules: the one source delete (after a verified cross-volume move) lives in a single audited function, and `std::fs::remove_*` is banned elsewhere via clippy `disallowed-methods`; `std::fs::rename` overwrites on Windows, so collisions are re-checked right before each op and copies open targets with `create_new`; Tauri commands restricted with `AppManifest::commands`; the webview gets no fs plugin permissions; cargo-deny (no cargo-audit), CodeQL (JS/TS + Rust), workflow lockfiles, pnpm supply-chain settings; tauri-specta pinned (still RC), `ts-rs` as fallback; cargo-fuzz targets on the EXIF/NEF parsers.
+- Agent practices, security and architecture conventions: see `docs/research/practices.md`. Key rules: removal lives only in `remove_verified` (§5.2 step 5), and `std::fs::remove_*` is banned elsewhere via clippy `disallowed-methods`; `std::fs::rename` overwrites on Windows, so the adapters use the no-replace `MoveFileExW` and copies open targets with `create_new`; Tauri commands restricted with `AppManifest::commands`; the webview gets no fs plugin permissions; cargo-deny (no cargo-audit), CodeQL (JS/TS + Rust), workflow lockfiles, pnpm supply-chain settings; tauri-specta pinned (still RC), `ts-rs` as fallback; cargo-fuzz targets on the EXIF/NEF parsers.
 
 ## 8. Scope
 
@@ -193,5 +194,8 @@ Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsm
 - Moving 2,000 pairs across volumes is about 140 GB and 25+ minutes, so the review screen shows an estimate.
 
 ## 10. Open questions
+- Windows 10 22H2 support (out of mainstream support since Oct 2025): must, should, or dropped.
+- Update check: on or off by default, and how often.
+- Minimum WebView2 version and installer mode (the bootstrapper downloads WebView2 at install time if missing).
 - Demo subdomain and which photos to publish.
 - Nikon body(ies) used, which determines the NEF variants to test with.
