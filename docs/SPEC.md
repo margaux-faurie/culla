@@ -42,7 +42,7 @@ Sidecar matching (case-insensitive, same folder):
 
 ### 3.2 Decisions and history
 - Group state: `undecided | kept | rejected`.
-- Every change is appended to an event log: `{seq, groupId, from, to, ts}`. The current state is derived from the log, which is what makes undo and resume work.
+- Every change is appended to an event log as `{seq, ts, event}`, where `event` is one of the types below. The current state is derived from the log, which is what makes undo and resume work.
 - Event types: `Decided{groupId, verdict}`, `Cleared{groupId}` (from U), `Undo{targetSeq}`, `Redo{targetSeq}`. The log only grows; state is a fold over it.
 - **Ctrl+Z** appends `Undo` for the most recent decision event (`Decided` or `Cleared`) that is not already undone, restores that photo's previous state, and jumps to it. Repeated Ctrl+Z walks further back.
 - **Ctrl+Shift+Z** appends `Redo` for the most recently undone event. Any new `Decided` or `Cleared` empties the redo stack.
