@@ -111,6 +111,7 @@ function Invoke-Native([string] $FilePath, [string] $Arguments, [int] $Timeout) 
         ExitCode = if ($exited) { $p.ExitCode } else { $null }
         TimedOut = -not $exited
         Seconds  = [math]::Round($watch.Elapsed.TotalSeconds, 1)
+        Text     = [string] $text
         Ok       = $exited -and $p.ExitCode -eq 0
         Status   = if (-not $exited) { 'timeout' } elseif ($p.ExitCode -eq 0) { 'ok' } else { "exit$($p.ExitCode)" }
     }
@@ -142,6 +143,28 @@ function Get-VhdPartition {
     $parts = @($disk | Get-Partition | Where-Object { $_.Type -ne 'Reserved' -and $_.Size -gt 0 })
     if ($parts.Count -ne 1) { throw "expected one data partition on disk $($disk.Number), found $($parts.Count)" }
     $parts[0]
+}
+
+# Refuses the system drive and any letter that no partition of the VHDX at -Path holds
+# right now. Guards detach, readonly and every mountvol /p, so a wrong -Letter can
+# never take a real volume offline or make it read-only.
+function Assert-LetterIsVhdx([string] $L) {
+    $L = $L.ToUpperInvariant()
+    $system = ([string] $env:SystemDrive).TrimEnd(':', '\').ToUpperInvariant()
+    if (-not $system) { $system = 'C' }
+    if ($L -eq $system) { throw "refusing to act on the system drive ${L}:" }
+    $image = Get-VhdImage
+    if (-not $image.Attached) { throw "$script:FullPath is not attached, so ${L}: is not one of its volumes" }
+    $letters = @($image | Get-Disk | Get-Partition | Where-Object { Test-HasLetter $_ } |
+        ForEach-Object { ([string] $_.DriveLetter).ToUpperInvariant() })
+    if ($L -notin $letters) {
+        throw "drive ${L}: is not backed by $script:FullPath (its letters: $(if ($letters) { $letters -join ', ' } else { 'none' })); refusing"
+    }
+}
+
+function Invoke-DismountDiskImage {
+    $cmd = "`$ErrorActionPreference='Stop'; Dismount-DiskImage -ImagePath '$($script:FullPath)' | Out-Null"
+    Invoke-Native 'powershell.exe' "-NoProfile -NonInteractive -Command `"$cmd`"" $TimeoutSec
 }
 
 function Test-HasLetter($Part) {
@@ -205,6 +228,9 @@ function Invoke-Mount {
 
 function Invoke-Attach([switch] $ReadOnly) {
     if (-not $Letter) { throw '-Letter is required for attach' }
+    if ($Letter.ToUpperInvariant() -eq ([string] $env:SystemDrive).TrimEnd(':', '\').ToUpperInvariant()) {
+        throw "refusing to put a test volume on the system drive letter ${Letter}:"
+    }
     if ((Get-VhdImage).Attached) {
         # After 'detach -Method mountvol' the vdisk is still attached but its volume is
         # offline with no letter; giving it a mount point brings it back online.
@@ -226,6 +252,7 @@ function Invoke-Attach([switch] $ReadOnly) {
 function Invoke-Detach {
     if (-not $Letter) { throw '-Letter is required for detach' }
     if (-not (Test-VolumePresent $Letter)) { throw "no volume on ${Letter}: to detach" }
+    Assert-LetterIsVhdx $Letter
     $requested = if ($Method) { $Method } else { 'auto' }
     if ($requested -eq 'auto') {
         $order = @('diskpart', 'mountvol', 'dismountdiskimage')
@@ -240,11 +267,11 @@ function Invoke-Detach {
         $r = switch ($m) {
             'diskpart' { Invoke-Diskpart @("select vdisk file=`"$script:FullPath`"", 'detach vdisk') }
             # /p removes the mount point and dismounts the volume; the vdisk stays attached.
-            'mountvol' { Invoke-Native 'mountvol.exe' "$($Letter.ToUpperInvariant()): /p" $TimeoutSec }
-            'dismountdiskimage' {
-                $cmd = "`$ErrorActionPreference='Stop'; Dismount-DiskImage -ImagePath '$($script:FullPath)' | Out-Null"
-                Invoke-Native 'powershell.exe' "-NoProfile -NonInteractive -Command `"$cmd`"" $TimeoutSec
+            'mountvol' {
+                Assert-LetterIsVhdx $Letter # re-checked right before /p takes the volume offline
+                Invoke-Native 'mountvol.exe' "$($Letter.ToUpperInvariant()): /p" $TimeoutSec
             }
+            'dismountdiskimage' { Invoke-DismountDiskImage }
         }
         $gone = Wait-Volume $Letter $false 15
         $attempts += "${m}:$($r.Status)/$(if ($gone) { 'gone' } else { 'present' })/$($r.Seconds)s"
@@ -262,6 +289,7 @@ function Invoke-Detach {
 function Invoke-ReadOnly {
     if (-not $Letter) { throw '-Letter is required for readonly' }
     if (-not (Test-VolumePresent $Letter)) { throw "no volume on ${Letter}:" }
+    Assert-LetterIsVhdx $Letter
     $m = if ($Method) { $Method } else { 'volume' }
     $L = $Letter.ToUpperInvariant()
     switch ($m) {
@@ -286,8 +314,12 @@ function Invoke-ReadOnly {
         if (-not (Wait-Volume $L $true 30)) { throw "volume ${L}: did not come back after dismount" }
     }
     $vol = Get-Volume -DriveLetter $L
-    Write-Step "${L}: is now set read-only with $m (health=$($vol.HealthStatus))"
-    Write-Result @{ action = 'readonly'; outcome = 'ok'; letter = $L; method = $m }
+    # Does the file system report the volume as read-only? Preflight would rely on this flag.
+    $info = Invoke-Native 'fsutil.exe' "fsinfo volumeinfo ${L}:" 30
+    # fsutil lists FILE_READ_ONLY_VOLUME as a line mentioning read-only; the exact wording varies by build.
+    $flag = if (-not $info.Ok) { 'unknown' } elseif ($info.Text -match '(?i)read[- ]?only') { 'yes' } else { 'no' }
+    Write-Step "${L}: is now set read-only with $m (health=$($vol.HealthStatus), fsutil read-only flag=$flag)"
+    Write-Result @{ action = 'readonly'; outcome = 'ok'; letter = $L; method = $m; fsutil_readonly = $flag }
 }
 
 function Invoke-Unmount {
@@ -301,7 +333,7 @@ function Invoke-Unmount {
     $method = 'diskpart'
     if (-not $r.Ok) {
         $method = 'dismountdiskimage'
-        Dismount-DiskImage -ImagePath $script:FullPath | Out-Null
+        Assert-Native (Invoke-DismountDiskImage) 'Dismount-DiskImage'
     }
     if ((Get-VhdImage).Attached) { throw "$script:FullPath is still attached" }
     Write-Result @{ action = 'unmount'; outcome = 'ok'; method = $method }

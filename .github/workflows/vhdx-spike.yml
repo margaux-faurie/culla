@@ -157,7 +157,28 @@ jobs:
           if ($ok) {
             Get-ChildItem -LiteralPath 'W:\culla-spike' | Format-Table -AutoSize Name, Length, LastWriteTime
             $held = Get-ChildItem -LiteralPath 'W:\culla-spike' -Filter 'held-rw-*' | Select-Object -First 1
-            $detail = if ($held) { "held-rw length=$($held.Length) (262144 = synced head only, 327680 = with unsynced tail)" } else { 'held-rw missing' }
+            if ($held) {
+              # Same pattern as vhdx_spike.rs: byte i of a chunk is (i as u8) * 31 + seed, wrapping.
+              # Head: 256 KiB, seed 1, synced. Tail: 64 KiB, seed 2, never synced.
+              function Compare-Chunk([byte[]] $Bytes, [int] $Offset, [int] $Len, [int] $Seed) {
+                $have = [math]::Max(0, [math]::Min($Len, $Bytes.Length - $Offset))
+                if ($have -eq 0) { return 'absent' }
+                for ($i = 0; $i -lt $have; $i++) {
+                  if ($Bytes[$Offset + $i] -ne ((($i % 256) * 31 + $Seed) % 256)) { return "mismatch at byte $i" }
+                }
+                if ($have -lt $Len) { return "partial, $have of $Len bytes match" }
+                return 'matches'
+              }
+              $bytes = [System.IO.File]::ReadAllBytes($held.FullName)
+              $head = Compare-Chunk $bytes 0 262144 1
+              $tail = Compare-Chunk $bytes 262144 65536 2
+              $extra = [math]::Max(0, $bytes.Length - 327680)
+              $detail = "held-rw length=$($bytes.Length); synced head: $head; unsynced tail: $tail; bytes past the tail: $extra"
+              if ($head -ne 'matches') { $ok = $false }
+            } else {
+              $detail = 'held-rw missing'
+              $ok = $false
+            }
             pwsh -NoProfile -File scripts/ci/vhdx.ps1 -Action unmount -Path "$env:VHDX_DIR\T.vhdx" -ResultFile $env:VHDX_LOG
           }
           Add-Content -LiteralPath $env:VHDX_RESULTS -Value "| reattach | T.vhdx on W: | $detail | $(if ($ok) { 'ok' } else { 'FAILED' }) |"
@@ -180,8 +201,10 @@ jobs:
               $blocked = $LASTEXITCODE -eq 0
             }
             if ($blocked) { $working++ }
-            $detail = if (-not $set) { 'could not set read-only' } elseif ($blocked) { 'create, mkdir and open-for-write fail' } else { 'writes still succeed' }
-            Add-Content -LiteralPath $env:VHDX_RESULTS -Value "| read-only | $($case.L): exFAT, method=$($case.M) | $detail | $(if ($blocked) { 'ok' } else { 'FAILED' }) |"
+            $line = @(Get-Content -LiteralPath $env:VHDX_LOG | Where-Object { $_ -match 'action=readonly' -and $_ -match "letter=$($case.L)\b" })[-1]
+            $flag = if ($line -match 'fsutil_readonly=(\S+)') { $Matches[1] } else { 'unknown' }
+            $detail = if (-not $set) { 'could not set read-only' } elseif ($blocked) { 'create, mkdir and write fail; open for write succeeds' } else { 'writes still succeed' }
+            Add-Content -LiteralPath $env:VHDX_RESULTS -Value "| read-only | $($case.L): exFAT, method=$($case.M) | $detail; fsutil read-only flag: $flag | $(if ($blocked) { 'ok' } else { 'FAILED' }) |"
           }
           if ($working -eq 0) { Write-Host '::error::no read-only method blocked writes'; exit 1 }
           exit 0

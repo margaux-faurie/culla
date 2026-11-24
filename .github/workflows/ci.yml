@@ -63,6 +63,26 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: test
         run: cargo test --workspace --locked
+      # M0 exit: an exFAT VHDX mounts and a placeholder test writes to it. The full
+      # detach and read-only spike is in vhdx-spike.yml (scripts/ci/README.md).
+      - name: Mount exFAT test volume
+        shell: pwsh
+        timeout-minutes: 5
+        run: pwsh -NoProfile -File scripts/ci/vhdx.ps1 -Action mount -Path "$env:RUNNER_TEMP\ci-t.vhdx" -SizeMB 64 -FileSystem exFAT -Letter T
+      - name: Placeholder test on the exFAT volume
+        shell: pwsh
+        timeout-minutes: 10
+        env:
+          CULLA_VHDX_LETTER: T
+        run: cargo test -p culla-adapters --test vhdx_spike --locked -- --ignored --exact vhdx_write_placeholder --nocapture
+      - name: Unmount exFAT test volume
+        if: always()
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          if (Test-Path -LiteralPath "$env:RUNNER_TEMP\ci-t.vhdx") {
+            pwsh -NoProfile -File scripts/ci/vhdx.ps1 -Action unmount -Path "$env:RUNNER_TEMP\ci-t.vhdx"
+          }
 
   cargo-deny:
     name: cargo-deny

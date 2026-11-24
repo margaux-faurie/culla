@@ -297,12 +297,14 @@ fn vhdx_detach_spike() {
     report.flush();
 }
 
-/// Runs on a volume the workflow made read-only. Passes only if creating a file,
-/// creating a folder and writing to an existing file all fail, so its exit code tells
+/// Runs on a volume the workflow made read-only. Passes only if an existing file is
+/// found (written by `vhdx_write_placeholder` beforehand) and creating a file, creating
+/// a folder and writing to the existing file all fail, so its exit code tells
 /// the workflow whether a read-only method works.
 ///
-/// First CI run (24 Nov 2026): opening an existing file with write access *succeeds* on
-/// a write-protected volume; only the write fails (ERROR_WRITE_PROTECT, 19). So the
+/// CI run 45351794930 (24 Nov 2026, head 3be4214, the first run with the write probe):
+/// opening an existing file with write access *succeeds* on a write-protected volume;
+/// only the write fails (ERROR_WRITE_PROTECT, 19), with all three methods. So the
 /// engine's preflight can't detect an SD lock by opening a file; it uses the volume's
 /// read-only flag (design/file-engine.md, preflight).
 #[test]
@@ -354,6 +356,11 @@ fn vhdx_readonly_spike() {
     }
     report.flush();
 
+    assert!(
+        existing.is_some(),
+        "no existing file under {}; run vhdx_write_placeholder on this volume first",
+        dir.display()
+    );
     assert!(
         created.is_err(),
         "create_new succeeded on a read-only volume"
