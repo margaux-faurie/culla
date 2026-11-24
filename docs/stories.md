@@ -1,6 +1,6 @@
 # User stories
 
-Status: draft, 24 Nov 2026. Stories for M1–M3 in full, headline stories for M4 (detailed before M4 starts). Milestones are in [roadmap.md](roadmap.md). Links point to requirement families in [nfr.md](nfr.md) (`NFR-PERF`, `NFR-REL`, `NFR-A11Y`) and invariant families in [design/file-engine.md](design/file-engine.md) (`INV`); exact IDs are filled in once those docs settle. Test levels are defined in [testing.md](testing.md).
+Status: draft, 24 Nov 2026. Stories for M1–M3 in full, headline stories for M4 (M4 cannot start until they have full acceptance criteria), and one M6 story. IDs are stable: stories added later get the next free number (US-41 onward), whatever their milestone. Milestones are in [roadmap.md](roadmap.md). Links point to requirement families in [nfr.md](nfr.md) (`NFR-PERF`, `NFR-REL`, `NFR-A11Y`) and invariant families in [design/file-engine.md](design/file-engine.md) (`INV`); exact IDs are filled in once those docs settle. Numbers marked "(est.)" are repeated from nfr.md so the criteria can be checked here. Test levels are defined in [testing.md](testing.md).
 
 Roles:
 - **Photographer:** culls a card of Nikon JPEG + NEF files on Windows. The main user.
@@ -10,7 +10,8 @@ Roles:
 
 ### US-01 Streamed scan
 As a photographer, I want the first photo of a folder available about a second after I open it, so that I can start culling while the rest of the card is still being read.
-- Given a folder with 3,000 files on a UHS-I SD card, when the scan starts, then the first group is yielded within the first-photo budget, before the scan has finished.
+- Given a folder with 3,000 files on a UHS-I SD card, when the scan starts, then the first group is yielded and its preview is ready in 1.5 s or less (est.), before the scan has finished.
+- Given the same folder, when the scan and the EXIF pass run to the end, then they finish in 15 s or less (est.).
 - Given the scan is still running, when groups are yielded, then they come in filename order.
 - Given a folder with subfolders and "include subfolders" on, when it is scanned, then files in all subfolders are found.
 
@@ -64,7 +65,7 @@ Links: NFR-PERF, NFR-REL. Test: adapters unit (one fixture per Orientation value
 
 ### US-08 Prefetch and cache
 As a photographer, I want the next photo already prepared when I advance, so that culling never waits on the card.
-- Given a swipe cadence of one advance every 400 ms on a UHS-I card, when advancing through 200 photos, then next-photo latency stays within its budget at p95.
+- Given a swipe cadence of one advance every 400 ms on a UHS-I card, when advancing through 200 photos, then next-photo latency is 50 ms or less at p95 (est.) for prefetched photos, and peak memory stays at 1 GB or less (est.).
 - Given a folder culled before, when it is opened again from the same card, then previews come from the disk cache in `%LOCALAPPDATA%\Culla\cache`.
 - Given a file on removable media, when it is read, then it is read into buffers and never memory-mapped.
 
@@ -81,7 +82,7 @@ Links: NFR-REL. Test: core unit, Windows integration (VHDX remounted under anoth
 
 ### US-10 Decisions are an event log
 As a photographer, I want every decision recorded in order, so that undo, redo and resume always agree.
-- Given a sequence of decisions, undos and redos, when the log is folded, then the state matches the expected state in the golden fixture, in Rust and in TS.
+- Given a sequence of decisions, undos and redos, when the log is folded in Rust, then the state matches the expected state in the golden fixture. (The TS half of the golden tests lands with the TS reducer in M3, see US-27.)
 - Given any prefix of a log, when it is folded, then the result is a valid state.
 - Given a group that already has a decision, when a new decide event is attempted without an undo first, then it is rejected and the log is unchanged.
 
@@ -113,15 +114,17 @@ Links: INV (undecided untouched, path containment). Test: property, snapshot.
 ### US-14 RAW follows JPEG toggle
 As a photographer, I want to choose per session whether the NEF follows its JPEG, so that I can cull JPEGs and leave RAWs for later.
 - Given RAW follows on, when a pair is kept or rejected, then the NEF and its sidecars get the same op as the JPEG.
-- Given RAW follows off, when a pair is kept or rejected, then the NEF, `X.NEF.xmp` and the NEF's `.nksc` are left untouched, and the JPEG with `X.JPG.xmp` gets the op.
+- Given RAW follows off, when a pair is kept or rejected, then the NEF, `X.NEF.xmp` and `NKSC_PARAM/X.NEF.nksc` are left untouched, and the JPEG with `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` gets the op.
+- Given `X.xmp` or `X.pp3` next to a pair, when the pair is decided, then they follow the group's primary (the JPEG), whether RAW follows is on or off ([SPEC.md](SPEC.md) section 3.1).
 - Given a lone NEF, when it is decided, then it is moved like any primary, whatever the toggle.
 
-Links: INV (RAW pairing, group consistency). Test: property, unit. Open: where `X.xmp` goes when RAW follows is off (see [design/file-engine.md](design/file-engine.md)).
+Links: INV (RAW pairing, group consistency). Test: property, unit.
 
 ### US-15 Collisions get a group suffix
 As a photographer, I want name clashes at the destination handled without overwriting, so that a counter reset never costs me a photo.
 - Given `D/DSC_0001.JPG` already exists, when a kept pair `DSC_0001` is planned, then JPG, NEF and sidecars all get `DSC_0001_1`.
 - Given `_1` is also taken by any member, when planned, then the whole group gets `_2`.
+- Given a suffixed group, when planned, then the suffix is applied inside sidecar names too (`DSC_0001_1.NEF.xmp`, `NKSC_PARAM/DSC_0001_1.NEF.nksc`).
 - Given any plan, when inspected, then no two ops share a destination and no destination exists.
 
 Links: INV (no overwrite, group consistency). Test: property.
@@ -144,8 +147,9 @@ Links: INV (no overwrite). Test: Windows integration.
 ### US-18 Cross-volume move is verified before the source goes
 As a photographer, I want a move from my card to my laptop verified before the card copy is removed, so that a flaky reader cannot corrupt a photo.
 - Given a cross-volume move, when it executes, then the file is copied to `*.culla-partial` while hashing, fsynced, then destination and source are both re-read and hashed, the hashes compared, the partial renamed into place, and only then is the source removed.
-- Given the read-back hash differs, when verify runs, then the source is kept, the op fails and the partial is cleaned up.
-- Given any removal, when it happens, then it goes through the single audited function, which accepts only a verified cross-volume source or a Culla `*.culla-partial` file.
+- Given verify, when it reads the destination back, then it opens it with `FILE_FLAG_NO_BUFFERING`, so the OS cache cannot answer for the disk.
+- Given any of the three hashes differs, when verify runs, then the source is kept, the op fails and the partial is cleaned up.
+- Given any removal, when it happens, then it goes through `remove_verified`, which accepts only a verified cross-volume source or a Culla `*.culla-partial` file.
 - Given a copy or move, when it completes, then the mtime is preserved (±2 s on FAT-family volumes).
 
 Links: INV (never delete, no overwrite), NFR-REL. Test: Windows integration, fault injection.
@@ -159,12 +163,21 @@ Links: NFR-REL. Test: Windows integration.
 
 ### US-20 Resume an interrupted apply
 As a photographer, I want an apply that was cut off by a crash or a pulled card to finish when I reopen the app, so that I never end up with half-moved photos.
-- Given an apply killed at a random point, when the app starts, then resume rolls the journal forward and every planned file ends up exactly once at its source or destination with its original hash.
+- Given an apply killed at a random point, when the app starts, then resume rolls the journal forward and every op ends in the end state for its kind ([testing.md](testing.md) section 6.1): a move leaves the file at exactly one place, a copy leaves it at both, always with its original hash.
+- Given an op that had reached `verified`, when resume runs, then it completes the rename (and, cross-volume, the source removal) and ends `done`; it is never rolled back or re-copied.
 - Given the card was pulled and comes back under another letter, when resume runs, then it identifies the volume by serial before touching anything.
 - Given resume finished, when it runs again, then it does nothing.
 - Given any apply, when it ends, then a plain-text log of operations is written.
 
 Links: NFR-REL, INV (journal, never delete). Test: fault injection, crash loop, volume detach.
+
+### US-41 Nothing touches the disk before Apply
+As a photographer, I want Culla to leave my card exactly as it was until I confirm Apply, so that I can open, cull and close without any risk.
+- Given a full session (scan, EXIF pass, decisions with undo and redo, review, preflight) driven through a recording `FileSystem` port, then the port records zero mutating calls under the source or the destination.
+- Given the same session on real volumes, closed without applying, then the hash, mtime and attributes of every file in the source and destination trees are unchanged, and no file was added or removed there.
+- Given any session, then everything Culla writes before Apply (sessions, cache, logs) is under `%LOCALAPPDATA%\Culla`, never on the card.
+
+Links: INV (nothing before Apply), NFR-REL. Test: core unit (recording port), Windows integration ([testing.md](testing.md) section 4).
 
 ## M3 — Desktop swipe loop
 
@@ -216,7 +229,9 @@ As a photographer, I want to undo the photo in front of me or my last action any
 - Given I made decisions on photos 10, 11 and 12 and am on 13, when I press Ctrl+Z, then the decision on 12 is undone and photo 12 is shown.
 - Given I pressed Ctrl+Z, when I press Ctrl+Shift+Z, then the decision is redone and that photo is shown.
 
-Links: INV (decision log). Test: Vitest, golden, Playwright.
+- Given the golden fixtures from M2, when the TS reducer folds each log, then it gives the same state as the Rust reducer.
+
+Links: INV (decision log). Test: Vitest, golden (TS half), Playwright.
 
 ### US-28 Navigate without deciding
 As a photographer, I want to move around without deciding, so that I can compare and come back.
@@ -260,9 +275,18 @@ As a maintainer, I want images served only by the custom scheme for IDs from the
 
 Links: NFR-REL, threat model ([threat-model.md](threat-model.md)). Test: `src-tauri` smoke, adapters unit.
 
+### US-42 Keep and Reject buttons (M3)
+As a photographer who does not want to drag or use the keyboard, I want visible Keep and Reject buttons, so that I can cull with single clicks (WCAG 2.5.7).
+- Given an undecided photo on the swipe screen, when I click Keep, then it is kept and the next photo is shown, with the same exit animation as →.
+- Given an undecided photo, when I click Reject, then it is rejected and the next photo is shown.
+- Given a photo that already has a decision, when I click either button, then the decision does not change and the "Press U to undo" toast shows, as for the arrows.
+- Given the buttons, then each has a visible text label, is reachable by Tab, shows a focus ring, and has a target size of at least 24×24 CSS px.
+
+Links: NFR-A11Y. Test: Playwright click-only flow (cull 10 photos with the mouse only, no drag, no keys), axe, Vitest.
+
 ## M4 — Headline stories
 
-To be detailed with acceptance criteria before M4 starts.
+M4 does not start until each of these has full Given/When/Then acceptance criteria ([roadmap.md](roadmap.md), M4 entry criteria).
 
 | ID | Story | Links |
 |---|---|---|
@@ -273,3 +297,13 @@ To be detailed with acceptance criteria before M4 starts.
 | US-38 | As a photographer, I want an interrupted apply resumed with a clear message when the app opens, so that I know my photos are safe. | NFR-REL, INV |
 | US-39 | As a photographer, I want to zoom to 100 % at the cursor (Z toggle or hold Space) and pan with the arrows, so that I can check focus before deciding. | NFR-PERF, NFR-A11Y |
 | US-40 | As a photographer, I want an EXIF overlay (I) with date, lens, exposure, so that I can tell near-identical shots apart. | NFR-A11Y |
+
+## M6
+
+### US-43 Uninstall keeps or removes my Culla data, never my photos
+As a photographer removing Culla, I want to choose whether my sessions and cache go too, so that I can reinstall later without losing a half-culled card, or leave nothing behind.
+- Given Culla is installed and `%LOCALAPPDATA%\Culla` holds sessions, cache and logs, when I uninstall without ticking "remove my Culla data", then the app is removed and `%LOCALAPPDATA%\Culla` is kept.
+- Given the same, when I uninstall with the box ticked, then `%LOCALAPPDATA%\Culla` is removed.
+- Given either choice, then no photo, `_rejected/` folder or destination folder is touched.
+
+Links: NFR-REL, privacy in [nfr.md](nfr.md). Test: installer test on `windows-latest` ([testing.md](testing.md) section 5.3), manual checklist.

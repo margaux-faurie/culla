@@ -8,8 +8,9 @@ Status: draft, 24 Nov 2026. Scope: v1 (Windows). Requirements live in [nfr.md](n
 - Every `INV-xx` has at least one property test or one Windows integration test that names it in the test name or a doc comment.
 - Crate split decides where a test runs. `crates/core` (package `culla-core`) is pure, with no I/O, so its tests run anywhere and use in-memory ports. `crates/adapters` (package `culla-adapters`) holds Windows file ops, parsers, decode and SQLite; its file-op tests run on `windows-latest`. `src-tauri` is wiring only and gets a smoke test, not logic tests.
 - Tests run on Linux where possible (fast, cheap) and on `windows-latest` where Windows behaviour matters (rename semantics, locks, volumes, long paths, junctions).
-- A test that needs real hardware is in the manual checklist (section 7), not skipped silently in CI.
+- A test that needs real hardware is in the manual checklist (section 8), not skipped silently in CI.
 - A bug fix starts with a failing test. A fuzz crash becomes a regression test.
+- Scope of the removal and rename rules: clippy `disallowed-methods` (`std::fs::remove_*`, raw `std::fs::rename`) is enforced on `culla-core`, `culla-adapters`, `culla-cli` and `src-tauri` only. Test code, `xtask` and `culla-bench` are outside the rule, because they must create and clean up scratch data. They only ever do so inside temporary directories (`tempfile::TempDir`), never in a user folder ([ADR 0020](adr/0020-headless-cli-and-bench-crates.md)).
 
 ## 2. Pyramid
 
@@ -32,11 +33,12 @@ flowchart TB
 | Property | `proptest` | Linux | plan building, decision log fold (section 3) | every PR (default case count), nightly (high case count) |
 | Golden | JSONL fixtures in `testdata/event-log/` | Linux (Rust and Node) | Rust and TS reducers give the same state for the same log | every PR |
 | Unit (TS) | Vitest, against `DemoBackend` | Linux | reducer, keyboard map, key-repeat filter, swipe threshold logic, filters, end-of-list | every PR |
-| Integration (Windows) | `cargo test -p culla-adapters --features windows-it` on `windows-latest` | Windows | real file ops (section 4), crash and resume (section 5) | every PR touching `crates/core`, `crates/adapters` or `src-tauri`, and nightly |
-| End to end | Playwright + `@axe-core/playwright` on the demo build | Linux (Chromium, plus Firefox and WebKit for the demo) | swipe loop, keyboard-only flows, review screen, a11y | every PR touching `src/` |
+| Integration (Windows) | `cargo test -p culla-adapters --features windows-it` on `windows-latest` | Windows | nothing-before-Apply checks (section 4), real file ops (section 5), crash and resume (section 6) | every PR touching `crates/core`, `crates/adapters` or `src-tauri`, and nightly |
+| End to end | Playwright + `@axe-core/playwright` on the demo build | Linux (Chromium, plus Firefox and WebKit for the demo) | swipe loop, keyboard-only flows, click-only flow with the Keep and Reject buttons, review screen, a11y | every PR touching `src/` |
+| Installer | NSIS silent install and uninstall on `windows-latest` | Windows | per-user install, "remove my Culla data" option (section 5.3) | from M6, on release PRs |
 | Desktop smoke | `tauri-driver` on Windows | Windows | app starts, opens a fixture folder, shows a photo through `culla://` | from M3, nightly |
-| Fuzz | `cargo-fuzz` (nightly toolchain, libFuzzer) | Linux | parsers (section 6) | nightly |
-| Manual | checklist in section 7 | G14 | real media, colour, feel | before each release |
+| Fuzz | `cargo-fuzz` (nightly toolchain, libFuzzer) | Linux | parsers (section 7) | nightly |
+| Manual | checklist in section 8 | G14 | real media, colour, feel | before each release |
 
 ## 3. Property tests
 
@@ -54,7 +56,8 @@ Properties, each linked to its invariant in [design/file-engine.md](design/file-
 | All members of a group get the same target stem (same suffix `_1`, `_2`…). | group consistency |
 | Undecided groups produce no operation. | undecided untouched |
 | With RAW follows off, no operation touches a NEF that has a JPEG primary. | RAW pairing |
-| Each sidecar follows the file it describes: `X.NEF.xmp` and `NKSC_PARAM/X.NEF.nksc` follow the NEF, `X.JPG.xmp` follows the JPEG, `X.xmp` follows the group. With RAW follows off, the NEF's sidecars stay with the NEF. | group consistency |
+| Each sidecar follows the file it describes ([SPEC.md](SPEC.md) section 3.1): `X.NEF.xmp` and `NKSC_PARAM/X.NEF.nksc` follow the NEF, `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` follow the JPEG, `X.xmp` and `X.pp3` follow the group's primary. With RAW follows off, the NEF's sidecars stay with the NEF. | group consistency |
+| A collision suffix is applied inside sidecar names too (`X_1.NEF.xmp`, `NKSC_PARAM/X_1.NEF.nksc`). | group consistency |
 | Every removal in a plan targets either a verified cross-volume source or a Culla `*.culla-partial` file. | never delete |
 | Subfolder structure is mirrored (relative path preserved). | path containment |
 | `plan()` is deterministic: same input, same plan. | determinism |
@@ -77,13 +80,24 @@ Properties:
 - Files: `testdata/event-log/<case>.jsonl` (input events) and `<case>.expected.json` (derived state and undo/redo cursor).
 - The event schema is the one defined in [design/file-engine.md](design/file-engine.md), exported from Rust to TS. This doc does not define it.
 - `cargo test` and Vitest both load every case. A case that passes in one language and fails in the other fails CI.
+- Timing: the Rust side and the fixtures land in M2 (US-10). The TS reducer, and so the Vitest half of the golden tests, lands in M3 (US-27).
 - A proptest run in Rust can write new cases (`cargo xtask golden --from-proptest`), so the TS reducer is checked against generated logs too, not only hand-written ones.
 
-## 4. Windows integration tests
+## 4. Nothing touches the disk before Apply
 
-Run on `windows-latest`. They use real `std::fs` adapters, not the in-memory `FileSystem` port.
+This is the first invariant in `CLAUDE.md` and [ADR 0003](adr/0003-stage-decisions-in-a-queue-until-explicit-apply.md). It is tested at three levels.
 
-### 4.1 Getting a second volume on a GitHub-hosted runner
+| Test | Where | Assertion |
+|---|---|---|
+| Recording `FileSystem` port | `culla-core`, anywhere | A `RecordingFs` wraps the in-memory port and logs every call. Drive a whole session through it: scan, EXIF pass, decisions with undo and redo, filters, review (plan building), preflight. The log contains zero mutating calls (create, write, rename, remove, set-times, set-attributes) on any path under the source or the destination. Mutating calls happen only after the explicit `apply` call. |
+| Source tree hash | `culla-adapters`, Windows integration | Hash every file and record every mtime and attribute under the source (on the exFAT VHDX) and the destination before a session. Run scan, preview generation, decisions, review and preflight through the real adapters, then close the app without applying. Hashes, mtimes, attributes and the file list are unchanged. Also after a session that ends with "start fresh". |
+| Write locations | `culla-adapters`, Windows integration | Point `%LOCALAPPDATA%` at a temp dir for the test process. After a full session without Apply, every file created or modified on the test volumes (`C:` workspace, `T:`, `U:`) is under `%LOCALAPPDATA%\Culla` (`sessions`, `cache`, `logs`). Nothing is written on the card, in the source or in the destination (no session database, no thumbnails, no temp files). Checked by diffing a full listing of the test volumes before and after. |
+
+## 5. Windows integration tests
+
+Run on `windows-latest`. They use the real `culla-adapters` file ops, not the in-memory `FileSystem` port.
+
+### 5.1 Getting a second volume on a GitHub-hosted runner
 
 The cross-volume path (copy, hash, fsync, rename, delete source) only runs when source and destination are on different volumes. Options checked:
 
@@ -102,14 +116,17 @@ Volumes per job:
 
 The card-pull case uses `Dismount-DiskImage` or `diskpart detach vdisk` in the middle of an apply. The write-protect case uses `diskpart attributes volume set readonly`.
 
-### 4.2 Cases
+**M0 spike:** detaching a VHDX while the test process still holds open handles on it may be refused or may block. Prove in M0 that the detach works mid-apply on a hosted runner, with handles open. Fallbacks if it does not: `mountvol <L>: /p` (removes the mount point and takes the volume offline), or the `setup-dev-drive` action's volume handling. Record the method that works in `scripts/ci/README.md`.
+
+### 5.2 Cases
 
 | Case | Expectation | Links |
 |---|---|---|
 | Same-volume move | single rename, no copy, source gone, target present | INV, NFR-REL |
-| Cross-volume move C: → T: and T: → C: | partial file, fsync, destination and source both re-read and hashed, hashes equal, rename, then source removal; mtime kept | INV, NFR-REL |
+| Cross-volume move C: → T: and T: → C: | partial file, hash of the source during the copy, fsync, destination read back with `FILE_FLAG_NO_BUFFERING`, source re-read for a second hash, all three hashes equal, rename, then source removal; mtime kept | INV, NFR-REL |
+| Read-back bypasses the OS cache | the adapter opens the destination for verify with `FILE_FLAG_NO_BUFFERING` (asserted through a flag-recording wrapper around the open call) | INV never delete |
 | Read-back mismatch (test adapter flips a byte in the destination after fsync, or the source changes during the copy) | verify fails, source is kept, the op is marked failed, the bad partial is cleaned up | INV never delete |
-| Audited removal function, direct calls | refuses a path that is not a journalled, verified cross-volume source and not a Culla `*.culla-partial`: an unverified source, a kept original, a file in `_rejected/`, a user file named `*.culla-partial` outside the journal, a junction target | INV never delete |
+| `remove_verified`, direct calls | refuses a path that is not a journalled, verified cross-volume source and not a Culla `*.culla-partial`: an unverified source, a kept original, a file in `_rejected/`, a user file named `*.culla-partial` outside the journal, a junction target | INV never delete |
 | Copy across volumes | source kept, mtime kept (±2 s on exFAT) | INV |
 | Target appears between plan and execute (same volume) | `MoveFileExW` is called with only `MOVEFILE_WRITE_THROUGH` (no replace-existing, no copy-allowed); the existing target is a hard error, the op is marked failed, the existing file is byte-identical afterwards | INV no overwrite |
 | Target appears between plan and execute (cross volume, at the final rename of the partial) | same hard error; the partial stays journalled, the source is not removed | INV no overwrite, never delete |
@@ -126,44 +143,71 @@ The card-pull case uses `Dismount-DiskImage` or `diskpart detach vdisk` in the m
 | Same basename in two DCIM folders | not paired across folders | INV |
 | Destination inside the source, `_rejected/` present | both excluded from the rescan | INV |
 | Volume remounted under another letter | session and cache found by volume serial | NFR-REL |
-| No `remove_*` outside the audited function | enforced by clippy `disallowed-methods` in CI, plus a CI grep that the audited function has a single call site per removal kind | INV never delete |
-| `X.NEF.xmp` with RAW follows off | NEF and its `.NEF.xmp` and `.nksc` stay; JPEG and `X.JPG.xmp` move; `X.xmp` follows the group primary | INV group consistency |
+| No `remove_*` outside `remove_verified` | enforced by clippy `disallowed-methods` on `culla-core`, `culla-adapters`, `culla-cli` and `src-tauri`, plus a CI grep that `remove_verified` is the only caller of the underlying call | INV never delete |
+| `X.NEF.xmp` with RAW follows off | NEF and its `.NEF.xmp` and `.nksc` stay; JPEG, `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` move; `X.xmp` and `X.pp3` follow the primary (the JPEG) | INV group consistency |
 
-## 5. Interrupted apply and crash simulation
+### 5.3 Installer and uninstaller (from M6)
 
-Three levels, from cheap to realistic.
+`scripts/ci/installer-test.ps1` installs the NSIS build silently for the current user, seeds `%LOCALAPPDATA%\Culla` with a fixture session database, cache entries and a log, next to a fixture source with `_rejected/` and a destination, then:
+- uninstalls with "remove my Culla data" off: `%LOCALAPPDATA%\Culla` is kept, the app files are gone;
+- reinstalls and uninstalls with the option on: `%LOCALAPPDATA%\Culla` is gone;
+- in both cases the fixture source, its `_rejected/` and the destination are byte-identical to before (the uninstaller never touches photos).
 
-1. **Fault injection in core (anywhere).** A `FaultyFs` implementation of the core `FileSystem` port fails or "crashes" at a chosen step of a chosen op: after the partial copy, before fsync, after the hash check, after rename, before the source delete, during the journal write. The test then drops all state, reopens the SQLite journal and runs resume. A proptest variant picks the op and step at random.
-2. **Process kill (Windows).** The test spawns the headless CLI (`culla apply`, from M2) on a fixture plan and kills it with `TerminateProcess` after a random delay. Repeat 50 times per nightly run (5 per PR). Then run resume.
-3. **Volume loss (Windows).** Detach the `T:` VHDX during a cross-volume apply. Reattach under a different letter. Resume.
+The NSIS option name used for the silent run is to confirm when the installer hook is written.
 
-After every scenario, the checker asserts:
-- every file of every planned op exists exactly once, at its source or at its destination, with its original hash;
-- no `*.culla-partial` file is left once resume has finished;
-- no file outside the plan was touched (hash of the whole tree before and after);
-- the journal reaches a terminal state for every row;
-- running resume a second time does nothing (idempotent).
+## 6. Interrupted apply and crash simulation
 
-The exact journal states and resume rules are owned by [design/file-engine.md](design/file-engine.md). The checker reads them from there; it does not redefine them.
+Four levels, from cheap to realistic.
 
-## 6. Fuzzing
+1. **Fault injection in core (anywhere).** `FaultyFs` (core `FileSystem` port) and an in-memory `Journal` port, both in `culla-core`. The fault fires at a chosen step of a chosen op: after the partial copy, before fsync, after the hash check, after rename, before the source removal, during the journal write (the write is lost or half-applied). The test keeps only what the in-memory journal had durably committed, drops everything else, and runs resume. A proptest variant picks the op and step at random. No SQLite and no disk here.
+2. **Journal persistence (`culla-adapters`).** The SQLite journal is closed abruptly (connection dropped without commit, process killed between statements) and reopened. Every committed row reads back with its state; an uncommitted transition is not visible. WAL and `synchronous=FULL` settings are asserted on open.
+3. **Process kill (Windows).** The test spawns `culla apply` ([ADR 0020](adr/0020-headless-cli-and-bench-crates.md), from M2) on a fixture plan and kills it with `TerminateProcess` after a random delay. Repeat 50 times per nightly run (5 per PR). Then run `culla resume`.
+4. **Volume loss (Windows).** Detach the `T:` VHDX during a cross-volume apply (method proven in the M0 spike, section 5.1). Reattach under a different letter. Resume.
+
+### 6.1 Expected end state per op kind
+
+After resume has finished, each op is `done` or `failed` ([SPEC.md](SPEC.md) section 5.2 states). The checker asserts, per op kind:
+
+| Op kind | `done` | `failed` |
+|---|---|---|
+| Keep, move, same volume | at destination only, original hash | at source only, original hash |
+| Keep, move, cross volume | at destination only, original hash; source removed by `remove_verified` | at source only, original hash; no partial left |
+| Keep, copy (same or cross volume) | at **both** source and destination, identical hashes; source mtime and attributes unchanged | at source only; no partial left |
+| Reject, move to `<source>/_rejected/` (always same volume as the source) | in `_rejected/` only, original hash | at source only, original hash |
+
+For every op, in every case:
+- the file is never missing from both places, and never present at both places for a move;
+- no `*.culla-partial` file is left;
+- no file outside the plan was touched (hash and listing of both trees before and after);
+- running resume a second time changes nothing (idempotent).
+
+### 6.2 Roll forward past `verified`
+
+- An op whose journal row was `verified` at the time of the crash ends `done` after resume: the rename into place and, for a cross-volume move, the source removal are completed. It is never rolled back and never re-copied (asserted with the recording port: no copy call for that op during resume).
+- An op that was `pending` or `copying` is started again from its beginning; its leftover partial is removed through `remove_verified`.
+- If the destination is not what the journal expects (missing, or a different hash), the op ends `failed` and the source is kept.
+
+The exact transitions and resume rules are owned by [design/file-engine.md](design/file-engine.md); the checker reads them from there.
+
+## 7. Fuzzing
 
 - Targets in `fuzz/` (cargo-fuzz, `arbitrary` for structure-aware input):
   1. `tiff_ifd_walk`: IFD0, SubIFDs, MakerNote PreviewIFD, offsets and counts out of range, loops between IFDs.
   2. `nef_preview_extract`: picks the largest embedded JPEG; must never read past the buffer or allocate more than the configured limit.
   3. `exif_fields`: the fields Culla reads through `kamadak-exif` (DateTimeOriginal, Orientation, LensModel, LensSpecification).
   4. `jpeg_header`: the decode-size guard in front of turbojpeg (decompression bombs).
-- Seed corpus: the synthetic fixtures (section 8) plus the stripped real samples.
+- Seed corpus: the synthetic fixtures (section 9) plus the stripped real samples.
 - Schedule: nightly GitHub Actions job, 10 minutes per target, corpus cached between runs. `practices.md` suggested weekly; nightly is cheap at this size.
 - A crash opens an issue, and the minimized input is added to `testdata/fuzz-regressions/` with a unit test that runs on every PR.
 - Pass bar: no panic, no timeout above 1 s per input, no allocation above the limit.
 
-## 7. Manual checklist (real hardware)
+## 8. Manual checklist (real hardware)
 
 Run on the ROG Zephyrus G14 2024 before each release, and once at the end of M1, M2 and M3. The author does this.
 
 - [ ] Real SD card (UHS-I) in a USB reader, and a microSD in the built-in reader, with real Nikon JPEG + NEF files (body or bodies: see open question in [SPEC.md](SPEC.md) section 10).
-- [ ] First photo appears within the budget in `NFR-PERF-xx` on a cold card (card freshly inserted).
+- [ ] First photo appears in 1.5 s or less (est., `NFR-PERF`) on a cold UHS-I card (card freshly inserted), 3,000-file folder.
+- [ ] Next photo appears in 50 ms or less at p95 (est.) when prefetched. Memory stays at 1 GB or less (est.) during a 200-photo cull.
 - [ ] Swipe 200 photos at full speed by keyboard. No dropped or doubled decisions. Holding → decides one photo only.
 - [ ] Drag with the trackpad: commit on flick, spring back on a short drag.
 - [ ] Portrait photos are upright (EXIF orientation).
@@ -177,8 +221,9 @@ Run on the ROG Zephyrus G14 2024 before each release, and once at the end of M1,
 - [ ] Flip the SD write-protect switch: preflight blocks apply with a clear message.
 - [ ] Open the same card in Lightroom or Explorer during apply: sharing violations are retried, and failures are reported.
 - [ ] Installer: per-user install without admin, SmartScreen warning matches the README text, updater finds a test release.
+- [ ] Uninstall without ticking "remove my Culla data": `%LOCALAPPDATA%\Culla` is kept. Reinstall, uninstall with the box ticked: it is removed. Photos, `_rejected/` and destinations are untouched in both cases.
 
-## 8. Test data
+## 9. Test data
 
 | Set | Content | Where | Licence |
 |---|---|---|---|
@@ -190,16 +235,16 @@ The generator writes TIFF and EXIF structures with its own minimal writer, not w
 
 Privacy for real samples: before committing, strip GPS, owner name and body serial number from the files (a local `exiftool` run is fine; it is a dev tool, not shipped). Check that each stripped NEF still parses and still yields its preview. The same rule applies to the web demo photos.
 
-## 9. Coverage
+## 10. Coverage
 
 - Measured with `cargo llvm-cov` on `culla-core` (Linux) and `culla-adapters` (Windows job), reported on PRs.
 - Gate: line coverage of the file engine modules in `culla-core` (plan, preflight, journal, apply, resume) at 90 % or more, the rest of `culla-core` at 80 % or more. The fs-op module of `culla-adapters` (checked rename, copy, verify, audited removal) at 90 % or more on the Windows job.
 - No gate on the UI or on `src-tauri`. Vitest coverage is reported for the reducer and keyboard logic only.
 - Coverage is a floor, not the goal. A PR that lowers it on the file engine needs a reason in the description.
 
-## 10. Commands
+## 11. Commands
 
-These are the planned commands. M0 makes them real and keeps `CLAUDE.md` in sync. Packages: `culla-core` (`crates/core`), `culla-adapters` (`crates/adapters`).
+These are the planned commands. M0 makes them real and keeps `CLAUDE.md` in sync. Packages: `culla-core` (`crates/core`), `culla-adapters` (`crates/adapters`), `culla-cli` (`crates/cli`, binary `culla`) and `culla-bench` (`crates/bench`), see [ADR 0020](adr/0020-headless-cli-and-bench-crates.md).
 
 | Purpose | Command |
 |---|---|
@@ -208,7 +253,8 @@ These are the planned commands. M0 makes them real and keeps `CLAUDE.md` in sync
 | One Rust test | `cargo test -p culla-core <name>` or `cargo test -p culla-adapters <name>` |
 | Property tests, long run | `PROPTEST_CASES=10000 cargo test -p culla-core prop_` |
 | Windows integration | `pwsh scripts/ci/mount-test-volume.ps1` then `cargo test -p culla-adapters --features windows-it` (Windows only) |
-| Crash loop | `cargo xtask crash-loop --iterations 50` (Windows only, from M2) |
+| Crash loop | `cargo xtask crash-loop --iterations 50` (Windows only, from M2; drives `culla apply` and `culla resume`) |
+| Installer test | `pwsh scripts/ci/installer-test.ps1` (Windows only, from M6) |
 | Lint Rust | `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` and `cargo deny check` |
 | All TS tests | `pnpm test` |
 | One TS test file | `pnpm test <file>` |
@@ -220,19 +266,20 @@ These are the planned commands. M0 makes them real and keeps `CLAUDE.md` in sync
 
 Agents run the fast check after each change, the relevant test file before saying a task is done, and paste the command and its output as evidence. Windows-only tests are left to CI when the agent runs on Linux; the agent says so in the PR.
 
-## 11. Definition of Done (per PR)
+## 12. Definition of Done (per PR)
 
 Copy of the PR template checklist.
 
 - [ ] Linked to a story (`US-xx`) or an issue. Acceptance criteria met.
 - [ ] Tests added or changed first, and failing before the fix (for bug fixes).
 - [ ] Any change to plan, preflight, journal, apply or resume has property or integration tests naming the `INV-xx` it protects.
+- [ ] Any change to scan, preview, session or review code keeps the "nothing touches the disk before Apply" tests (section 4) green.
 - [ ] `pnpm check`, `pnpm test`, `cargo test --workspace`, clippy `-D warnings`, `cargo fmt --check` and `cargo deny check` are green.
 - [ ] Windows integration job green when `crates/core`, `crates/adapters` or `src-tauri` changed.
 - [ ] Playwright and axe green when `src/` changed. New UI is reachable by keyboard.
 - [ ] Coverage gates on `culla-core` and the `culla-adapters` fs-op module hold.
 - [ ] Generated bindings are up to date (`git diff --exit-code` after `pnpm gen:bindings`).
-- [ ] No new `std::fs::remove_*` or raw `std::fs::rename`, no I/O and no `unsafe` in `crates/core`, no new Tauri command without a capability entry.
+- [ ] No new `std::fs::remove_*` or raw `std::fs::rename` in `culla-core`, `culla-adapters` or `src-tauri`; no I/O and no `unsafe` in `crates/core`; test and bench code touch only temp dirs; no new Tauri command without a capability entry.
 - [ ] No network call added (privacy rule in [nfr.md](nfr.md)).
 - [ ] If a decision changed: ADR added or updated in `docs/adr/`. If a budget moved: [nfr.md](nfr.md) updated.
 - [ ] `CLAUDE.md` updated if a command, the layout, an invariant or a convention changed.

@@ -11,6 +11,7 @@ flowchart LR
   M0["M0<br/>Repo and tooling"] --> M1["M1<br/>Core engine headless<br/>+ CLI + benchmarks"]
   M1 --> M2["M2<br/>File engine<br/>plan, preflight, journal,<br/>apply, resume"]
   M1 --> M3["M3<br/>Desktop swipe loop"]
+  M2 -- "session store<br/>(US-11)" --> M3
   M2 --> M4["M4<br/>Review and apply UI,<br/>sessions, zoom, EXIF"]
   M3 --> M4
   M3 --> M5["M5<br/>Web demo +<br/>design system polish"]
@@ -25,7 +26,9 @@ flowchart LR
   A4(["Author: release approval,<br/>updater key, SignPath"]) -.-> M6
 ```
 
-M2 and M3 can run in parallel once M1 is done: M3 needs the scan and preview pipeline, not the file engine. M4 needs both.
+M3 can start once M1 is done, building the UI against `DemoBackend`: it needs the scan and preview pipeline, not the apply engine. But M3 cannot exit before M2's session store and decision log (US-10, US-11) are done, because autosave and the shared reducer depend on them. M4 needs both M2 and M3 in full.
+
+Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [benchmarks.md](benchmarks.md), all estimates to be confirmed by M1: first photo ≤ 1.5 s from a UHS-I SD card, next prefetched photo ≤ 50 ms at p95, memory ≤ 1 GB, scan of 3,000 files ≤ 15 s on SD.
 
 ## Milestones
 
@@ -36,16 +39,19 @@ M2 and M3 can run in parallel once M1 is done: M3 needs the scan and preview pip
   - pnpm + Cargo workspaces with the layout `crates/core` (`culla-core`, pure, no I/O), `crates/adapters` (`culla-adapters`, Windows fs ops, parsers, decode, SQLite), `src-tauri` (wiring only), `src`; empty but building.
   - CI on PRs: Biome, `tsc`, rustfmt, clippy `-D warnings`, `cargo deny`, `cargo test`, Vitest; a `windows-latest` job; action SHAs pinned or `actions.lock`; `permissions: {}` by default; CodeQL; Scorecard; Dependabot (grouped, 3 ecosystems); pnpm supply-chain settings.
   - `CLAUDE.md` with real commands, `.claude/settings.json` (format hook, fast Stop check, deny rules, protected paths), read-only reviewer agents, skills (`add-command`, `new-adr`, `release`).
-  - clippy `disallowed-methods` for `std::fs::remove_*` and raw `std::fs::rename`; `#![forbid(unsafe_code)]` in core; `cargo deny` bans `tauri` in the core and adapters trees and any I/O crate in core.
+  - Workspace members also include `crates/cli` (`culla-cli`, binary `culla`) and `crates/bench` (`culla-bench`), empty ([ADR 0020](adr/0020-headless-cli-and-bench-crates.md)).
+  - clippy `disallowed-methods` for `std::fs::remove_*` and raw `std::fs::rename`, enforced on `culla-core`, `culla-adapters`, `culla-cli` and `src-tauri` only (test code and `culla-bench` are outside it and work in temp dirs); `#![forbid(unsafe_code)]` in core; `cargo deny` bans `tauri` in the core and adapters trees and any I/O crate in core.
   - ADR-0000 and the first ADRs listed in [research/pre-project-docs.md](research/pre-project-docs.md) section 2.
   - release-please with Conventional Commits; MIT `LICENSE`; README stub.
-  - Fixture generator skeleton (`cargo xtask fixtures`) and the VHDX mount script for Windows CI ([testing.md](testing.md) section 4.1).
+  - Fixture generator skeleton (`cargo xtask fixtures`) and the VHDX mount script for Windows CI ([testing.md](testing.md) section 5.1).
+  - Spike: detach a mounted VHDX on a hosted runner while a test process holds open handles on it (needed for the card-pull test). Fallbacks if it fails: `mountvol <L>: /p`, or the `setup-dev-drive` action.
 - **Exit criteria:**
   - A trivial PR goes green on all jobs, Linux and Windows.
   - A PR that adds `std::fs::remove_file` or `std::fs::rename` outside the audited adapter module fails CI.
   - `CLAUDE.md` commands section no longer says "target"; every listed command runs.
   - The Windows job mounts an exFAT VHDX and runs a placeholder test on it.
-  - All commands in [testing.md](testing.md) section 10 run (even if they test nothing yet).
+  - The VHDX detach spike is done and the working method is recorded in `scripts/ci/README.md`.
+  - All commands in [testing.md](testing.md) section 11 run (even if they test nothing yet).
 
 ### M1 — Core engine headless + CLI + benchmarks
 
@@ -57,11 +63,11 @@ M2 and M3 can run in parallel once M1 is done: M3 needs the scan and preview pip
   - Own TIFF/IFD walker for NEF previews; fuzz targets running nightly.
   - Preview pipeline: turbojpeg scaled decode, resize, orientation, encode; reader threads separate from decode workers; prefetch; in-memory LRU; disk cache. No mmap on removable media.
   - Parsers, decode and scan I/O in `culla-adapters`; grouping and ordering logic in `culla-core`.
-  - Headless CLI (`culla scan`, `culla preview`) and `culla-bench`.
-  - Benchmark campaign per [benchmarks.md](benchmarks.md).
+  - Headless CLI `culla scan`, `culla preview` (`crates/cli`) and `culla-bench` (`crates/bench`), per [ADR 0020](adr/0020-headless-cli-and-bench-crates.md).
+  - Scan and preview benchmark campaign (B-01 to B-11, B-15, B-16) per [benchmarks.md](benchmarks.md).
 - **Exit criteria:**
   - Stories US-01 to US-09 pass.
-  - Every benchmark in [benchmarks.md](benchmarks.md) has a recorded result on H-2 (UHS-I SD) and passes `NFR-PERF-xx`, or has an ADR that changes the design or the budget.
+  - Every M1 benchmark in [benchmarks.md](benchmarks.md) has a recorded result on H-2 (UHS-I SD) and passes, or has an ADR that changes the design or the budget. In particular (all est.): first photo ≤ 1.5 s (B-01), scan of 3,000 files with EXIF ≤ 15 s (B-02 + B-03), next prefetched photo ≤ 50 ms at p95 (B-09), peak memory ≤ 1 GB while swiping (B-15).
   - ADRs recorded for preview source (camera JPEG vs NEF embedded), thread counts, prefetch window and LRU size.
   - Fuzz targets ran for at least a week of nightlies without an open crash.
 - **Author:** provide 5–10 real sample files and state their licence; name the Nikon body or bodies ([SPEC.md](SPEC.md) section 10); run the benchmarks on the G14 with a real SD card.
@@ -74,15 +80,18 @@ M2 and M3 can run in parallel once M1 is done: M3 needs the scan and preview pip
   - `plan()`: reject to `_rejected/` mirrored, keep move or copy, RAW follows toggle, sidecars, group-consistent collision suffixes.
   - Preflight: writable source, free space, destination not inside `_rejected`, path length, locks, symlinks and junctions.
   - Journal and apply (logic in `culla-core`, fs ops in `culla-adapters`): same-volume `MoveFileExW` with only `MOVEFILE_WRITE_THROUGH` (existing target is a hard error); cross-volume copy, fsync, re-read and hash of destination and source, rename, then removal of the source through the single audited function (which may only remove verified cross-volume sources and Culla's own `*.culla-partial` files); copy with `create_new` and mtime kept; sharing-violation retry.
-  - Sidecars follow the file they describe (`X.NEF.xmp` follows the NEF).
+  - Sidecars follow the file they describe (`X.NEF.xmp` follows the NEF; `X.xmp` and `X.pp3` follow the primary), with the collision suffix inside sidecar names.
+  - "Nothing touches the disk before Apply" tests ([testing.md](testing.md) section 4).
   - Resume (roll forward) after crash or card pull. Plain-text log file of operations.
   - CLI: `culla plan`, `culla apply`, `culla resume` (used by the crash tests).
+  - Apply benchmark campaign (B-12 to B-14, B-15 during apply) per [benchmarks.md](benchmarks.md).
 - **Exit criteria:**
-  - Stories US-10 to US-20 pass.
+  - Stories US-10 (Rust side), US-11 to US-20 and US-41 pass.
   - Property tests on `plan()` and the decision log green at 10,000 cases nightly; golden fixtures in place.
   - Windows integration suite green, including cross-volume on a mounted VHDX, read-only volume, full volume, junctions, long paths.
-  - Crash loop (process kill, 50 iterations) and volume-detach scenario green for a week of nightlies.
-  - Coverage gate on file engine modules met ([testing.md](testing.md) section 9).
+  - Crash loop (process kill, 50 iterations) and volume-detach scenario green for a week of nightlies, with the end state per op kind and roll-forward from `verified` asserted ([testing.md](testing.md) section 6).
+  - Apply benchmarks B-12 to B-14 recorded on H-2 and pass, or have an ADR; peak memory during apply ≤ 1 GB (est.). Hash choice recorded as an ADR.
+  - Coverage gate on file engine modules met ([testing.md](testing.md) section 10).
   - Manual checklist items for apply and card pull done once on the G14.
 - **Author:** one real apply and card-pull run on the G14 with a copy of a real card.
 
@@ -94,19 +103,20 @@ M2 and M3 can run in parallel once M1 is done: M3 needs the scan and preview pip
   - `culla://preview/<id>` async URI scheme from the in-memory LRU.
   - `Backend` interface with `TauriBackend` and `DemoBackend`; generated bindings.
   - Start screen (source, subfolders, RAW follows, move or copy, destination).
-  - Swipe screen: Motion card (`drag="x"`, threshold on offset and velocity), at most 3 cards mounted, `img.decode()` before entry, Night theme, progress bar, decision badge.
+  - Swipe screen: Motion card (`drag="x"`, threshold on offset and velocity), at most 3 cards mounted, `img.decode()` before entry, Night theme, progress bar, decision badge, visible Keep and Reject buttons (WCAG 2.5.7).
   - Keyboard map from [SPEC.md](SPEC.md) section 4.1 except zoom (Z, Space) and EXIF overlay (I): decide, navigate, N, F, U, Ctrl+Z, Ctrl+Shift+Z, ?, Esc. Key repeat ignored. Shake and toast on a decided photo. End-of-list card.
-  - Reducer over the event log, autosaved to the backend on each event.
+  - TS reducer over the event log, checked against the golden fixtures from M2; autosaved to the backend (M2 session store) on each event.
   - `prefers-reduced-motion` support. `tauri-driver` smoke test.
 - **Exit criteria:**
-  - Stories US-21 to US-33 pass (Vitest, Playwright on the demo build, smoke on Windows).
-  - Next-photo latency in the webview measured on the G14 and within `NFR-PERF-xx`.
+  - Stories US-21 to US-33 and US-42 pass (Vitest, Playwright on the demo build, smoke on Windows), and the TS half of the US-10 golden tests is green.
+  - Next-photo latency in the webview (key press to `img.decode()` resolved) measured on the G14: ≤ 50 ms at p95 (est.) when prefetched. First photo ≤ 1.5 s (est.) from a UHS-I card. Peak memory of the app ≤ 1 GB (est.).
   - axe reports no serious or critical issue on the swipe screen; keyboard-only flow covered by Playwright.
 - **Author:** cull a real card on the G14 and sign off on the feel of the swipe.
 
 ### M4 — Review and apply UI, sessions, zoom, EXIF
 
 - **Goal:** the full v1 loop: start or resume, swipe, review, apply, report.
+- **Entry criteria:** M4 does not start until US-34 to US-40 in [stories.md](stories.md) have full Given/When/Then acceptance criteria, reviewed like any other doc PR.
 - **Scope:**
   - Review screen: counts, kept and rejected grids (click to jump back), full operation plan, preflight results, time and size estimate (calibrated by B-13), unknown files list, confirm dialog with counts.
   - Apply screen: per-file progress, pause, cancel after the current file, report, log file.
@@ -114,8 +124,8 @@ M2 and M3 can run in parallel once M1 is done: M3 needs the scan and preview pip
   - Zoom to 100 % (Z toggle, hold Space, pan with arrows) with the full image on demand.
   - EXIF overlay (I).
 - **Exit criteria:**
-  - Headline stories US-34 to US-40 detailed and passing.
-  - Manual checklist in [testing.md](testing.md) section 7 done once in full.
+  - Stories US-34 to US-40 pass.
+  - Manual checklist in [testing.md](testing.md) section 8 done once in full.
   - Colour check on the G14 OLED done (sRGB and AdobeRGB).
 - **Author:** run the manual checklist on the G14.
 
@@ -141,10 +151,12 @@ M2 and M3 can run in parallel once M1 is done: M3 needs the scan and preview pip
   - README with GIF, SmartScreen note, Lightroom warning; CONTRIBUTING, CODE_OF_CONDUCT, SECURITY.md, PRIVACY.md, third-party licences file; `docs/releasing.md`.
   - Code signing policy section in the README, then the SignPath Foundation application (it requires a released project).
   - Blog enablement guide material gathered from the ADRs ([research/practices.md](research/practices.md) section 4).
+  - Uninstaller option "remove my Culla data" ([SPEC.md](SPEC.md) section 5.1), US-43.
   - Final benchmark re-run on H-2.
 - **Exit criteria:**
   - Release candidate installed on a clean Windows 11 account without admin rights; updater moves it to a newer test build.
   - Full manual checklist passed on the release candidate.
+  - Installer test ([testing.md](testing.md) section 5.3) green: data kept or removed as chosen, photos never touched (US-43).
   - OpenSSF Scorecard checks targeted in [research/practices.md](research/practices.md) section 2 are green or explained.
   - v1.0 published.
 - **Author:** generate and store the updater signing key; approve and publish the release; submit the SignPath application; write the blog post.
@@ -156,10 +168,14 @@ After v1.0: winget manifest, then the v2 candidates in [SPEC.md](SPEC.md) sectio
 | Task | Needed by |
 |---|---|
 | Name the Nikon body or bodies in use | M1 start |
+| Decide Windows 10 22H2 support: must, should or dropped ([SPEC.md](SPEC.md) section 10); sets the test matrix | M3 start |
+| Decide the minimum WebView2 version ([SPEC.md](SPEC.md) section 10) | M3 start |
 | Provide 5–10 real sample files and choose their licence | M1 start |
 | Run benchmarks on the G14 with a real UHS-I SD card | M1 exit |
 | Real apply and card-pull run on the G14 | M2 exit |
 | Cull a real card and sign off on the swipe feel | M3 exit |
 | Run the full manual checklist | M4 exit, M6 exit |
 | Choose demo photos, confirm the subdomain, approve design system additions | M5 |
+| Decide the update check default (on or off) and frequency ([SPEC.md](SPEC.md) section 10) | M6 start |
+| Decide the WebView2 installer mode (bootstrapper download or embedded) ([SPEC.md](SPEC.md) section 10) | M6 start |
 | Updater key custody, release approval, SignPath application | M6 |
