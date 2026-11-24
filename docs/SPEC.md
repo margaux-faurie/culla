@@ -110,17 +110,18 @@ The items below describe behaviour; the pure parts live in `culla-core` and the 
 ### 5.2 Apply engine
 1. **Plan:** each group expands to a list of operations (primary + raw if "RAW follows" + sidecars). Every member of a group gets the same target name. If a target name is taken, the whole group gets `_1`, `_2`… Nothing is ever overwritten.
 2. **Preflight:** before any operation, check:
-   - the source is writable (SD card lock, read-only flags);
+   - the source is writable, from the volume's read-only flag (SD card lock); preflight itself is read-only and writes no probe file;
    - free space at the destination, for moves across drives as well as copies;
    - the destination path is not inside `_rejected`;
    - paths fit within the length limit (use the `\\?\` prefix);
    - no files are locked;
    - there are no symlinks or junctions (refuse to follow them).
-3. **Execute,** journalled with one row per file (`pending → copying → verified → done | failed`):
+3. **Execute,** journalled with one row per file. The states and recovery rules are owned by [design/file-engine.md](design/file-engine.md) (`pending, renaming, copying, verifying, committed, source_removed, done, failed`):
    - Every rename uses `MoveFileExW` with no flags except `MOVEFILE_WRITE_THROUGH`. Without `MOVEFILE_REPLACE_EXISTING`, an existing target makes it fail atomically (no check-then-rename race). Without `MOVEFILE_COPY_ALLOWED`, a rename across volumes fails with `ERROR_NOT_SAME_DEVICE` instead of silently copying and deleting. Copies open their target with `create_new`. "Target exists" is a hard error for that group.
    - Move on the same volume: a single such rename.
    - Move across volumes: copy to `*.culla-partial` while hashing the source (xxh3/blake3), fsync, then verify: read the destination back with `FILE_FLAG_NO_BUFFERING` (so the OS cache can't answer for the disk) and **re-read the source for a second hash**; all three hashes must match (this catches a flaky card reader, which would corrupt the copy and the first hash alike). Then rename into place and remove the source.
-   - Copy: same as across volumes, but the source is kept. The mtime is preserved.
+   - Copy: same as across volumes, but the source is kept. Modification and creation times are preserved.
+   - A group's sources are removed only after every member of the group is committed.
    - Sharing violations (Explorer, Defender, Lightroom): retry with backoff, then mark the file failed and continue.
 4. **Resume:** if an apply is interrupted (crash, card pulled), it rolls forward from the journal the next time the app opens. There is no rollback in v1.
 5. **Removal:** one audited function, `remove_verified`, is the only code allowed to remove a file. It removes only (a) the source of a cross-volume move whose verification passed, and (b) Culla's own `*.culla-partial` files (for example when resuming from `copying`). `std::fs::remove_*` is banned elsewhere by clippy `disallowed-methods`.
