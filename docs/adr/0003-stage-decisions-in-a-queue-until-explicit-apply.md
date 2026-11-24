@@ -27,7 +27,7 @@ Chosen option: "Queue, review screen, explicit confirm, apply", because the revi
 
 * Good, because mistakes cost nothing until apply, and the plan can be checked as a whole (collisions, free space, locks).
 * Good, because swiping does no file I/O apart from reads and the autosave.
-* Bad, because the user waits for one long apply at the end (2,000 cross-volume pairs is about 140 GB and 25+ minutes), so the review must show an estimate.
+* Bad, because the user waits for one long apply at the end (2,000 cross-volume pairs is about 140 GB of files but about 280 GB read (the source is read twice for verification), so 50+ minutes from a UHS-I card; the estimate includes the verification reads), so the review must show an estimate.
 * Bad, because decisions must persist safely between sessions ([ADR 0005](0005-decision-state-as-append-only-event-log.md), [ADR 0009](0009-sqlite-per-source-for-sessions-and-journal.md)).
 
 Source: [SPEC.md §2, §4.2](../SPEC.md), [critique.md §1](../research/critique.md).
