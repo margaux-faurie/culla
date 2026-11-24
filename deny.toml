@@ -21,9 +21,18 @@ allow = [
   "Unicode-3.0",
   "Unlicense",
   "CC0-1.0",
-  # Tauri tree: cssparser, cssparser-macros, selectors and dtoa-short (via tauri-utils' HTML parser),
-  # option-ext (via dirs). File-level copyleft on unmodified dependencies; fine in an MIT binary.
-  "MPL-2.0",
+]
+
+# Weak copyleft is allowed per crate only, never globally (ADR 0017).
+# Tauri tree: cssparser, cssparser-macros, selectors and dtoa-short (via tauri-utils' HTML parser),
+# option-ext (via dirs). MPL-2.0 is file-level copyleft on unmodified dependencies: fine in an MIT
+# binary, and the third-party licences file must list them.
+exceptions = [
+  { crate = "cssparser", allow = ["MPL-2.0"] },
+  { crate = "cssparser-macros", allow = ["MPL-2.0"] },
+  { crate = "selectors", allow = ["MPL-2.0"] },
+  { crate = "dtoa-short", allow = ["MPL-2.0"] },
+  { crate = "option-ext", allow = ["MPL-2.0"] },
 ]
 
 [bans]

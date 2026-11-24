@@ -3,7 +3,7 @@
 Culla is a Windows desktop app (Tauri 2 + Rust + React/TS) that culls Nikon JPEG+NEF photos with a swipe UI, then applies keep/reject as safe, journaled file operations. Start at `docs/SPEC.md`: it records the author's decisions and maps each topic to its owning doc (PRD, nfr, architecture, ADRs, file-engine design, threat model, testing, roadmap). `docs/research/` is historical input: where it disagrees with the spec or an ADR, the spec and ADRs win.
 
 ## Status
-Pre-code: design docs drafted (24 Nov); open decisions in SPEC §10 and file-engine §13. Next is milestone M0. M0 is landing in slices; move a command from Target to Work now in the PR that makes it real.
+M0 (repo and tooling) is landing; the app is an empty shell. Design docs drafted (24 Nov); open decisions in SPEC §10 and file-engine §13. Next is M1 (core engine headless).
 
 ## Commands
 Work now (M0):
@@ -14,7 +14,7 @@ Work now (M0):
 - `pnpm install` · `pnpm check` (Biome + tsc) · `pnpm test` · `pnpm test <file>`
 - `pnpm dev:demo` · `pnpm build:demo` (web demo, `dist-demo/`) · `pnpm tauri dev` · `pnpm tauri build` (Windows, NSIS)
 
-Target (M1): `pnpm gen:bindings` (TS bindings from Rust; a placeholder until the first tauri-specta command)
+- `pnpm gen:bindings` (placeholder until the first tauri-specta command in M1)
 
 ## Layout
 - `crates/core` (package `culla-core`) — domain, ports, pure logic. No I/O, no Tauri, `#![forbid(unsafe_code)]`.

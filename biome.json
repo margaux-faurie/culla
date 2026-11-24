@@ -14,6 +14,8 @@
       "biome.json",
       "tsconfig.json",
       "tsconfig.node.json",
+      "src-tauri/**/*.json",
+      "!src-tauri/gen/**",
       "!src/bindings.ts"
     ]
   },
