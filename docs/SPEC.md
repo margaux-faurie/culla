@@ -17,7 +17,7 @@ Status: v1, 24 Nov 2026. This file is the record of the author's product decisio
 | Agent instructions | [../CLAUDE.md](../CLAUDE.md) |
 | Background research (historical) | [research/](research/) |
 
-Open decisions for the author are collected in §10 here and in §13 of the file-engine design.
+On file-engine topics (journal states, how renames are issued, verification), `design/file-engine.md` wins over ADRs 0004 and 0010 until ADRs 0021 and 0022 are accepted. Open decisions for the author are collected in §10 here and in §13 of the file-engine design.
 
 ## 1. What Culla is
 
