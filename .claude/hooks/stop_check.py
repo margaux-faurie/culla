@@ -56,13 +56,16 @@ def git_root(start: str):
         d = parent
 
 
-def checks(root: str) -> list:
+def checks(root: str, skipped: list) -> list:
     out = []
     if os.path.isfile(os.path.join(root, "Cargo.toml")) and shutil.which("cargo"):
         out.append(("cargo check", [shutil.which("cargo"), "check", "-p", "culla-core", "-p", "culla-adapters", "--quiet"]))
     lint = os.path.join(root, "scripts", "ci", "check_lint_allows.py")
     if os.path.isfile(lint) and shutil.which("git"):
-        out.append(("check_lint_allows.py", [sys.executable, lint]))
+        if sys.version_info >= (3, 11):
+            out.append(("check_lint_allows.py", [sys.executable, lint]))
+        else:
+            skipped.append("check_lint_allows.py (needs Python 3.11+)")
     pnpm = shutil.which("pnpm")
     if pnpm and os.path.isfile(os.path.join(root, "package.json")) and os.path.isdir(os.path.join(root, "node_modules")):
         out.append(("pnpm check", [pnpm, "check"]))
@@ -81,7 +84,7 @@ def main() -> int:
     env = dict(os.environ, CARGO_TERM_COLOR="never", NO_COLOR="1", RUSTUP_AUTO_INSTALL="0")
     deadline = time.monotonic() + BUDGET_S
     failures, skipped = [], []
-    for name, cmd in checks(root):
+    for name, cmd in checks(root, skipped):
         left = deadline - time.monotonic()
         if left <= 5:
             skipped.append(f"{name} (time budget used up)")
@@ -96,6 +99,11 @@ def main() -> int:
             continue
         except OSError as e:
             skipped.append(f"{name} ({e})")
+            continue
+        if r.returncode != 0 and "is not installed" in (r.stdout + r.stderr) and "toolchain" in (r.stdout + r.stderr):
+            # The pinned toolchain (rust-toolchain.toml) is missing and auto-install is off:
+            # an environment problem, not a code error, so it never blocks.
+            skipped.append(f"{name} (pinned Rust toolchain not installed)")
             continue
         if r.returncode != 0:
             lines = (r.stdout + r.stderr).strip().splitlines()
