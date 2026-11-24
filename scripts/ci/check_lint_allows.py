@@ -16,7 +16,11 @@ ATTR = re.compile(
     r"#!?\[\s*(?:cfg_attr\s*\((?:[^()]|\([^()]*\))*?,\s*)?(allow|expect|warn)\s*\(((?:[^()]|\([^()]*\))*)\)",
     re.S,
 )
-REMOVAL_LINTS = re.compile(r"\b(?:clippy::)?disallowed_methods\b|\bclippy::(?:style|all)\b")
+REMOVAL_LINTS = re.compile(
+    r"\b(?:clippy::)?disallowed_methods?\b|\bclippy::(?:style|all)\b|\brenamed_and_removed_lints\b"
+)
+# Product code must not pull in source files from elsewhere (it would escape the path rules).
+FOREIGN_SOURCE = re.compile(r"#\s*\[\s*path\s*=|\binclude(?:_str)?!\s*\(")
 UNSAFE_LINT = re.compile(r"\bunsafe_code\b")
 
 
@@ -26,8 +30,49 @@ def tracked(*patterns: str) -> list[str]:
 
 
 def strip_comments(src: str) -> str:
-    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
-    return re.sub(r"//[^\n]*", "", src)
+    """Blank out string/char literals, then comments, keeping line numbers.
+
+    Literals are replaced by empty quotes first, so a "*/" or "//" inside a string can't
+    hide or truncate real code.
+    """
+    out = []
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        if src.startswith("//", i):
+            j = src.find("\n", i)
+            i = n if j == -1 else j
+        elif src.startswith("/*", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if src.startswith("/*", j):
+                    depth, j = depth + 1, j + 2
+                elif src.startswith("*/", j):
+                    depth, j = depth - 1, j + 2
+                else:
+                    j += 1
+            out.append("\n" * src.count("\n", i, j))
+            i = j
+        elif c == "r" and re.match(r'r#*"', src[i:]):
+            m = re.match(r'r(#*)"', src[i:])
+            end = src.find('"' + m.group(1), i + len(m.group(0)))
+            end = n if end == -1 else end + 1 + len(m.group(1))
+            out.append('""' + "\n" * src.count("\n", i, end))
+            i = end
+        elif c == '"':
+            j = i + 1
+            while j < n and src[j] != '"':
+                j += 2 if src[j] == "\\" else 1
+            out.append('""' + "\n" * src.count("\n", i, j))
+            i = j + 1
+        elif c == "'" and re.match(r"'(?:\\.|[^\\'\n])'", src[i:]):
+            m = re.match(r"'(?:\\.|[^\\'\n])'", src[i:])
+            out.append("' '")
+            i += len(m.group(0))
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
 
 
 def main() -> int:
@@ -35,6 +80,10 @@ def main() -> int:
     for path in tracked("*.rs"):
         with open(path, encoding="utf-8") as f:
             src = strip_comments(f.read())
+        if not re.match(r"^crates/[a-z-]+/tests/", path):
+            for m in FOREIGN_SOURCE.finditer(src):
+                line = src.count("\n", 0, m.start()) + 1
+                problems.append(f"{path}:{line}: #[path] / include! is not allowed outside crates/*/tests/")
         for m in ATTR.finditer(src):
             lints = m.group(2)
             line = src.count("\n", 0, m.start()) + 1

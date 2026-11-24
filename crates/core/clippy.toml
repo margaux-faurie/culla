@@ -8,6 +8,21 @@
 #   crates/*/tests/             (integration tests, temp dirs only)
 # Everywhere else under src/, including inline #[cfg(test)] code, it cannot be switched off.
 disallowed-methods = [
+  { path = "std::path::Path::exists", reason = "culla-core does no I/O" },
+  { path = "std::path::Path::try_exists", reason = "culla-core does no I/O" },
+  { path = "std::path::Path::metadata", reason = "culla-core does no I/O" },
+  { path = "std::path::Path::symlink_metadata", reason = "culla-core does no I/O" },
+  { path = "std::path::Path::read_dir", reason = "culla-core does no I/O" },
+  { path = "std::path::Path::read_link", reason = "culla-core does no I/O" },
+  { path = "std::path::Path::canonicalize", reason = "culla-core does no I/O" },
+  { path = "std::path::Path::is_file", reason = "culla-core does no I/O" },
+  { path = "std::path::Path::is_dir", reason = "culla-core does no I/O" },
+  { path = "std::path::Path::is_symlink", reason = "culla-core does no I/O" },
+  { path = "std::fs::create_dir", reason = "culla-core does no I/O" },
+  { path = "std::fs::hard_link", reason = "culla-core does no I/O" },
+  { path = "std::fs::canonicalize", reason = "culla-core does no I/O" },
+  { path = "std::fs::read_link", reason = "culla-core does no I/O" },
+  { path = "std::fs::exists", reason = "culla-core does no I/O" },
   { path = "std::fs::read", reason = "culla-core does no I/O" },
   { path = "std::fs::read_to_string", reason = "culla-core does no I/O" },
   { path = "std::fs::read_dir", reason = "culla-core does no I/O" },
@@ -37,4 +52,6 @@ disallowed-types = [
   { path = "std::fs::File", reason = "culla-core does no I/O" },
   { path = "std::fs::OpenOptions", reason = "culla-core does no I/O" },
   { path = "std::fs::ReadDir", reason = "culla-core does no I/O" },
+  { path = "std::process::Command", reason = "culla-core does no I/O" },
+  { path = "std::net::TcpStream", reason = "culla-core does no I/O" },
 ]
