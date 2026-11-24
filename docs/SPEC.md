@@ -1,6 +1,23 @@
-# Culla — Technical Specification (v1)
+# Culla — Specification and document map
 
-Status: draft v1, 24 Nov 2026. Supersedes `spec-draft` v0 after research and critique (see `docs/research/`).
+Status: v1, 24 Nov 2026. This file is the record of the author's product decisions and the map of the design docs. Each topic below has an owning document: where a section here and its owner disagree, the owner wins, and this file is updated to match.
+
+| Topic | Owner |
+|---|---|
+| Problem, users, scope, no-gos, success criteria | [PRD.md](PRD.md) |
+| Measurable requirements (performance, reliability, accessibility, privacy, compatibility) | [nfr.md](nfr.md) |
+| Architecture, crates, runtime views, glossary | [architecture.md](architecture.md) |
+| Decisions and their reasons | [adr/](adr/README.md) |
+| File engine: data model, grouping, plan, apply, recovery, invariants | [design/file-engine.md](design/file-engine.md) |
+| Threats and mitigations | [threat-model.md](threat-model.md) |
+| Tests and Definition of Done | [testing.md](testing.md) |
+| Performance measurement | [benchmarks.md](benchmarks.md) |
+| Milestones | [roadmap.md](roadmap.md) |
+| User stories | [stories.md](stories.md) |
+| Agent instructions | [../CLAUDE.md](../CLAUDE.md) |
+| Background research (historical) | [research/](research/) |
+
+Open decisions for the author are collected in §10 here and in §13 of the file-engine design.
 
 ## 1. What Culla is
 

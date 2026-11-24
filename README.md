@@ -2,11 +2,13 @@
 
 Sort a folder of photos one swipe at a time. Keep or reject each shot, review everything, then apply. Built for Nikon JPEG + RAW (NEF) folders on Windows.
 
-Not ready yet. The project is in its design phase.
+Not ready yet. The design is written; the code starts with milestone M0.
 
-- Specification: [docs/SPEC.md](docs/SPEC.md)
-- Decisions: [docs/adr/](docs/adr/)
-- Product brief, architecture, file-engine design and roadmap: in progress
+- What and why: [docs/PRD.md](docs/PRD.md)
+- How it works: [docs/architecture.md](docs/architecture.md) and the [file engine](docs/design/file-engine.md)
+- Decisions: [docs/adr/](docs/adr/README.md)
+- Plan: [docs/roadmap.md](docs/roadmap.md)
+- Everything else: [docs/SPEC.md](docs/SPEC.md) (decisions and document map)
 
 ## Promises
 

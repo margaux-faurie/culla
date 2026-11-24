@@ -1,9 +1,9 @@
 # Culla — agent instructions
 
-Culla is a Windows desktop app (Tauri 2 + Rust + React/TS) that culls Nikon JPEG+NEF photos with a swipe UI, then applies keep/reject as safe, journaled file operations. Source of truth today: `docs/SPEC.md` and `docs/adr/`. Coming in the next docs PRs: `docs/PRD.md`, `docs/architecture.md`, `docs/design/file-engine.md`, `docs/roadmap.md`, `docs/testing.md`. `docs/research/` is historical input: where it disagrees with the spec or an ADR, the spec and ADRs win.
+Culla is a Windows desktop app (Tauri 2 + Rust + React/TS) that culls Nikon JPEG+NEF photos with a swipe UI, then applies keep/reject as safe, journaled file operations. Start at `docs/SPEC.md`: it records the author's decisions and maps each topic to its owning doc (PRD, nfr, architecture, ADRs, file-engine design, threat model, testing, roadmap). `docs/research/` is historical input: where it disagrees with the spec or an ADR, the spec and ADRs win.
 
 ## Status
-Pre-code: documentation phase. Commands below are the target; they work once milestone M0 (repo tooling: workspaces, CI, lints, hooks) lands. Update this file in the PR that makes them real.
+Pre-code: design docs done (24 Nov), next is milestone M0. Commands below are the target; they work once milestone M0 (repo tooling: workspaces, CI, lints, hooks) lands. Update this file in the PR that makes them real.
 
 ## Commands (target)
 - `pnpm install` · `pnpm check` (Biome + tsc) · `pnpm test` · `pnpm test <file>`
