@@ -107,7 +107,7 @@ The cross-volume path (copy, hash, fsync, rename, delete source) only runs when 
 | `D:` temp disk | Present on some standard images, absent on others (larger runners, some newer images). | Do not rely on it. |
 | VHDX created and mounted in the job | Yes. Real volume, own serial, any file system. | **Use this.** |
 
-How: a script `scripts/ci/mount-test-volume.ps1` creates a small VHDX with `diskpart` (`create vdisk`, `attach vdisk`, `create partition primary`, `format quick fs=<fs>`, `assign letter=<L>`). The runner has admin rights. `diskpart` avoids a dependency on the Hyper-V `New-VHD` cmdlet. The `samypr100/setup-dev-drive` action does the same job and supports `NTFS`, `exFAT`, `FAT32` and `ReFS` on `windows-2022` and later; it is an option if the script proves flaky (pin by SHA).
+How: `scripts/ci/vhdx.ps1` (usage in [scripts/ci/README.md](../scripts/ci/README.md)) creates a small VHDX with `diskpart` (`create vdisk`, `attach vdisk`, `create partition primary`, `format quick fs=<fs>`, `assign letter=<L>`). The runner has admin rights. `diskpart` avoids a dependency on the Hyper-V `New-VHD` cmdlet. The `samypr100/setup-dev-drive` action does the same job and supports `NTFS`, `exFAT`, `FAT32` and `ReFS` on `windows-2022` and later; it is an option if the script proves flaky (pin by SHA).
 
 Volumes per job:
 - `T:` exFAT, 256 MB, stands in for an SD card (FAT-family timestamps, no ACLs).
@@ -163,7 +163,7 @@ Four levels, from cheap to realistic.
 1. **Fault injection in core (anywhere).** `FaultyFs` (core `FileSystem` port) and an in-memory `Journal` port, both in `culla-core`. The fault fires at a chosen step of a chosen op: after the partial copy, before fsync, after the hash check, after rename, before the source removal, during the journal write (the write is lost or half-applied). The test keeps only what the in-memory journal had durably committed, drops everything else, and runs resume. A proptest variant picks the op and step at random. No SQLite and no disk here.
 2. **Journal persistence (`culla-adapters`).** The SQLite journal is closed abruptly (connection dropped without commit, process killed between statements) and reopened. Every committed row reads back with its state; an uncommitted transition is not visible. The SQLite settings are pending: WAL with `synchronous=FULL` is proposed in [ADR 0009](adr/0009-sqlite-per-source-for-sessions-and-journal.md) and NFR-REL-10, to confirm in [design/file-engine.md](design/file-engine.md). Once confirmed, the chosen settings are asserted on open.
 3. **Process kill (Windows).** The test spawns `culla apply` ([ADR 0020](adr/0020-headless-cli-and-bench-crates.md), from M2) on a fixture plan and kills it with `TerminateProcess` after a random delay. Repeat 50 times per nightly run (5 per PR). Then run `culla resume`.
-4. **Volume loss (Windows).** Detach the `T:` VHDX during a cross-volume apply (method proven in the M0 spike, section 5.1). Reattach under a different letter. Resume.
+4. **Volume loss (Windows).** Detach the `T:` VHDX during a cross-volume apply with `diskpart detach vdisk` (method proven in the M0 spike, section 5.1 and [scripts/ci/README.md](../scripts/ci/README.md)). Reattach under a different letter. Resume. The VHDX detach models a forced dismount, not a pulled card: held handles fail with `ERROR_NOT_READY` (21), paths with `ERROR_PATH_NOT_FOUND` (3), and in the spike even unsynced data survived. So this level proves error handling and resume. It does not prove behaviour under data loss or torn writes; those are covered by fault injection at the `FileSystem` port (level 1).
 
 ### 6.1 Expected end state per op kind
 
@@ -254,7 +254,7 @@ These are the planned commands. M0 makes them real and keeps `CLAUDE.md` in sync
 | All Rust tests | `cargo test --workspace` |
 | One Rust test | `cargo test -p culla-core <name>` or `cargo test -p culla-adapters <name>` |
 | Property tests, long run | `PROPTEST_CASES=10000 cargo test -p culla-core prop_` |
-| Windows integration | `pwsh scripts/ci/mount-test-volume.ps1` then `cargo test -p culla-adapters --features windows-it` (Windows only) |
+| Windows integration | `pwsh scripts/ci/vhdx.ps1 -Action mount ...` then `cargo test -p culla-adapters --features windows-it` (Windows only, admin) |
 | Crash loop | `cargo xtask crash-loop --iterations 50` (Windows only, from M2; drives `culla apply` and `culla resume`) |
 | Installer test | `pwsh scripts/ci/installer-test.ps1` (Windows only, from M6) |
 | Lint Rust | `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` and `cargo deny check` |
