@@ -1,0 +1,18 @@
+# Single-package repo: this file only carries pnpm settings (pnpm 10.x names, pnpm.io/10.x/settings).
+# Supply-chain hardening, SPEC §7 and docs/research/practices.md.
+
+# Only packages listed here may run install scripts; anything else fails the install.
+allowBuilds:
+  esbuild: true
+strictDepBuilds: true
+
+# Wait 3 days before installing a newly published version (Dependabot waits 7).
+minimumReleaseAge: 4320
+
+# Transitive dependencies must come from the registry, never from git or tarball URLs.
+blockExoticSubdeps: true
+
+# Fail when a package's publish trust (trusted publisher, provenance) drops against earlier releases.
+# Versions older than 30 days are not checked, so old packages without provenance still install.
+trustPolicy: no-downgrade
+trustPolicyIgnoreAfter: 43200

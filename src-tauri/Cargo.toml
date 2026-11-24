@@ -1,0 +1,35 @@
+[package]
+name = "culla-app"
+description = "Culla desktop shell (Tauri 2): wiring only. Commands, culla:// scheme, capabilities."
+version.workspace = true
+edition.workspace = true
+# Tauri 2.12 needs Rust 1.90; the other crates keep the workspace minimum.
+rust-version = "1.90"
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# The `_lib` suffix avoids the lib/bin output name clash on Windows (cargo#6313), as in the Tauri template.
+name = "culla_app_lib"
+# Desktop only: the template's staticlib and cdylib are for mobile targets.
+crate-type = ["rlib"]
+# No test or doctest binaries: on Windows they would link Tauri without the application manifest
+# (Common Controls v6) that tauri-build embeds in the app binary only, and fail to load.
+# Shell behaviour is covered through culla-adapters and, later, Playwright on the demo.
+test = false
+doctest = false
+
+[[bin]]
+name = "culla-app"
+path = "src/main.rs"
+test = false
+
+[build-dependencies]
+tauri-build = { version = "2.7.6", features = [] }
+
+[dependencies]
+culla-adapters = { path = "../crates/adapters" }
+tauri = { version = "2.12.7", features = [] }
+
+[lints]
+workspace = true

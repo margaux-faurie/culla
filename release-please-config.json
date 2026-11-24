@@ -14,9 +14,14 @@
           "path": "Cargo.toml"
         },
         {
+          "type": "json",
+          "path": "package.json",
+          "jsonpath": "$.version"
+        },
+        {
           "type": "toml",
           "path": "Cargo.lock",
-          "jsonpath": "$.package[?(@.name == 'culla-core' || @.name == 'culla-adapters' || @.name == 'culla-cli' || @.name == 'culla-bench')].version"
+          "jsonpath": "$.package[?(@.name == 'culla-core' || @.name == 'culla-adapters' || @.name == 'culla-cli' || @.name == 'culla-bench' || @.name == 'culla-app')].version"
         }
       ]
     }

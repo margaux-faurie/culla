@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "The main window. Culla's own commands only; core permissions are added one by one when a feature needs them (threat model T7).",
+  "windows": ["main"],
+  "permissions": ["allow-version"]
+}

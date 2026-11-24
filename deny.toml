@@ -21,6 +21,9 @@ allow = [
   "Unicode-3.0",
   "Unlicense",
   "CC0-1.0",
+  # Tauri tree: cssparser, cssparser-macros, selectors and dtoa-short (via tauri-utils' HTML parser),
+  # option-ext (via dirs). File-level copyleft on unmodified dependencies; fine in an MIT binary.
+  "MPL-2.0",
 ]
 
 [bans]
