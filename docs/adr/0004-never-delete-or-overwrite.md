@@ -1,9 +1,11 @@
 ---
-status: accepted (definition of "verified" refined by 0021)
+status: accepted
 date: 2026-11-24
 ---
 
 # Never delete or overwrite: rejects go to `_rejected/`, collisions get a suffix per group
+
+Refined by: [ADR 0021](0021-unbuffered-source-re-read-for-hash-3.md) (proposed), for the source re-read.
 
 ## Context and problem statement
 

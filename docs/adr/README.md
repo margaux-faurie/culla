@@ -25,4 +25,4 @@ One decision per file, in [MADR 4](https://adr.github.io/madr/) minimal format. 
 | [0018](0018-conventional-commits-and-release-please.md) | Conventional Commits + release-please for versioning | accepted |
 | [0019](0019-generate-typescript-bindings-with-tauri-specta.md) | Generate TypeScript bindings with tauri-specta, pinned RC, ts-rs as fallback | accepted |
 | [0020](0020-headless-cli-and-bench-crates.md) | Headless CLI and bench crates | accepted |
-| [0021](0021-unbuffered-source-re-read-for-hash-3.md) | Unbuffered source re-read for hash 3 | accepted (to confirm by Margaux) |
+| [0021](0021-unbuffered-source-re-read-for-hash-3.md) | Unbuffered source re-read for hash 3 | proposed |
