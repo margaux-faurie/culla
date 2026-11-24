@@ -1,0 +1,243 @@
+name: VHDX spike
+
+# M0 spike (docs/testing.md section 5.1, docs/roadmap.md M0): mount exFAT, FAT32 and
+# NTFS VHDX volumes on a hosted runner, detach one while a test process holds open
+# handles on it, lock volumes read-only, and unmount. Results go to the job summary;
+# scripts/ci/README.md records what they showed.
+
+on:
+  pull_request:
+    paths:
+      - scripts/ci/vhdx.ps1
+      - crates/adapters/tests/vhdx_spike.rs
+      - .github/workflows/vhdx-spike.yml
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: vhdx-spike-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  spike:
+    name: VHDX spike (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare
+        timeout-minutes: 2
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'vhdx'
+          New-Item -ItemType Directory -Path $dir, (Join-Path $dir 'signal') | Out-Null
+          @(
+            "VHDX_DIR=$dir"
+            "VHDX_RESULTS=$(Join-Path $dir 'results.md')"
+            "VHDX_LOG=$(Join-Path $dir 'script-results.txt')"
+            "CULLA_VHDX_REPORT=$(Join-Path $dir 'report.txt')"
+          ) | Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8
+          Get-CimInstance Win32_OperatingSystem | Format-List Caption, Version, BuildNumber
+          $PSVersionTable | Format-Table -AutoSize
+          Get-Volume | Format-Table -AutoSize DriveLetter, FileSystem, FileSystemLabel, Size
+
+      - name: Build the spike test
+        timeout-minutes: 15
+        run: cargo test -p culla-adapters --test vhdx_spike --locked --no-run
+
+      - name: Mount exFAT, NTFS and FAT32 volumes
+        timeout-minutes: 10
+        run: |
+          $vols = @(
+            @{ L = 'T'; Fs = 'exFAT'; Mb = 256; Role = 'card, detach spike' }
+            @{ L = 'U'; Fs = 'NTFS';  Mb = 64;  Role = 'destination' }
+            @{ L = 'V'; Fs = 'FAT32'; Mb = 128; Role = 'FAT32 card' }
+            @{ L = 'O'; Fs = 'exFAT'; Mb = 64;  Role = 'read-only via volume attribute' }
+            @{ L = 'P'; Fs = 'exFAT'; Mb = 64;  Role = 'read-only via disk attribute' }
+            @{ L = 'Q'; Fs = 'exFAT'; Mb = 64;  Role = 'read-only via attach vdisk readonly' }
+          )
+          $failed = 0
+          foreach ($v in $vols) {
+            pwsh -NoProfile -File scripts/ci/vhdx.ps1 -Action mount -Path "$env:VHDX_DIR\$($v.L).vhdx" `
+              -SizeMB $v.Mb -FileSystem $v.Fs -Letter $v.L -ResultFile $env:VHDX_LOG
+            $ok = $LASTEXITCODE -eq 0
+            if (-not $ok) { $failed++ }
+            Add-Content -LiteralPath $env:VHDX_RESULTS -Value "| mount | $($v.L): $($v.Fs) $($v.Mb) MB | $($v.Role) | $(if ($ok) { 'ok' } else { 'FAILED' }) |"
+          }
+          Get-Volume | Format-Table -AutoSize DriveLetter, FileSystem, FileSystemLabel, Size, HealthStatus
+          if ($failed) { exit 1 }
+
+      - name: Placeholder test writes to each volume
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          $failed = 0
+          foreach ($l in 'T', 'U', 'V', 'O', 'P', 'Q') {
+            $env:CULLA_VHDX_LETTER = $l
+            cargo test -p culla-adapters --test vhdx_spike --locked -- --ignored --exact vhdx_write_placeholder --nocapture
+            $ok = $LASTEXITCODE -eq 0
+            if (-not $ok) { $failed++ }
+            Add-Content -LiteralPath $env:VHDX_RESULTS -Value "| write placeholder | ${l}: | create_new, 1 MiB, sync, read back, list | $(if ($ok) { 'ok' } else { 'FAILED' }) |"
+          }
+          if ($failed) { exit 1 }
+
+      - name: Detach spike (card pulled with handles open)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        run: |
+          $sig = Join-Path $env:VHDX_DIR 'signal'
+          $out = Join-Path $env:VHDX_DIR 'detach-test.out'
+          $err = Join-Path $env:VHDX_DIR 'detach-test.err'
+          $env:CULLA_VHDX_LETTER = 'T'
+          $env:CULLA_VHDX_SIGNAL_DIR = $sig
+          $env:CULLA_VHDX_TIMEOUT_SECS = '420'
+
+          $p = Start-Process -FilePath cargo -NoNewWindow -PassThru -RedirectStandardOutput $out -RedirectStandardError $err `
+            -ArgumentList 'test -p culla-adapters --test vhdx_spike --locked -- --ignored --exact vhdx_detach_spike --nocapture'
+          $null = $p.Handle
+          $deadline = (Get-Date).AddSeconds(180)
+          while (-not (Test-Path -LiteralPath "$sig\ready") -and -not $p.HasExited -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 250
+          }
+          if (-not (Test-Path -LiteralPath "$sig\ready")) {
+            Write-Host '::error::the detach spike test never signalled ready'
+            if (-not $p.HasExited) { taskkill.exe /T /F /PID $p.Id }
+            Get-Content -LiteralPath $out, $err -ErrorAction SilentlyContinue
+            Add-Content -LiteralPath $env:VHDX_RESULTS -Value '| detach | T: exFAT | test never signalled ready | FAILED |'
+            exit 1
+          }
+          Write-Host "test is ready: $(Get-Content -LiteralPath "$sig\ready")"
+
+          pwsh -NoProfile -File scripts/ci/vhdx.ps1 -Action detach -Path "$env:VHDX_DIR\T.vhdx" -Letter T `
+            -TimeoutSec 60 -ResultFile $env:VHDX_LOG
+          $detachOk = $LASTEXITCODE -eq 0
+          $line = @(Get-Content -LiteralPath $env:VHDX_LOG | Where-Object { $_ -match 'action=detach' })[-1]
+          $method = if ($line -match 'method=(\S+)') { $Matches[1] } else { 'unknown' }
+          $attempts = if ($line -match 'attempts=(\S+)') { $Matches[1] } else { 'unknown' }
+
+          # Written then renamed, so the test never reads a half-written signal.
+          Set-Content -LiteralPath "$sig\detached.tmp" -Value "method=$method ok=$detachOk attempts=$attempts"
+          Rename-Item -LiteralPath "$sig\detached.tmp" -NewName 'detached'
+
+          $exited = $p.WaitForExit(300000)
+          if (-not $exited) {
+            Write-Host '::error::the detach spike test hung after the detach; killing it'
+            taskkill.exe /T /F /PID $p.Id
+            $null = $p.WaitForExit(10000)
+          }
+          $testOk = $exited -and $p.ExitCode -eq 0
+          Write-Host '--- test stdout ---'
+          Get-Content -LiteralPath $out -ErrorAction SilentlyContinue
+          Write-Host '--- test stderr ---'
+          Get-Content -LiteralPath $err -ErrorAction SilentlyContinue
+
+          Add-Content -LiteralPath $env:VHDX_RESULTS -Value "| detach | T: exFAT, 2 handles open | method=$method, attempts=$attempts | $(if ($detachOk) { 'ok' } else { 'FAILED' }) |"
+          Add-Content -LiteralPath $env:VHDX_RESULTS -Value "| detach test process | T: | $(if (-not $exited) { 'hung, killed' } else { "exit $($p.ExitCode)" }) | $(if ($testOk) { 'ok' } else { 'FAILED' }) |"
+          if (-not ($detachOk -and $testOk)) { exit 1 }
+          exit 0
+
+      - name: Reattach the pulled card under another letter
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        run: |
+          pwsh -NoProfile -File scripts/ci/vhdx.ps1 -Action attach -Path "$env:VHDX_DIR\T.vhdx" -Letter W -ResultFile $env:VHDX_LOG
+          $ok = $LASTEXITCODE -eq 0
+          $detail = 'not reattached'
+          if ($ok) {
+            Get-ChildItem -LiteralPath 'W:\culla-spike' | Format-Table -AutoSize Name, Length, LastWriteTime
+            $held = Get-ChildItem -LiteralPath 'W:\culla-spike' -Filter 'held-rw-*' | Select-Object -First 1
+            if ($held) {
+              # Same pattern as vhdx_spike.rs: byte i of a chunk is (i as u8) * 31 + seed, wrapping.
+              # Head: 256 KiB, seed 1, synced. Tail: 64 KiB, seed 2, never synced.
+              function Compare-Chunk([byte[]] $Bytes, [int] $Offset, [int] $Len, [int] $Seed) {
+                $have = [math]::Max(0, [math]::Min($Len, $Bytes.Length - $Offset))
+                if ($have -eq 0) { return 'absent' }
+                for ($i = 0; $i -lt $have; $i++) {
+                  if ($Bytes[$Offset + $i] -ne ((($i % 256) * 31 + $Seed) % 256)) { return "mismatch at byte $i" }
+                }
+                if ($have -lt $Len) { return "partial, $have of $Len bytes match" }
+                return 'matches'
+              }
+              $bytes = [System.IO.File]::ReadAllBytes($held.FullName)
+              $head = Compare-Chunk $bytes 0 262144 1
+              $tail = Compare-Chunk $bytes 262144 65536 2
+              $extra = [math]::Max(0, $bytes.Length - 327680)
+              $detail = "held-rw length=$($bytes.Length); synced head: $head; unsynced tail: $tail; bytes past the tail: $extra"
+              if ($head -ne 'matches') { $ok = $false }
+            } else {
+              $detail = 'held-rw missing'
+              $ok = $false
+            }
+            pwsh -NoProfile -File scripts/ci/vhdx.ps1 -Action unmount -Path "$env:VHDX_DIR\T.vhdx" -ResultFile $env:VHDX_LOG
+          }
+          Add-Content -LiteralPath $env:VHDX_RESULTS -Value "| reattach | T.vhdx on W: | $detail | $(if ($ok) { 'ok' } else { 'FAILED' }) |"
+          if (-not $ok) { exit 1 }
+          exit 0
+
+      - name: Read-only volumes (SD lock)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          $working = 0
+          foreach ($case in @(@{ L = 'O'; M = 'volume' }, @{ L = 'P'; M = 'disk' }, @{ L = 'Q'; M = 'vdisk' })) {
+            pwsh -NoProfile -File scripts/ci/vhdx.ps1 -Action readonly -Method $case.M -Path "$env:VHDX_DIR\$($case.L).vhdx" `
+              -Letter $case.L -ResultFile $env:VHDX_LOG
+            $set = $LASTEXITCODE -eq 0
+            $blocked = $false
+            if ($set) {
+              $env:CULLA_VHDX_LETTER = $case.L
+              cargo test -p culla-adapters --test vhdx_spike --locked -- --ignored --exact vhdx_readonly_spike --nocapture
+              $blocked = $LASTEXITCODE -eq 0
+            }
+            if ($blocked) { $working++ }
+            $line = @(Get-Content -LiteralPath $env:VHDX_LOG | Where-Object { $_ -match 'action=readonly' -and $_ -match "letter=$($case.L)\b" })[-1]
+            $flag = if ($line -match 'fsutil_readonly=(\S+)') { $Matches[1] } else { 'unknown' }
+            $detail = if (-not $set) { 'could not set read-only' } elseif ($blocked) { 'create, mkdir and write fail; open for write succeeds' } else { 'writes still succeed' }
+            Add-Content -LiteralPath $env:VHDX_RESULTS -Value "| read-only | $($case.L): exFAT, method=$($case.M) | $detail; fsutil read-only flag: $flag | $(if ($blocked) { 'ok' } else { 'FAILED' }) |"
+          }
+          if ($working -eq 0) { Write-Host '::error::no read-only method blocked writes'; exit 1 }
+          exit 0
+
+      - name: Unmount all volumes
+        if: always()
+        timeout-minutes: 5
+        run: |
+          if (-not $env:VHDX_DIR) { Write-Host 'nothing was prepared'; exit 0 }
+          $failed = 0
+          foreach ($f in Get-ChildItem -LiteralPath $env:VHDX_DIR -Filter '*.vhdx' -ErrorAction SilentlyContinue) {
+            pwsh -NoProfile -File scripts/ci/vhdx.ps1 -Action unmount -Path $f.FullName -TimeoutSec 60 -ResultFile $env:VHDX_LOG
+            $ok = $LASTEXITCODE -eq 0
+            if (-not $ok) { $failed++ }
+            Add-Content -LiteralPath $env:VHDX_RESULTS -Value "| unmount | $($f.Name) | | $(if ($ok) { 'ok' } else { 'FAILED' }) |"
+          }
+          if ($failed) { exit 1 }
+          exit 0
+
+      - name: Summary
+        if: always()
+        timeout-minutes: 2
+        run: |
+          if (-not $env:VHDX_DIR) { Write-Host 'nothing was prepared'; exit 0 }
+          $s = $env:GITHUB_STEP_SUMMARY
+          Add-Content -LiteralPath $s -Value "## VHDX spike`n`n| Step | Volume | Detail | Outcome |`n|---|---|---|---|"
+          if (Test-Path -LiteralPath $env:VHDX_RESULTS) { Get-Content -LiteralPath $env:VHDX_RESULTS | Add-Content -LiteralPath $s }
+          foreach ($pair in @(@('Test observations', $env:CULLA_VHDX_REPORT), @('Script results', $env:VHDX_LOG))) {
+            if (Test-Path -LiteralPath $pair[1]) {
+              Add-Content -LiteralPath $s -Value "`n### $($pair[0])`n`n``````text"
+              Get-Content -LiteralPath $pair[1] | Add-Content -LiteralPath $s
+              Add-Content -LiteralPath $s -Value '```'
+            }
+          }
+          if (Test-Path -LiteralPath $env:VHDX_RESULTS) { Get-Content -LiteralPath $env:VHDX_RESULTS }
+          if (Test-Path -LiteralPath $env:CULLA_VHDX_REPORT) { Get-Content -LiteralPath $env:CULLA_VHDX_REPORT }

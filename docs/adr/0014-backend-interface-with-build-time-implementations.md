@@ -5,6 +5,8 @@ date: 2026-11-24
 
 # A `Backend` interface with build-time Tauri and Demo implementations
 
+Implementation note (M0, PR #12): the build-time selection is a Vite alias, `#backend-impl`, pointing at `src/backend/tauri.ts` in `--mode desktop` and `src/backend/demo.ts` otherwise, with a shared declaration in `src/backend/impl.d.ts`. `tests/demo-bundle.test.ts` enforces that the demo bundle contains no `@tauri-apps` module.
+
 ## Context and problem statement
 
 The same UI must run in the desktop app and as a browser demo on the author's site. The demo cannot call Rust, and its bundle should not carry Tauri code. How does one UI serve both?

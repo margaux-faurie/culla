@@ -1,0 +1,30 @@
+{
+  // App code in src/ (browser). Config files and Node-side tests: tsconfig.node.json.
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023", "dom", "dom.iterable"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "paths": {
+      // Vite points this at backend/tauri.ts or backend/demo.ts per build mode (vite.config.ts).
+      // tsc sees the shared contract only.
+      "#backend-impl": ["./src/backend/impl.d.ts"]
+    }
+  },
+  "include": ["src"]
+}

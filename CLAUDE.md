@@ -3,25 +3,26 @@
 Culla is a Windows desktop app (Tauri 2 + Rust + React/TS) that culls Nikon JPEG+NEF photos with a swipe UI, then applies keep/reject as safe, journaled file operations. Start at `docs/SPEC.md`: it records the author's decisions and maps each topic to its owning doc (PRD, nfr, architecture, ADRs, file-engine design, threat model, testing, roadmap). `docs/research/` is historical input: where it disagrees with the spec or an ADR, the spec and ADRs win.
 
 ## Status
-Pre-code: design docs drafted (24 Nov); open decisions in SPEC §10 and file-engine §13. Next is milestone M0. M0 is landing in slices; move a command from Target to Work now in the PR that makes it real.
+M0 (repo and tooling) is landing; the app is an empty shell. Design docs drafted (24 Nov); open decisions in SPEC §10 and file-engine §13. Next is M1 (core engine headless).
 
 ## Commands
-Work now (M0, Rust side):
+Work now (M0):
 - `cargo test --workspace` · `cargo test -p culla-core <name>` · `cargo test -p culla-adapters` (Windows-specific tests from M2)
-- `cargo clippy --workspace --all-targets -- -D warnings` · `cargo fmt --all` · `cargo deny check`
+- `cargo clippy --workspace --all-targets -- -D warnings` · `cargo fmt --all` · `cargo deny check` (`culla-app` needs WebView2 on Windows or libwebkit2gtk-4.1-dev on Linux)
 - `scripts/ci/check-conflict-markers.sh` · `scripts/ci/check_lint_allows.py`
-
-Target (rest of M0, JS and app side):
+- `pwsh scripts/ci/vhdx.ps1 -Action mount|attach|detach|readonly|unmount` (Windows, admin; see `scripts/ci/README.md`)
 - `pnpm install` · `pnpm check` (Biome + tsc) · `pnpm test` · `pnpm test <file>`
-- `pnpm tauri dev` (desktop) · `pnpm dev:demo` (web demo) · `pnpm gen:bindings` (TS bindings from Rust)
+- `pnpm dev:demo` · `pnpm build:demo` (web demo, `dist-demo/`) · `pnpm tauri dev` · `pnpm tauri build` (Windows, NSIS)
+
+- `pnpm gen:bindings` (placeholder until the first tauri-specta command in M1)
 
 ## Layout
 - `crates/core` (package `culla-core`) — domain, ports, pure logic. No I/O, no Tauri, `#![forbid(unsafe_code)]`.
 - `crates/adapters` (package `culla-adapters`) — Windows file ops, EXIF/NEF parsing, decode, SQLite. No Tauri.
 - `crates/cli` (package `culla-cli`, binary `culla`) — headless scan, preview, plan, apply, resume. Wiring only.
 - `crates/bench` (package `culla-bench`) — benchmark harness. See ADR 0020.
-- `src-tauri` — wiring only: commands, `culla://` image scheme, capabilities.
-- `src` — React UI, one Vite app with two build modes (desktop, demo); `Backend` interface with `TauriBackend` and `DemoBackend`.
+- `src-tauri` (package `culla-app`) — wiring only: commands, `culla://` image scheme, capabilities. New command: `build.rs` `AppManifest::commands` + `allow-<command>` in `capabilities/main.json`.
+- `src` — React UI, one Vite app, `--mode desktop` or `--mode demo`; `vite.config.ts` aliases `#backend-impl` to `backend/tauri.ts` or `backend/demo.ts` (ADR 0014).
 - `docs` — specs, ADRs, research.
 
 ## Invariants (never break; tests and lints will enforce them from M0)
@@ -43,6 +44,7 @@ Slice along the hexagon, one slice per PR, test first: core function + tests →
 - `std::fs::rename` overwrites on Windows. Use the adapters' no-replace rename, never the raw call.
 - Generated bindings are not edited by hand.
 - A hook blocks edits to protected paths (clippy and deny config, `.cargo/`, `scripts/ci/`, workflows, `winfs/`, capabilities, `.claude/` settings, hooks and agents). Don't work around it: ask Margaux, who can start a session with `CULLA_ALLOW_PROTECTED_EDITS=1`.
+- `culla-app` has no test targets: Windows test binaries lack the app manifest Tauri needs and fail to load.
 
 ## Review and merge
 Every PR gets an independent read-only reviewer agent (correctness, safety invariants, spec consistency; skip style) plus green CI. When both pass, the PR is squash-merged and work continues. Findings are fixed in the same PR and re-reviewed. Releases and anything irreversible outside the repo wait for Margaux.

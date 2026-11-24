@@ -1,5 +1,7 @@
 node_modules/
 dist/
+dist-demo/
+*.tsbuildinfo
 target/
 .claude/settings.local.json
 CLAUDE.local.md
