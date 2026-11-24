@@ -603,7 +603,7 @@ Brief. Targets and measurement live in [nfr.md](nfr.md) and [benchmarks.md](benc
 | Resume (apply) | Rolling an interrupted apply forward from the journal. No rollback in v1. |
 | Partial file | `*.culla-partial`, the temporary target of a copy until it is verified. |
 | `remove_verified` | The single audited removal function, in `culla-adapters`. Removes only the source of a verified cross-volume move, or Culla's own partial file. |
-| Verified | A copy whose destination was fsynced and read back unbuffered, and whose source was hashed a second time, with all three hashes equal. | (see ADR 0021, proposed)
+| Verified | A copy whose destination was fsynced and read back unbuffered, and whose source was hashed a second time, with all three hashes equal (see ADR 0021, proposed). |
 | `_rejected/` | Folder at the source root that receives rejected groups, mirroring subfolders. Excluded from scans. |
 | Destination | Folder chosen per session for kept groups. Excluded from scans when it sits inside the source. |
 | Preview | Screen-sized JPEG made by the preview pipeline and served by `culla://`. |
