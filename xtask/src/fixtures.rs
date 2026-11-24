@@ -109,7 +109,8 @@ fn list_files(base: &Path, dir: &Path) -> Vec<String> {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
+        // file_type() does not follow symlinks, so a link loop can't recurse forever.
+        if entry.file_type().is_ok_and(|t| t.is_dir()) {
             out.extend(list_files(base, &path));
         } else if let Ok(rel) = path.strip_prefix(base) {
             let parts: Vec<String> = rel

@@ -10,7 +10,7 @@ export default defineConfig({
   testDir: "./e2e",
   forbidOnly: ci,
   retries: ci ? 1 : 0,
-  reporter: ci ? "github" : "list",
+  reporter: ci ? [["github"], ["html", { open: "never" }]] : "list",
   use: {
     baseURL,
     trace: "retain-on-failure",

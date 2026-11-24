@@ -10,7 +10,7 @@ Status: draft, 24 Nov 2026. Scope: v1 (Windows). Requirements live in [nfr.md](n
 - Tests run on Linux where possible (fast, cheap) and on `windows-latest` where Windows behaviour matters (rename semantics, locks, volumes, long paths, junctions).
 - A test that needs real hardware is in the manual checklist (section 8), not skipped silently in CI.
 - A bug fix starts with a failing test. A fuzz crash becomes a regression test.
-- Scope of the removal and rename rules: clippy `disallowed-methods` (`std::fs::remove_*`, raw `std::fs::rename`) is enforced on `culla-core`, `culla-adapters`, `culla-cli` and `src-tauri` only. Test code, `xtask` and `culla-bench` are outside the rule, because they must create and clean up scratch data. They only ever do so inside temporary directories (`tempfile::TempDir`), never in a user folder ([ADR 0020](adr/0020-headless-cli-and-bench-crates.md)).
+- Scope of the removal and rename rules: clippy `disallowed-methods` (`std::fs::remove_*`, raw `std::fs::rename`) is enforced on `culla-core`, `culla-adapters`, `culla-cli` and `src-tauri` only. Test code, `xtask` and `culla-bench` are outside the rule, because they must create and clean up scratch data. They only ever do so inside temporary directories (`tempfile::TempDir`), never in a user folder ([ADR 0020](adr/0020-headless-cli-and-bench-crates.md)). (Pending: in practice `xtask` is inside the rules too, since it inherits the workspace lints; a decision superseding ADR 0020 on this is listed in SPEC §10.)
 
 ## 2. Pyramid
 
@@ -238,7 +238,7 @@ Run on the ROG Zephyrus G14 2024 before each release, and once at the end of M1,
 
 The generator writes TIFF and EXIF structures with its own minimal writer, not with the parser under test, so a parser bug cannot hide in the fixtures.
 
-The generator follows the workspace file rules like product code: it only creates new files (`create_new`) and never truncates, overwrites or removes one. `cargo xtask fixtures` therefore refuses to run when a target file exists; to regenerate, delete `testdata/synthetic/` by hand first. The M0 skeleton writes one JPEG + NEF pair (`testdata/synthetic/pair/`): an 8x8 greyscale JPEG with Exif IFD0 (Orientation only), and a big-endian TIFF "NEF" whose IFD0 points at an embedded JPEG (no SubIFDs, MakerNote or raw data). The format limits are listed in `xtask/src/fixtures.rs`; the full set above lands with the parsers in M1.
+The generator follows the workspace file rules like product code: it only creates new files (`create_new`) and never truncates, overwrites or removes one. `cargo xtask fixtures` therefore refuses to run when a target file exists; to regenerate, delete `testdata/synthetic/` by hand first. The M0 skeleton writes one JPEG + NEF pair (`testdata/synthetic/pair/`): an 8x8 greyscale JPEG with Exif IFD0 (Orientation only), and a big-endian TIFF "NEF" whose IFD0 points at an embedded JPEG (no SubIFDs, MakerNote or raw data). It is NEF-shaped enough for an IFD walker but not baseline-TIFF valid (no ImageWidth, BitsPerSample or Photometric), so strict readers such as PIL reject it; add those tags before cross-checking with external tools. The format limits are listed in `xtask/src/fixtures.rs`; the full set above lands with the parsers in M1.
 
 Privacy for real samples: before committing, strip GPS, owner name and body serial number from the files (a local `exiftool` run is fine; it is a dev tool, not shipped). Check that each stripped NEF still parses and still yields its preview. The same rule applies to the web demo photos.
 
