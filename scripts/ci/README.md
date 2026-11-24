@@ -54,24 +54,24 @@ The tests in `crates/adapters/tests/vhdx_spike.rs` are `#[ignore]` and return ea
 
 ### Results
 
-Runs, both 24 Nov 2026: [45351286023](https://github.com/margaux-faurie/culla/actions/runs/45351286023) (first run) and [45351794930](https://github.com/margaux-faurie/culla/actions/runs/45351794930) (head 3be4214, first run with the read-only write probe). Each row cites its run. Runner: image `win25-vs2026` 20261116.315 (Windows Server 2025 Datacenter, build 10.0.26100).
+Runs, both 24 Nov 2026: [45351286023](https://github.com/margaux-faurie/culla/actions/runs/45351286023) (first run; it ended red on an open-for-write assertion that was later dropped), [45351794930](https://github.com/margaux-faurie/culla/actions/runs/45351794930) (head 3be4214, first run with the read-only write probe) and [45352688496](https://github.com/margaux-faurie/culla/actions/runs/45352688496) (head ba966df, fsutil flag and byte-for-byte checks). Each row cites its run. Runner: image `win25-vs2026` 20261116.315 (Windows Server 2025 Datacenter, build 10.0.26100).
 
 | Question | Result |
 |---|---|
 | exFAT, FAT32 and NTFS mount at fixed letters | ok, about 2 s each (6 volumes) (45351286023) |
 | Placeholder writes on each | ok (1 MiB write + sync + read back, ≤ 2 ms) (45351286023) |
-| Detach with handles open: method that made `T:` vanish | `diskpart detach vdisk`, 1.4 s (45351286023) and 1.7 s (45351794930); no fallback needed |
+| Detach with handles open: method that made `T:` vanish | `diskpart detach vdisk`, 1.4 s (45351286023), 1.7 s (45351794930) and 1.8 s (45352688496); no fallback needed |
 | `diskpart detach vdisk` with handles open: refused, blocked or done | done (45351286023) |
 | Write through held handle after detach | fails at once: `ERROR_NOT_READY` (21) (45351286023) |
 | `sync_all` through held handle after detach | fails at once: `ERROR_NOT_READY` (21) (45351286023) |
 | Read through held handles after detach | fails at once: `ERROR_NOT_READY` (21), read-write and read-only handles (45351286023) |
 | Path access after detach (`metadata`, open, `create_new`, `read_dir`) | `ERROR_PATH_NOT_FOUND` (3) (45351286023) |
 | Closing held handles after detach | returns at once (45351286023) |
-| Reattach on another letter, held file length | ok; 327680, so the unsynced 64 KiB tail survived on this virtual disk (a real card may lose it) (45351286023). Byte-for-byte check of head and tail: TODO (next run) |
-| Read-only: `volume` attribute | creating files and folders fails (`ERROR_WRITE_PROTECT`, 19; 45351286023); opening an existing file for writing still succeeds, and the write fails with 19 (45351794930). `fsutil` read-only flag: TODO (next run) |
-| Read-only: `disk` attribute | same as `volume` (45351286023, 45351794930). `fsutil` read-only flag: TODO (next run) |
-| Read-only: `attach vdisk readonly` | same as `volume` (45351286023, 45351794930). `fsutil` read-only flag: TODO (next run) |
+| Reattach on another letter, held file length | ok; 327680, so the unsynced 64 KiB tail survived on this virtual disk (a real card may lose it) (45351286023). Byte for byte (45352688496): synced head matches, unsynced tail matches, 0 bytes past the tail |
+| Read-only: `volume` attribute | creating files and folders fails (`ERROR_WRITE_PROTECT`, 19; 45351286023); opening an existing file for writing still succeeds, and the write fails with 19 (45351794930). `fsutil` read-only flag: yes, `Is ReadOnly` (45352688496) |
+| Read-only: `disk` attribute | same as `volume` (45351286023, 45351794930, 45352688496). `fsutil` read-only flag: yes, `Is ReadOnly` (45352688496) |
+| Read-only: `attach vdisk readonly` | same as `volume` (45351286023, 45351794930, 45352688496). `fsutil` read-only flag: yes, `Is ReadOnly` (45352688496) |
 | Unmount | ok (45351286023) |
 
 Method to use for the card-pull test (testing.md section 6, level 4): `diskpart detach vdisk` while the test holds handles; expect `ERROR_NOT_READY` on handles and `ERROR_PATH_NOT_FOUND` on paths.
-Method to use for the write-protect case: `attributes disk set readonly` (`-Method disk`) if the next run shows `fsutil` reporting the read-only flag for it. It sets write protection on the whole disk, which is closer to a real SD card's lock switch (the media reports write-protected) than a volume flag. Until then, and if the flag does not show, `attributes volume set readonly`. The P3 preflight uses the volume read-only flag either way, and writes must still handle `ERROR_WRITE_PROTECT` (19). Note for the engine: an SD lock is not detected by opening a file for writing; only the write fails.
+Method to use for the write-protect case: `attributes disk set readonly` (`-Method disk`): `fsutil fsinfo volumeinfo` reports `Is ReadOnly` for it (45352688496), and it write-protects the whole disk, which is closer to a real SD card's lock switch than a volume flag. The P3 preflight uses the volume read-only flag either way, and writes must still handle `ERROR_WRITE_PROTECT` (19). Note for the engine: an SD lock is not detected by opening a file for writing; only the write fails.
