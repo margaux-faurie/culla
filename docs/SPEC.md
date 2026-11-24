@@ -170,7 +170,7 @@ Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsm
 - CI on PRs: lint, test, build. Release via release-please with Conventional Commits. Dependabot (grouped). Action SHAs pinned. OpenSSF Scorecard.
 - MIT license, README with GIF, CONTRIBUTING, SECURITY.md, third-party licences file.
 - Decisions recorded as ADRs in `docs/adr/` (these also feed the blog enablement guide).
-- Agent practices, security and architecture conventions: see `docs/research/practices.md`. Key rules: removal lives only in `remove_verified` (§5.2 step 5), and `std::fs::remove_*` is banned elsewhere via clippy `disallowed-methods`; `std::fs::rename` overwrites on Windows, so the adapters use the no-replace `MoveFileExW` and copies open targets with `create_new`; Tauri commands restricted with `AppManifest::commands`; the webview gets no fs plugin permissions; cargo-deny (no cargo-audit), CodeQL (JS/TS + Rust), workflow lockfiles, pnpm supply-chain settings; tauri-specta pinned (still RC), `ts-rs` as fallback; cargo-fuzz targets on the EXIF/NEF parsers.
+- Agent practices, security and architecture conventions: see `docs/research/practices.md`. Key rules: removal lives only in `remove_verified` (§5.2 step 5); `std::fs::remove_*` is banned outside `remove_verified`; `std::fs::rename` is banned everywhere (the adapters use the no-replace `MoveFileExW`), both via clippy `disallowed-methods`; copies open targets with `create_new`; Tauri commands restricted with `AppManifest::commands`; the webview gets no fs plugin permissions; cargo-deny (no cargo-audit), CodeQL (JS/TS + Rust), workflow lockfiles, pnpm supply-chain settings; tauri-specta pinned (still RC), `ts-rs` as fallback; cargo-fuzz targets on the EXIF/NEF parsers.
 
 ## 8. Scope
 
