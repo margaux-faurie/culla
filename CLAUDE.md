@@ -34,5 +34,8 @@ Slice along the hexagon, one slice per PR, test first: core function + tests →
 - `std::fs::rename` overwrites on Windows. Use the engine's checked rename, never the raw call.
 - Generated bindings are not edited by hand.
 
+## Keeping this file current
+Update CLAUDE.md in the same PR whenever a command, the layout, an invariant or a convention changes, or when you hit a trap a future session would fall into too. Keep it short (under ~60 lines): move procedures to `.claude/skills/`, and rules that must always hold to hooks or lints. Remove lines that are no longer true.
+
 ## Done means
-Tests, clippy, Biome and tsc green; new behaviour covered by a test; docs/ADR updated if a decision changed. See `docs/testing.md`.
+Tests, clippy, Biome and tsc green; new behaviour covered by a test; docs, ADR and CLAUDE.md updated if a decision or workflow changed. See `docs/testing.md`.
