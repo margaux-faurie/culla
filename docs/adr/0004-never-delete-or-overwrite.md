@@ -5,6 +5,8 @@ date: 2026-11-24
 
 # Never delete or overwrite: rejects go to `_rejected/`, collisions get a suffix per group
 
+Refined by: [ADR 0021](0021-unbuffered-source-re-read-for-hash-3.md) (proposed), for the source re-read.
+
 ## Context and problem statement
 
 A file tool for photos must not lose a photo. Nikon counters roll over, so a destination often already holds a `DSC_0001`. On Windows `std::fs::rename` silently replaces an existing target. How does Culla handle rejects, name collisions and the one removal a cross-volume move needs?

@@ -93,6 +93,8 @@ culla/
                     journal state machine). No I/O, no Tauri. Tests run on any OS.
   crates/adapters/  package culla-adapters: Windows file ops, EXIF/NEF parsing, decode, SQLite store.
                     No Tauri. Integration tests on windows-latest.
+  crates/cli/       package culla-cli, binary culla: headless scan|preview|plan|apply|resume (ADR 0020)
+  crates/bench/     package culla-bench: benchmark harness (ADR 0020)
   src-tauri/        Tauri 2 shell, wiring only: commands, culla:// image scheme, capabilities
   src/              React + TypeScript UI (one Vite app, two build modes: desktop | demo)
   docs/             SPEC.md, adr/, research/
@@ -119,7 +121,7 @@ The items below describe behaviour; the pure parts live in `culla-core` and the 
 3. **Execute,** journalled with one row per file (`pending → copying → verified → done | failed`):
    - Every rename uses `MoveFileExW` with no flags except `MOVEFILE_WRITE_THROUGH`. Without `MOVEFILE_REPLACE_EXISTING`, an existing target makes it fail atomically (no check-then-rename race). Without `MOVEFILE_COPY_ALLOWED`, a rename across volumes fails with `ERROR_NOT_SAME_DEVICE` instead of silently copying and deleting. Copies open their target with `create_new`. "Target exists" is a hard error for that group.
    - Move on the same volume: a single such rename.
-   - Move across volumes: copy to `*.culla-partial` while hashing the source (xxh3/blake3), fsync, then verify: read the destination back with `FILE_FLAG_NO_BUFFERING` (so the OS cache can't answer for the disk) and **re-read the source for a second hash**; all three hashes must match (this catches a flaky card reader, which would corrupt the copy and the first hash alike). Then rename into place and remove the source.
+   - Move across volumes: copy to `*.culla-partial` while hashing the source (xxh3/blake3), fsync, then verify: read the destination back with `FILE_FLAG_NO_BUFFERING` (so the OS cache can't answer for the disk) and **re-read the source with `FILE_FLAG_NO_BUFFERING` for a second hash (ADR 0021, proposed)**; all three hashes must match (this catches a flaky card reader, which would corrupt the copy and the first hash alike). Then rename into place and remove the source.
    - Copy: same as across volumes, but the source is kept. The mtime is preserved.
    - Sharing violations (Explorer, Defender, Lightroom): retry with backoff, then mark the file failed and continue.
 4. **Resume:** if an apply is interrupted (crash, card pulled), it rolls forward from the journal the next time the app opens. There is no rollback in v1.

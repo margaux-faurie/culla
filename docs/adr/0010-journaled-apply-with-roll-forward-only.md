@@ -5,6 +5,8 @@ date: 2026-11-24
 
 # Journaled apply: copy, hash, fsync, verify, rename; roll forward only
 
+Refined by: [ADR 0021](0021-unbuffered-source-re-read-for-hash-3.md) (proposed), for the source re-read.
+
 ## Context and problem statement
 
 An apply can move 2,000 pairs (about 140 GB) across volumes. The app can crash, the laptop can sleep, the card can be pulled. Flaky readers can corrupt data without changing the size. How does the engine execute a plan so that no file is lost and an interrupted apply can finish?
