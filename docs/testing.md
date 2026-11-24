@@ -33,7 +33,7 @@ flowchart TB
 | Property | `proptest` | Linux | plan building, decision log fold (section 3) | every PR (default case count), nightly (high case count) |
 | Golden | JSONL fixtures in `testdata/event-log/` | Linux (Rust and Node) | Rust and TS reducers give the same state for the same log | every PR |
 | Unit (TS) | Vitest, against `DemoBackend` | Linux | reducer, keyboard map, key-repeat filter, swipe threshold logic, filters, end-of-list | every PR |
-| Integration (Windows) | `cargo test -p culla-adapters --features windows-it` on `windows-latest` | Windows | nothing-before-Apply checks (section 4), real file ops (section 5), crash and resume (section 6) | every PR touching `crates/core`, `crates/adapters` or `src-tauri`, and nightly |
+| Integration (Windows) | `cargo test -p culla-adapters --features windows-it` on `windows-latest` | Windows | nothing-before-Apply checks (section 4), real file ops (section 5), crash and resume (section 6) | every PR touching `crates/core`, `crates/adapters`, `crates/cli` or `src-tauri`, and nightly |
 | End to end | Playwright + `@axe-core/playwright` on the demo build | Linux (Chromium, plus Firefox and WebKit for the demo) | swipe loop, keyboard-only flows, click-only flow with the Keep and Reject buttons, review screen, a11y | every PR touching `src/` |
 | Installer | NSIS silent install and uninstall on `windows-latest` | Windows | per-user install, "remove my Culla data" option (section 5.3) | from M6, on release PRs |
 | Desktop smoke | `tauri-driver` on Windows | Windows | app starts, opens a fixture folder, shows a photo through `culla://` | from M3, nightly |
@@ -91,7 +91,7 @@ This is the first invariant in `CLAUDE.md` and [ADR 0003](adr/0003-stage-decisio
 |---|---|---|
 | Recording `FileSystem` port | `culla-core`, anywhere | A `RecordingFs` wraps the in-memory port and logs every call. Drive a whole session through it: scan, EXIF pass, decisions with undo and redo, filters, review (plan building), preflight. The log contains zero mutating calls (create, write, rename, remove, set-times, set-attributes) on any path under the source or the destination. Mutating calls happen only after the explicit `apply` call. |
 | Source tree hash | `culla-adapters`, Windows integration | Hash every file and record every mtime and attribute under the source (on the exFAT VHDX) and the destination before a session. Run scan, preview generation, decisions, review and preflight through the real adapters, then close the app without applying. Hashes, mtimes, attributes and the file list are unchanged. Also after a session that ends with "start fresh". |
-| Write locations | `culla-adapters`, Windows integration | Point `%LOCALAPPDATA%` at a temp dir for the test process. After a full session without Apply, every file created or modified on the test volumes (`C:` workspace, `T:`, `U:`) is under `%LOCALAPPDATA%\Culla` (`sessions`, `cache`, `logs`). Nothing is written on the card, in the source or in the destination (no session database, no thumbnails, no temp files). Checked by diffing a full listing of the test volumes before and after. |
+| Write locations | `culla-adapters`, Windows integration | The data root is injected through config, not read from the environment (`SHGetKnownFolderPath` ignores a changed `%LOCALAPPDATA%`), see [architecture.md](architecture.md) section 8.7. First assert that the composition root passes the injected root to every adapter that writes (session store, cache, log), and that no adapter resolves a known folder itself. Then inject a temp dir as the root. After a full session without Apply, every file created or modified on the test volumes (`C:` workspace, `T:`, `U:`) is under the injected root (`sessions`, `cache`, `logs`). Nothing is written on the card, in the source or in the destination (no session database, no thumbnails, no temp files). Checked by diffing a full listing of the test volumes before and after. |
 
 ## 5. Windows integration tests
 
@@ -123,13 +123,13 @@ The card-pull case uses `Dismount-DiskImage` or `diskpart detach vdisk` in the m
 | Case | Expectation | Links |
 |---|---|---|
 | Same-volume move | single rename, no copy, source gone, target present | INV, NFR-REL |
-| Cross-volume move C: → T: and T: → C: | partial file, hash of the source during the copy, fsync, destination read back with `FILE_FLAG_NO_BUFFERING`, source re-read for a second hash, all three hashes equal, rename, then source removal; mtime kept | INV, NFR-REL |
-| Read-back bypasses the OS cache | the adapter opens the destination for verify with `FILE_FLAG_NO_BUFFERING` (asserted through a flag-recording wrapper around the open call) | INV never delete |
+| Cross-volume move C: → T: and T: → C: | partial file, hash of the source during the copy, fsync, destination read back with `FILE_FLAG_NO_BUFFERING`, source re-read with `FILE_FLAG_NO_BUFFERING` for a second hash, all three hashes equal, rename, then source removal; mtime kept | INV, NFR-REL |
+| Verify reads bypass the OS cache | the adapter opens both the destination (hash 2) and the source (hash 3) for verify with `FILE_FLAG_NO_BUFFERING`, asserted through a flag-recording wrapper around the open call. Without it on the source, the standby cache would answer and hash 3 would only repeat hash 1. | INV never delete, NFR-REL-04 |
 | Read-back mismatch (test adapter flips a byte in the destination after fsync, or the source changes during the copy) | verify fails, source is kept, the op is marked failed, the bad partial is cleaned up | INV never delete |
 | `remove_verified`, direct calls | refuses a path that is not a journalled, verified cross-volume source and not a Culla `*.culla-partial`: an unverified source, a kept original, a file in `_rejected/`, a user file named `*.culla-partial` outside the journal, a junction target | INV never delete |
 | Copy across volumes | source kept, mtime kept (±2 s on exFAT) | INV |
 | Target appears between plan and execute (same volume) | `MoveFileExW` is called with only `MOVEFILE_WRITE_THROUGH` (no replace-existing, no copy-allowed); the existing target is a hard error, the op is marked failed, the existing file is byte-identical afterwards | INV no overwrite |
-| Target appears between plan and execute (cross volume, at the final rename of the partial) | same hard error; the partial stays journalled, the source is not removed | INV no overwrite, never delete |
+| Target appears between plan and execute (cross volume or copy, at the final rename of the partial) | same hard error; the partial is removed through `remove_verified`, the op ends `failed`, the source is kept, and the file that appeared is byte-identical afterwards | INV no overwrite, never delete |
 | Rename across volumes with the checked rename | fails with `ERROR_NOT_SAME_DEVICE` (no silent copy, since copy-allowed is not set); the engine takes the verified copy path instead | INV no overwrite |
 | Raw `std::fs::rename` not used | enforced by clippy `disallowed-methods`; the checked rename is the only path | INV no overwrite |
 | `create_new` on copy target | fails if target exists | INV no overwrite |
@@ -160,7 +160,7 @@ The NSIS option name used for the silent run is to confirm when the installer ho
 Four levels, from cheap to realistic.
 
 1. **Fault injection in core (anywhere).** `FaultyFs` (core `FileSystem` port) and an in-memory `Journal` port, both in `culla-core`. The fault fires at a chosen step of a chosen op: after the partial copy, before fsync, after the hash check, after rename, before the source removal, during the journal write (the write is lost or half-applied). The test keeps only what the in-memory journal had durably committed, drops everything else, and runs resume. A proptest variant picks the op and step at random. No SQLite and no disk here.
-2. **Journal persistence (`culla-adapters`).** The SQLite journal is closed abruptly (connection dropped without commit, process killed between statements) and reopened. Every committed row reads back with its state; an uncommitted transition is not visible. WAL and `synchronous=FULL` settings are asserted on open.
+2. **Journal persistence (`culla-adapters`).** The SQLite journal is closed abruptly (connection dropped without commit, process killed between statements) and reopened. Every committed row reads back with its state; an uncommitted transition is not visible. The SQLite settings are pending: WAL with `synchronous=FULL` is proposed in [ADR 0009](adr/0009-sqlite-per-source-for-sessions-and-journal.md) and NFR-REL-10, to confirm in [design/file-engine.md](design/file-engine.md). Once confirmed, the chosen settings are asserted on open.
 3. **Process kill (Windows).** The test spawns `culla apply` ([ADR 0020](adr/0020-headless-cli-and-bench-crates.md), from M2) on a fixture plan and kills it with `TerminateProcess` after a random delay. Repeat 50 times per nightly run (5 per PR). Then run `culla resume`.
 4. **Volume loss (Windows).** Detach the `T:` VHDX during a cross-volume apply (method proven in the M0 spike, section 5.1). Reattach under a different letter. Resume.
 
@@ -171,8 +171,8 @@ After resume has finished, each op is `done` or `failed` ([SPEC.md](SPEC.md) sec
 | Op kind | `done` | `failed` |
 |---|---|---|
 | Keep, move, same volume | at destination only, original hash | at source only, original hash |
-| Keep, move, cross volume | at destination only, original hash; source removed by `remove_verified` | at source only, original hash; no partial left |
-| Keep, copy (same or cross volume) | at **both** source and destination, identical hashes; source mtime and attributes unchanged | at source only; no partial left |
+| Keep, move, cross volume | at destination only, original hash; source removed by `remove_verified` | at source only, original hash; no partial left (removed through `remove_verified`), including when the target appeared at the final rename |
+| Keep, copy (same or cross volume) | at **both** source and destination, identical hashes; source mtime and attributes unchanged | at source only; no partial left (removed through `remove_verified`), including when the target appeared at the final rename |
 | Reject, move to `<source>/_rejected/` (always same volume as the source) | in `_rejected/` only, original hash | at source only, original hash |
 
 For every op, in every case:
@@ -186,6 +186,7 @@ For every op, in every case:
 - An op whose journal row was `verified` at the time of the crash ends `done` after resume: the rename into place and, for a cross-volume move, the source removal are completed. It is never rolled back and never re-copied (asserted with the recording port: no copy call for that op during resume).
 - An op that was `pending` or `copying` is started again from its beginning; its leftover partial is removed through `remove_verified`.
 - If the destination is not what the journal expects (missing, or a different hash), the op ends `failed` and the source is kept.
+- If the final target name was taken by another file in the meantime, the partial is removed through `remove_verified` and the op ends `failed` (the same rule as during a normal apply).
 
 The exact transitions and resume rules are owned by [design/file-engine.md](design/file-engine.md); the checker reads them from there.
 
@@ -275,11 +276,11 @@ Copy of the PR template checklist.
 - [ ] Any change to plan, preflight, journal, apply or resume has property or integration tests naming the `INV-xx` it protects.
 - [ ] Any change to scan, preview, session or review code keeps the "nothing touches the disk before Apply" tests (section 4) green.
 - [ ] `pnpm check`, `pnpm test`, `cargo test --workspace`, clippy `-D warnings`, `cargo fmt --check` and `cargo deny check` are green.
-- [ ] Windows integration job green when `crates/core`, `crates/adapters` or `src-tauri` changed.
+- [ ] Windows integration job green when `crates/core`, `crates/adapters`, `crates/cli` or `src-tauri` changed.
 - [ ] Playwright and axe green when `src/` changed. New UI is reachable by keyboard.
 - [ ] Coverage gates on `culla-core` and the `culla-adapters` fs-op module hold.
 - [ ] Generated bindings are up to date (`git diff --exit-code` after `pnpm gen:bindings`).
-- [ ] No new `std::fs::remove_*` or raw `std::fs::rename` in `culla-core`, `culla-adapters` or `src-tauri`; no I/O and no `unsafe` in `crates/core`; test and bench code touch only temp dirs; no new Tauri command without a capability entry.
+- [ ] No new `std::fs::remove_*` or raw `std::fs::rename` in `culla-core`, `culla-adapters`, `culla-cli` or `src-tauri`; no I/O and no `unsafe` in `crates/core`; test and bench code remove only their own temp dirs; no new Tauri command without a capability entry.
 - [ ] No network call added (privacy rule in [nfr.md](nfr.md)).
 - [ ] If a decision changed: ADR added or updated in `docs/adr/`. If a budget moved: [nfr.md](nfr.md) updated.
 - [ ] `CLAUDE.md` updated if a command, the layout, an invariant or a convention changed.

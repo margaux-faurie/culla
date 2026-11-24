@@ -13,6 +13,8 @@ Pre-code: documentation phase. Commands below are the target; they work once mil
 ## Layout
 - `crates/core` (package `culla-core`) — domain, ports, pure logic. No I/O, no Tauri, `#![forbid(unsafe_code)]`.
 - `crates/adapters` (package `culla-adapters`) — Windows file ops, EXIF/NEF parsing, decode, SQLite. No Tauri.
+- `crates/cli` (package `culla-cli`, binary `culla`) — headless scan, preview, plan, apply, resume. Wiring only.
+- `crates/bench` (package `culla-bench`) — benchmark harness. See ADR 0020.
 - `src-tauri` — wiring only: commands, `culla://` image scheme, capabilities.
 - `src` — React UI, one Vite app with two build modes (desktop, demo); `Backend` interface with `TauriBackend` and `DemoBackend`.
 - `docs` — specs, ADRs, research.
@@ -20,7 +22,7 @@ Pre-code: documentation phase. Commands below are the target; they work once mil
 ## Invariants (never break; tests and lints will enforce them from M0)
 - Nothing touches the user's files before the user confirms Apply.
 - Never overwrite a file: renames use `MoveFileExW` with only `MOVEFILE_WRITE_THROUGH` (no replace, no copy-allowed), copies use `create_new`.
-- Never remove a file, except in the single audited function `remove_verified` (SPEC §5.2), which removes only the source of a cross-volume move whose destination and source were re-read and hash-verified, and Culla's own `*.culla-partial` files.
+- Never remove a file, except in the single audited function `remove_verified` (SPEC §5.2), which removes only the source of a cross-volume move whose destination and source were re-read and hash-verified, and Culla's own `*.culla-partial` files. The lint covers `culla-core`, `culla-adapters`, `culla-cli` and `src-tauri`; tests and `culla-bench` remove only their own temp dirs.
 - Undecided photos are never touched.
 - The webview gets no filesystem permissions; it only knows opaque photo IDs.
 

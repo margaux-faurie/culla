@@ -35,13 +35,13 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
 ### M0 — Repo and tooling
 
 - **Goal:** a repo where an agent can land a tested change safely from the first commit. This is the milestone `CLAUDE.md` refers to: when it exits, the target commands in `CLAUDE.md` are real.
+- **Already done before M0:** ADRs 0000–0020 are written ([docs/adr/](adr/README.md)); M0 builds on them and adds new ones only for new decisions.
 - **Scope:**
   - pnpm + Cargo workspaces with the layout `crates/core` (`culla-core`, pure, no I/O), `crates/adapters` (`culla-adapters`, Windows fs ops, parsers, decode, SQLite), `src-tauri` (wiring only), `src`; empty but building.
   - CI on PRs: Biome, `tsc`, rustfmt, clippy `-D warnings`, `cargo deny`, `cargo test`, Vitest; a `windows-latest` job; action SHAs pinned or `actions.lock`; `permissions: {}` by default; CodeQL; Scorecard; Dependabot (grouped, 3 ecosystems); pnpm supply-chain settings.
   - `CLAUDE.md` with real commands, `.claude/settings.json` (format hook, fast Stop check, deny rules, protected paths), read-only reviewer agents, skills (`add-command`, `new-adr`, `release`).
   - Workspace members also include `crates/cli` (`culla-cli`, binary `culla`) and `crates/bench` (`culla-bench`), empty ([ADR 0020](adr/0020-headless-cli-and-bench-crates.md)).
   - clippy `disallowed-methods` for `std::fs::remove_*` and raw `std::fs::rename`, enforced on `culla-core`, `culla-adapters`, `culla-cli` and `src-tauri` only (test code and `culla-bench` are outside it and work in temp dirs); `#![forbid(unsafe_code)]` in core; `cargo deny` bans `tauri` in the core and adapters trees and any I/O crate in core.
-  - ADR-0000 and the first ADRs listed in [research/pre-project-docs.md](research/pre-project-docs.md) section 2.
   - release-please with Conventional Commits; MIT `LICENSE`; README stub.
   - Fixture generator skeleton (`cargo xtask fixtures`) and the VHDX mount script for Windows CI ([testing.md](testing.md) section 5.1).
   - Spike: detach a mounted VHDX on a hosted runner while a test process holds open handles on it (needed for the card-pull test). Fallbacks if it fails: `mountvol <L>: /p`, or the `setup-dev-drive` action.

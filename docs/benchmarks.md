@@ -28,11 +28,11 @@ Key targets (all "(est.)", canonical values in [nfr.md](nfr.md)):
 | B-07 | Resize + encode | `fast_image_resize` to fit 2880×1800, orientation applied, JPEG q85–90 | criterion | resize < 15 ms, encode 15–25 ms | informational, feeds B-09 | M1 |
 | B-08 | Preview cache | Disk cache hit (read from `%LOCALAPPDATA%\Culla\cache`) and miss (full pipeline from media), per photo | `culla-bench preview` | — | `NFR-PERF` | M1 |
 | B-09 | Next-photo latency | Time from "advance to photo i+1" to its encoded preview being in the in-memory LRU, under a simulated swipe cadence (section 4.3). Report p50, p95, p99 | `culla-bench swipe` | < 50 ms from cache | ≤ 50 ms at p95 (est.), `NFR-PERF` | M1 (headless), M3 (webview) |
-| B-10 | Sustained swipe rate | Highest cadence where p95 of B-09 stays within budget | `culla-bench swipe --ramp` | 3–4 photos/s on UHS-I for 45 MP fine JPEGs | `NFR-PERF` | M1 |
+| B-10 | Sustained swipe rate | Highest cadence where p95 of B-09 stays within budget | `culla-bench swipe --ramp` | 3–4 photos/s on UHS-I for 45 MP fine JPEGs | ≥ 3/s on SD UHS-I for 45 MP (est.), NFR-PERF-04 | M1 |
 | B-11 | Preview source choice | B-09 using the camera JPEG versus the NEF's full-size embedded JPEG (JpgFromRaw) for pairs | `culla-bench swipe --preview-source jpeg\|nef` | NEF preview may be faster | decision input | M1 |
-| B-12 | Apply, same volume | Renames per second for 2,000 groups | `culla-bench apply --same-volume` | near instant | `NFR-PERF` | M2 |
-| B-13 | Apply, cross volume | MB/s and total time for copy (hashing the source) + fsync + destination read-back with `FILE_FLAG_NO_BUFFERING` + source re-read + rename + source removal ([SPEC.md](SPEC.md) section 5.2), SD → NVMe, and NVMe → external | `culla-bench apply --cross-volume` | about 90 MB/s on UHS-I; 140 GB in 25+ min | `NFR-PERF`; also checks the review-screen ETA | M2 |
-| B-14 | Verify overhead | B-13 with xxh3 versus blake3 versus no verify (bench only); the source re-read costs a second read of the card, so report it separately | `culla-bench apply` | — | decision input for the hash choice | M2 |
+| B-12 | Apply, same volume | Time for 1,000 groups (about 3,000 files), journal included, on SD and NVMe | `culla-bench apply --same-volume` | near instant | ≤ 30 s for 1,000 groups (est.), NFR-PERF-10 | M2 |
+| B-13 | Apply, cross volume | MB/s and total time for copy (hashing the source) + fsync + destination read-back and source re-read, both with `FILE_FLAG_NO_BUFFERING`, + rename + source removal ([SPEC.md](SPEC.md) section 5.2), SD → NVMe, and NVMe → external | `culla-bench apply --cross-volume` | about 90 MB/s on UHS-I; 140 GB in 25+ min | ≥ 85 % of the slower device's sequential throughput over the bytes read (the source is read twice) (est.), NFR-PERF-11; also checks the review-screen ETA (NFR-PERF-12) | M2 |
+| B-14 | Verify overhead | B-13 with xxh3 versus blake3 versus no verify (bench only); the source re-read costs a second read of the card, so report it separately | `culla-bench apply` | — | recorded, no pass/fail; decision input for the hash choice | M2 |
 | B-15 | Memory | Peak working set during B-09 and B-13 | `culla-bench` (reports peak RSS) | ~12 previews in LRU | ≤ 1 GB (est.), `NFR-PERF` | M1 (swipe), M2 (apply) |
 | B-16 | Medium baseline | Raw sequential read speed of the medium, 1 GB file, buffered reads | `culla-bench io-baseline` | about 90 MB/s UHS-I | reference for B-03, B-10, B-13 | M1 |
 
@@ -72,7 +72,7 @@ D-2 and D-3 depend on the author's Nikon body or bodies (open question in [SPEC.
   - Culla's disk cache: `culla-bench` points the cache at a fresh temporary directory for each cold run, so there is nothing to clear and the app's own cache is never touched.
 - **Warm:** the same run repeated right after, without ejecting. Reported, but pass/fail uses cold numbers unless the NFR says otherwise.
 - **Cache hit (B-08):** run once to fill the disk cache, eject and reinsert the card, run again. This is the resume case.
-- Scan and preview reads are buffered, as in the app. The apply verify step reads the destination back with `FILE_FLAG_NO_BUFFERING`, as [SPEC.md](SPEC.md) section 5.2 requires, so B-13 and B-14 measure it that way. The source re-read during verify is a normal read and may hit the cache on a warm run; B-13 pass/fail uses cold runs.
+- Scan and preview reads are buffered, as in the app. The apply verify step reads the destination back with `FILE_FLAG_NO_BUFFERING`, as [SPEC.md](SPEC.md) section 5.2 requires, so B-13 and B-14 measure it that way. The source re-read for hash 3 also uses `FILE_FLAG_NO_BUFFERING`, so it is a real second read of the card even on a warm run (otherwise the standby cache would answer and hash 3 would only repeat hash 1). B-13 and B-14 measure both verify reads that way.
 
 ### 4.3 Swipe cadence for B-09 and B-10
 
@@ -122,8 +122,10 @@ Dataset: <D-x> (<n files>, <n pairs>, <MP>)
 | B-02 + B-03 | Scan + EXIF, 3,000 files | | | — | — | ≤ 15 s (est.) | |
 | B-09 | Next-photo latency, steady | | | | | p95 ≤ 50 ms (est.) | |
 | B-09 | Next-photo latency, fast | | | | | p95 ≤ 50 ms (est.) | |
-| B-10 | Sustained swipe rate | | — | — | — | NFR-PERF | |
-| B-13 | Apply cross volume (MB/s), M2 | | — | — | — | NFR-PERF | |
+| B-10 | Sustained swipe rate | | — | — | — | ≥ 3/s on SD (est.), NFR-PERF-04 | |
+| B-12 | Apply same volume, 1,000 groups, M2 | | — | — | — | ≤ 30 s (est.), NFR-PERF-10 | |
+| B-13 | Apply cross volume (MB/s), M2 | | — | — | — | ≥ 85 % of device throughput (est.), NFR-PERF-11 | |
+| B-14 | Verify overhead, M2 | | — | — | — | recorded | — |
 | B-15 | Peak memory | | | — | — | ≤ 1 GB (est.) | |
 | ... | | | | | | | |
 

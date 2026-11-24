@@ -147,7 +147,8 @@ Links: INV (no overwrite). Test: Windows integration.
 ### US-18 Cross-volume move is verified before the source goes
 As a photographer, I want a move from my card to my laptop verified before the card copy is removed, so that a flaky reader cannot corrupt a photo.
 - Given a cross-volume move, when it executes, then the file is copied to `*.culla-partial` while hashing, fsynced, then destination and source are both re-read and hashed, the hashes compared, the partial renamed into place, and only then is the source removed.
-- Given verify, when it reads the destination back, then it opens it with `FILE_FLAG_NO_BUFFERING`, so the OS cache cannot answer for the disk.
+- Given verify, when it reads the destination back (hash 2) and re-reads the source (hash 3), then it opens both with `FILE_FLAG_NO_BUFFERING`, so the OS cache cannot answer for either disk.
+- Given another file took the target name before the final rename, when the rename fails, then the partial is removed through `remove_verified`, the op ends `failed`, the source is kept and the other file is unchanged.
 - Given any of the three hashes differs, when verify runs, then the source is kept, the op fails and the partial is cleaned up.
 - Given any removal, when it happens, then it goes through `remove_verified`, which accepts only a verified cross-volume source or a Culla `*.culla-partial` file.
 - Given a copy or move, when it completes, then the mtime is preserved (±2 s on FAT-family volumes).

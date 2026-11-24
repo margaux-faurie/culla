@@ -21,7 +21,7 @@ Chosen option: "two crates", because the CLI runs the real engine against real u
 
 * `crates/cli`, package `culla-cli`, binary `culla`, with subcommands `scan`, `preview`, `plan`, `apply` and `resume`. It depends on `culla-core` and `culla-adapters` only, never on Tauri. Like `src-tauri`, it is wiring: it makes no file operation of its own and reaches the disk only through `culla-adapters`, so removal still goes only through `remove_verified` and nothing is written before `apply`.
 * `crates/bench`, package `culla-bench`, binary `culla-bench` ([benchmarks.md](../benchmarks.md)). It depends on `culla-core` and `culla-adapters`.
-* The clippy `disallowed-methods` rules are enforced on `culla-core`, `culla-adapters`, `culla-cli` and `src-tauri` only. Test code, `xtask` and `culla-bench` are outside them. They create and remove scratch data only inside temporary directories (`tempfile::TempDir`), never in a user folder. `culla-bench apply` copies its dataset into such a directory first.
+* The clippy `disallowed-methods` rules are enforced on `culla-core`, `culla-adapters`, `culla-cli` and `src-tauri` only. Test code, `xtask` and `culla-bench` are outside them. They create and remove only their own scratch data inside temporary directories (`tempfile::TempDir`), never in a user folder. `culla-bench apply` copies its dataset into such a directory first.
 * Neither binary is shipped in the installer in v1.
 
 ### Consequences

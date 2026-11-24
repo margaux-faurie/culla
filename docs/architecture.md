@@ -86,6 +86,11 @@ flowchart TB
     adapters["Adapters<br/>[Container: Rust library, culla-adapters]<br/>crates/adapters/ — Windows fs, EXIF/NEF, turbojpeg, SQLite"]
   end
 
+  subgraph tools["Headless tools (not shipped in v1, ADR 0020)"]
+    cli["CLI<br/>[Container: Rust binary, culla-cli]<br/>crates/cli/ — culla scan|preview|plan|apply|resume; wiring only"]
+    bench["Bench<br/>[Container: Rust binary, culla-bench]<br/>crates/bench/ — benchmark harness; temp dirs only"]
+  end
+
   db[("Session database<br/>[SQLite, one per source]<br/>event log, plan, journal")]
   cache[("Preview cache<br/>[files]<br/>%LOCALAPPDATA%\Culla\cache")]
   photos[("Photo folders<br/>[source, _rejected, destination]")]
@@ -96,6 +101,8 @@ flowchart TB
   ui -->|"GET http://culla.localhost/preview/…"| shell
   shell -->|"calls services, injects adapters"| core
   adapters -.->|"implement ports"| core
+  cli -->|"calls services, injects adapters"| core
+  bench -->|"drives services and adapters"| core
   adapters --> db
   adapters --> cache
   adapters -->|"read; move/copy on apply"| photos
@@ -508,6 +515,7 @@ To decide (ADR candidate): Tauri isolation pattern. Culla loads no remote conten
 - Inside the core, files are identified by (volume serial, relative path). Absolute paths are rebuilt from the current mount at use time.
 - Long paths: Rust std adds `\\?\` internally, but that does not cover raw Win32 calls. The adapters add the `\\?\` prefix themselves for `MoveFileExW` and `CreateFileW`. Deep mirrored destinations are covered by tests.
 - Files on removable media are read into buffers, never memory-mapped, and handles are released before any move.
+- The data root (`%LOCALAPPDATA%\Culla`, holding `sessions`, `cache` and `logs`) is not looked up inside the adapters. The composition root resolves it once (`SHGetKnownFolderPath(FOLDERID_LocalAppData)`) and injects it through config; `culla-cli`, `culla-bench` and tests pass their own root. This keeps every write location testable.
 
 ## 9. Architecture decisions
 
