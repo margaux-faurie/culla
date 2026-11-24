@@ -250,7 +250,7 @@ These are the planned commands. M0 makes them real and keeps `CLAUDE.md` in sync
 
 | Purpose | Command |
 |---|---|
-| Fast check (Stop hook) | `pnpm check` (Biome + `tsc --noEmit`) and `cargo check -p culla-core -p culla-adapters` |
+| Fast check (Stop hook) | `cargo check -p culla-core -p culla-adapters --quiet`, `python3 scripts/ci/check_lint_allows.py` and, once `package.json` and `node_modules` exist, `pnpm check` (Biome + `tsc --noEmit`) |
 | All Rust tests | `cargo test --workspace` |
 | One Rust test | `cargo test -p culla-core <name>` or `cargo test -p culla-adapters <name>` |
 | Property tests, long run | `PROPTEST_CASES=10000 cargo test -p culla-core prop_` |

@@ -1,75 +1,104 @@
-"""PreToolUse hook (Edit|Write|MultiEdit): block edits to protected paths.
+"""PreToolUse hook (Edit|Write|MultiEdit|NotebookEdit): block edits to protected paths.
 
-Protected paths hold the rules that keep agents honest: lint and deny config, CI scripts and
-workflows, the audited removal module, Tauri capabilities and the agent settings and hooks
-themselves (design/file-engine.md §9.7). An agent may not change them on its own.
+Protected paths hold the rules that keep agents honest: lint and deny config, cargo config,
+CI scripts and workflows, the audited removal module, Tauri capabilities, and the Claude Code
+settings, hooks and agents themselves (design/file-engine.md §9.7). See README.md here.
 
 Override: Margaux starts Claude Code with CULLA_ALLOW_PROTECTED_EDITS=1 in its environment.
-The agent cannot set that variable for the Claude Code process, so it stays a human decision.
 
 Exit 2 blocks the call and stderr goes to Claude. Any crash exits non-zero, and the hook is
 registered with onFailure "block", so a broken hook blocks rather than lets edits through.
 """
 import json
 import os
+import re
 import sys
 
 OVERRIDE_ENV = "CULLA_ALLOW_PROTECTED_EDITS"
 
-# Matched against the path relative to a repo root, with "/" separators, case-folded.
-# "dir/**" matches everything under dir; "**/name" matches name at any depth.
+# Globs against the path relative to a repo root, "/" separators, case-folded.
+# "**/" = any leading folders (or none), "/**" = everything below, "*" = within one segment.
 PROTECTED = [
     "**/clippy.toml",
     "**/.clippy.toml",
     "deny.toml",
+    "**/.cargo/**",
     "scripts/ci/**",
     ".github/workflows/**",
     ".github/codeowners",
     "crates/adapters/src/winfs.rs",
     "crates/adapters/src/winfs/**",
     "src-tauri/capabilities/**",
-    ".claude/settings.json",
-    ".claude/settings.local.json",
+    "**/.claude/settings*.json",
     ".claude/hooks/**",
+    ".claude/agents/**",
 ]
 
 
+def glob_re(pattern: str):
+    out, i = "", 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out, i = out + "(?:.*/)?", i + 3
+        elif pattern.startswith("/**", i):
+            out, i = out + "/.*", i + 3
+        elif pattern[i] == "*":
+            out, i = out + "[^/]*", i + 1
+        else:
+            out, i = out + re.escape(pattern[i]), i + 1
+    return re.compile(out + r"\Z")
+
+
+PROTECTED_RE = [(p, glob_re(p)) for p in PROTECTED]
+
+
 def norm(path: str) -> str:
-    return os.path.normcase(os.path.realpath(path))
+    return os.path.normcase(os.path.realpath(os.path.expanduser(os.path.expandvars(path))))
 
 
-def matches(rel: str, pattern: str) -> bool:
-    if pattern.startswith("**/"):
-        name = pattern[3:]
-        return rel == name or rel.endswith("/" + name)
-    if pattern.endswith("/**"):
-        return rel.startswith(pattern[:-2])
-    return rel == pattern
-
-
-def repo_roots(target: str, data: dict) -> list:
-    """Every root the path could be relative to: the project, the session cwd, and the
-    nearest enclosing git checkout (covers other worktrees and nested clones)."""
-    roots = []
-    for candidate in (os.environ.get("CLAUDE_PROJECT_DIR"), data.get("cwd")):
-        if candidate:
-            roots.append(norm(candidate))
-    d = os.path.dirname(target)
+def git_root(start: str):
+    d = start
     while True:
         if os.path.exists(os.path.join(d, ".git")):
-            roots.append(norm(d))
-            break
+            return d
         parent = os.path.dirname(d)
         if parent == d:
-            break
+            return None
         d = parent
-    return roots
 
 
-def protected_match(file_path: str, data: dict):
-    base = data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
-    target = norm(os.path.join(base, file_path))
-    for root in repo_roots(target, data):
+def user_settings() -> set:
+    """Claude Code user settings files, which can disable hooks for every project."""
+    homes = {os.path.expanduser("~")}
+    for var in ("USERPROFILE", "HOME"):
+        if os.environ.get(var):
+            homes.add(os.environ[var])
+    dirs = {os.path.join(h, ".claude") for h in homes}
+    if os.environ.get("CLAUDE_CONFIG_DIR"):
+        dirs.add(os.environ["CLAUDE_CONFIG_DIR"])
+    return {norm(os.path.join(d, n)) for d in dirs for n in ("settings.json", "settings.local.json")}
+
+
+def roots(target: str, cwd) -> list:
+    """Git root of the session cwd first, then the project dir, then the target's own checkout
+    (other worktrees, nested clones). A path is protected if it matches under any of them."""
+    out = []
+    if cwd:
+        out.append(git_root(norm(cwd)) or norm(cwd))
+    if os.environ.get("CLAUDE_PROJECT_DIR"):
+        out.append(norm(os.environ["CLAUDE_PROJECT_DIR"]))
+    own = git_root(os.path.dirname(target))
+    if own:
+        out.append(own)
+    return out
+
+
+def protected_match(file_path: str, cwd):
+    base = cwd or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    target = norm(os.path.join(base, os.path.expanduser(file_path)))
+    if target in user_settings():
+        return target, "user settings (~/.claude/settings*.json)"
+    for root in roots(target, cwd):
         try:
             rel = os.path.relpath(target, root)
         except ValueError:  # different drive on Windows
@@ -77,8 +106,8 @@ def protected_match(file_path: str, data: dict):
         rel = rel.replace("\\", "/").lower()
         if rel == ".." or rel.startswith("../"):
             continue
-        for pattern in PROTECTED:
-            if matches(rel, pattern):
+        for pattern, rx in PROTECTED_RE:
+            if rx.match(rel):
                 return rel, pattern
     return None
 
@@ -86,10 +115,10 @@ def protected_match(file_path: str, data: dict):
 def main() -> int:
     data = json.load(sys.stdin)
     tool_input = data.get("tool_input") or {}
-    file_path = tool_input.get("file_path") or tool_input.get("path")
+    file_path = tool_input.get("file_path") or tool_input.get("notebook_path") or tool_input.get("path")
     if not file_path:
         return 0
-    hit = protected_match(file_path, data)
+    hit = protected_match(file_path, data.get("cwd"))
     if hit is None:
         return 0
     rel, pattern = hit
@@ -100,7 +129,7 @@ def main() -> int:
         f"Blocked: {rel} is a protected path (rule {pattern!r} in .claude/hooks/protect_paths.py). "
         "It holds lint, CI, capability, removal or agent-safety rules that an agent may not change "
         "on its own. Do not work around this with Bash or another tool. Stop and ask Margaux: say "
-        "which file, what change and why. She makes the change herself or restarts Claude Code with "
+        "which file, what change and why. She makes the change herself or starts a session with "
         f"{OVERRIDE_ENV}=1.",
         file=sys.stderr,
     )

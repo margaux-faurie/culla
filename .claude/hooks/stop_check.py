@@ -1,15 +1,14 @@
 """Stop hook: a fast check before Claude ends its turn (docs/testing.md §11).
 
-Runs `cargo check --workspace --quiet`, `scripts/ci/check_lint_allows.py` and, once the JS side
-exists, `tsc --noEmit`. On failure it exits 2 with a short report on stderr, so Claude keeps
-working. Full tests, clippy and Windows jobs are left to CI.
+Runs `cargo check -p culla-core -p culla-adapters --quiet`, `scripts/ci/check_lint_allows.py`
+and, once package.json and node_modules exist, `pnpm check` (Biome + tsc). Missing tools skip.
+On failure it exits 2 with a short report on stderr, so Claude keeps working. Full tests, clippy and Windows jobs are left to CI.
 
 No endless loops:
 - `stop_hook_active` false (a fresh stop) resets the block counter for this session.
 - `stop_hook_active` true (Claude is already continuing because of this hook) counts up; after
   MAX_BLOCKS consecutive blocks the hook lets Claude stop and warns the user instead.
 - A check that times out or whose tool is missing never blocks.
-Claude Code also caps stop-hook continuations at 8 in a row.
 """
 import hashlib
 import json
@@ -46,27 +45,40 @@ def write_blocks(path: str, blocks: int) -> None:
         pass
 
 
+def git_root(start: str):
+    d = start
+    while True:
+        if os.path.exists(os.path.join(d, ".git")):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None
+        d = parent
+
+
 def checks(root: str) -> list:
     out = []
     if os.path.isfile(os.path.join(root, "Cargo.toml")) and shutil.which("cargo"):
-        out.append(("cargo check", [shutil.which("cargo"), "check", "--workspace", "--quiet"]))
+        out.append(("cargo check", [shutil.which("cargo"), "check", "-p", "culla-core", "-p", "culla-adapters", "--quiet"]))
     lint = os.path.join(root, "scripts", "ci", "check_lint_allows.py")
     if os.path.isfile(lint) and shutil.which("git"):
         out.append(("check_lint_allows.py", [sys.executable, lint]))
-    tsc = shutil.which("tsc", path=os.path.join(root, "node_modules", ".bin"))
-    if tsc and os.path.isfile(os.path.join(root, "tsconfig.json")):
-        out.append(("tsc", [tsc, "--noEmit", "-p", root]))
+    pnpm = shutil.which("pnpm")
+    if pnpm and os.path.isfile(os.path.join(root, "package.json")) and os.path.isdir(os.path.join(root, "node_modules")):
+        out.append(("pnpm check", [pnpm, "check"]))
     return out
 
 
 def main() -> int:
     raw = sys.stdin.read()
     data = json.loads(raw) if raw.strip() else {}
-    root = os.path.realpath(os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or os.getcwd())
+    cwd = data.get("cwd")
+    root = (git_root(os.path.realpath(cwd)) if cwd else None) or os.environ.get("CLAUDE_PROJECT_DIR") or cwd or os.getcwd()
+    root = os.path.realpath(root)
     state = state_file(str(data.get("session_id", "")), root)
     blocks = read_blocks(state) if data.get("stop_hook_active") else 0
 
-    env = dict(os.environ, CARGO_TERM_COLOR="never", NO_COLOR="1")
+    env = dict(os.environ, CARGO_TERM_COLOR="never", NO_COLOR="1", RUSTUP_AUTO_INSTALL="0")
     deadline = time.monotonic() + BUDGET_S
     failures, skipped = [], []
     for name, cmd in checks(root):

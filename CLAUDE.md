@@ -42,10 +42,11 @@ Slice along the hexagon, one slice per PR, test first: core function + tests →
 ## Gotchas
 - `std::fs::rename` overwrites on Windows. Use the adapters' no-replace rename, never the raw call.
 - Generated bindings are not edited by hand.
+- A hook blocks edits to protected paths (clippy and deny config, `.cargo/`, `scripts/ci/`, workflows, `winfs/`, capabilities, `.claude/` settings, hooks and agents). Don't work around it: ask Margaux, who can start a session with `CULLA_ALLOW_PROTECTED_EDITS=1`.
 
 ## Review and merge
 Every PR gets an independent read-only reviewer agent (correctness, safety invariants, spec consistency; skip style) plus green CI. When both pass, the PR is squash-merged and work continues. Findings are fixed in the same PR and re-reviewed. Releases and anything irreversible outside the repo wait for Margaux.
-Reviewers in `.claude/agents/` (read-only): `spec-reviewer` always, `safety-reviewer` for file operations, `security-reviewer` for src-tauri, IPC, deps and CI; pass them the diff. Skills: `add-command`, `new-adr`, `release` (Margaux only). Hooks in `.claude/hooks/` format each edit, run a fast check at Stop and block edits to protected paths (lint and deny config, `scripts/ci/`, workflows, `winfs/`, capabilities, `.claude/` settings and hooks): ask Margaux, don't work around them.
+Reviewers in `.claude/agents/` (read-only): `spec-reviewer` always, `safety-reviewer` for file operations, `security-reviewer` for src-tauri, IPC, deps and CI; pass them the diff. Skills: `add-command`, `new-adr`, `release` (Margaux only). Hooks in `.claude/hooks/` format each edit and run the fast check at Stop; they need Python 3, Git Bash on Windows and Claude Code ≥ 2.1.295 (see its README).
 
 ## Keeping this file current
 Update CLAUDE.md in the same PR whenever a command, the layout, an invariant or a convention changes, or when you hit a trap a future session would fall into too. Keep it short (under ~60 lines): move procedures to `.claude/skills/`, and rules that must always hold to hooks or lints. Remove lines that are no longer true.

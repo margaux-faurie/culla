@@ -3,7 +3,8 @@
 
 See design/file-engine.md §9.7 and ADR 0020. Attributes are matched whole, across lines,
 so the multi-line form rustfmt produces for long `reason = "..."` values is caught too.
-Every member crate must inherit the workspace lints and must not override them.
+Every member crate must inherit the workspace lints and must not override them, and the root
+Cargo.toml must keep disallowed_methods and unsafe_code at deny.
 """
 import re
 import subprocess
@@ -75,6 +76,30 @@ def strip_comments(src: str) -> str:
     return "".join(out)
 
 
+# The root Cargo.toml stays editable (crates get added), so its lint levels are pinned here.
+REQUIRED_WORKSPACE_LINTS = {("clippy", "disallowed_methods"): "deny", ("rust", "unsafe_code"): "deny"}
+# Groups that contain disallowed_methods; setting them below deny (with a priority) could win over it.
+CLIPPY_GROUPS_CONTAINING_REMOVAL = {"all", "style"}
+
+
+def workspace_lint_problems(manifest: str) -> list[str]:
+    try:
+        import tomllib
+    except ImportError:  # Python < 3.11
+        return [f"{manifest}: needs Python 3.11+ (tomllib) to check [workspace.lints]"]
+    with open(manifest, "rb") as f:
+        lints = tomllib.load(f).get("workspace", {}).get("lints", {})
+    problems = []
+    for (tool, lint), level in REQUIRED_WORKSPACE_LINTS.items():
+        got = lints.get(tool, {}).get(lint)
+        if got != level:
+            problems.append(f"{manifest}: [workspace.lints.{tool}] {lint} must be exactly \"{level}\" (found {got!r})")
+    for group in CLIPPY_GROUPS_CONTAINING_REMOVAL:
+        if group in lints.get("clippy", {}):
+            problems.append(f"{manifest}: [workspace.lints.clippy] must not set the {group!r} group (it contains disallowed_methods)")
+    return problems
+
+
 def main() -> int:
     problems: list[str] = []
     for path in tracked("*.rs"):
@@ -100,6 +125,8 @@ def main() -> int:
             problems.append(f"{manifest}: missing [lints] workspace = true")
         if re.search(r"^\[lints\.", text, re.M) or "disallowed" in text:
             problems.append(f"{manifest}: overrides lints; only [lints] workspace = true is allowed")
+
+    problems += workspace_lint_problems("Cargo.toml")
 
     # crates/core/clippy.toml replaces the root file for culla-core; it must keep every root rule.
     def paths(f: str) -> set[str]:
