@@ -5,6 +5,8 @@ date: 2026-11-24
 
 # MIT licence + cargo-deny licence allowlist
 
+Implementation note (M0, PR #12): Tauri's dependency tree brings five MPL-2.0 crates (cssparser, cssparser-macros, selectors, dtoa-short, option-ext). They are allowed one by one as `[licenses] exceptions` in `deny.toml`, never in the global allowlist, so any other copyleft crate still fails CI. The third-party licences file (M6) must cover them.
+
 ## Context and problem statement
 
 Culla is open source and part of the author's portfolio. Its Rust dependencies are linked statically into one binary, so a copyleft dependency would change what the binary's users may do. Which licence, and how is dependency licensing kept clean?

@@ -1,0 +1,62 @@
+/*
+ * Design tokens, copied from the Portfolio Design System (SPEC §5.6, architecture §8.6).
+ * Source: https://claude.ai/artifact/WvPpsmsFesTQ7nHuMbJLms, project/tokens.json "version": 1
+ * (artifact version 1795350220-813a, 22 Nov 2026). Update this note when tokens are re-copied.
+ *
+ * Culla additions, to be returned to the design system (SPEC §5.6): `keep`, `keep-ink`,
+ * and the Night theme on photo viewing surfaces (swipe, zoom).
+ *
+ * TODO(M3): self-host Bricolage Grotesque (woff2 under src/assets/fonts, @font-face here).
+ * The app must work offline, so it is never loaded from Google Fonts. Until then the
+ * fallback stack applies.
+ */
+
+:root,
+[data-theme="cream"] {
+  /* Colour: Cream theme */
+  --paper: #f1e9d8;
+  --paper-raised: #e8dfcb;
+  --ink: #0c0b0a;
+  --ink-muted: #544e44;
+  --ink-faint: #8f8777; /* decoration only, never text */
+  --rule: #d6cbb4; /* hairlines only, never focus rings or reject outlines */
+  --orange: #ffb38a; /* shapes only on cream, never small text */
+  --on-orange: #0c0b0a;
+  --orange-ink: #a4461a;
+  --keep: #8fd3a8; /* fill on Night only: 1.44:1 on cream */
+  /* TODO: define keep-ink (at least 4.5:1 on cream) for the "Kept" label (SPEC §5.6). */
+
+  /* Type */
+  --font-sans: "Bricolage Grotesque", "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+
+  /* Radius */
+  --radius-sm: 6px;
+  --radius-card: 18px;
+  --radius-panel: 32px;
+  --radius-pill: 999px;
+
+  /* Stroke */
+  --line-hair: 1px;
+}
+
+/* Night theme: swipe and zoom screens, so photos are judged against a dark surround. */
+[data-theme="night"] {
+  --paper: #0c0b0a;
+  --paper-raised: #171513;
+  --ink: #f1e9d8;
+  --ink-muted: #a8a092;
+  --ink-faint: #6f695f;
+  --rule: #2c2925;
+  --orange-ink: #ffb38a;
+}

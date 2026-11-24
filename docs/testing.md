@@ -207,6 +207,7 @@ The exact transitions and resume rules are owned by [design/file-engine.md](desi
 
 Run on the ROG Zephyrus G14 2024 before each release, and once at the end of M1, M2 and M3. The author does this.
 
+- [ ] `pnpm tauri dev` starts the app with hot reload, and styles load under the dev CSP (if Tauri adds hashes to `style-src`, `'unsafe-inline'` stops working). First time: end of M0.
 - [ ] Real SD card (UHS-I) in a USB reader, and a microSD in the built-in reader, with real Nikon JPEG + NEF files (body or bodies: see open question in [SPEC.md](SPEC.md) section 10).
 - [ ] First photo appears in 1.5 s or less (est., `NFR-PERF`) on a cold UHS-I card (card freshly inserted), 3,000-file folder.
 - [ ] Next photo appears in 50 ms or less at p95 (est.) when prefetched. Memory stays at 1 GB or less (est.) during a 200-photo cull.
