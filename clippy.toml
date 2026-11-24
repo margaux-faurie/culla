@@ -1,0 +1,27 @@
+# Removal, rename and overwrite rules (SPEC §5.2, design/file-engine.md §9.7).
+# The list mirrors file-engine §9.7; paths that don't resolve yet (tokio, windows_sys) are inert until those crates are added.
+# Where the lint may be switched off (checked by scripts/ci/check_lint_allows.py):
+#   crates/adapters/src/winfs/  (the audited module, from M2)
+#   crates/bench/               (outside the rule, temp dirs only, ADR 0020)
+#   crates/*/tests/             (integration tests, temp dirs only)
+# Everywhere else under src/, including inline #[cfg(test)] code, it cannot be switched off.
+disallowed-methods = [
+  { path = "std::fs::remove_file",       reason = "use winfs::remove_verified" },
+  { path = "windows_sys::Wdk::Storage::FileSystem::NtCreateFile",      reason = "winfs only (create_partial)" },
+  { path = "windows_sys::Wdk::Storage::FileSystem::NtSetInformationFile", reason = "winfs only (rename_noreplace)" },
+  { path = "std::fs::remove_dir",        reason = "Culla never removes folders" },
+  { path = "std::fs::remove_dir_all",    reason = "Culla never removes folders" },
+  { path = "std::fs::rename",            reason = "replaces the target on Windows; use winfs::rename_noreplace" },
+  { path = "std::fs::copy",              reason = "replaces the target; use winfs copy steps" },
+  { path = "std::fs::write",             reason = "truncates an existing file" },
+  { path = "std::fs::File::create",      reason = "truncates; use create_new" },
+  { path = "std::fs::OpenOptions::truncate", reason = "Culla never truncates" },
+  { path = "std::fs::set_permissions",   reason = "Culla never changes attributes" },
+  { path = "tokio::fs::remove_file",     reason = "use winfs::remove_verified" },
+  { path = "tokio::fs::remove_dir_all",  reason = "Culla never removes folders" },
+  { path = "tokio::fs::rename",          reason = "use winfs::rename_noreplace" },
+  { path = "windows_sys::Win32::Storage::FileSystem::DeleteFileW", reason = "use winfs::remove_verified" },
+  { path = "windows_sys::Win32::Storage::FileSystem::MoveFileExW", reason = "use winfs::rename_noreplace" },
+  { path = "windows_sys::Win32::Storage::FileSystem::MoveFileW",   reason = "use winfs::rename_noreplace" },
+  { path = "windows_sys::Win32::Storage::FileSystem::SetFileInformationByHandle", reason = "winfs only" },
+]

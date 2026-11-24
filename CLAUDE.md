@@ -3,11 +3,16 @@
 Culla is a Windows desktop app (Tauri 2 + Rust + React/TS) that culls Nikon JPEG+NEF photos with a swipe UI, then applies keep/reject as safe, journaled file operations. Start at `docs/SPEC.md`: it records the author's decisions and maps each topic to its owning doc (PRD, nfr, architecture, ADRs, file-engine design, threat model, testing, roadmap). `docs/research/` is historical input: where it disagrees with the spec or an ADR, the spec and ADRs win.
 
 ## Status
-Pre-code: design docs drafted (24 Nov); open decisions in SPEC §10 and file-engine §13. Next is milestone M0. Commands below are the target; they work once milestone M0 (repo tooling: workspaces, CI, lints, hooks) lands. Update this file in the PR that makes them real.
+Pre-code: design docs drafted (24 Nov); open decisions in SPEC §10 and file-engine §13. Next is milestone M0. M0 is landing in slices; move a command from Target to Work now in the PR that makes it real.
 
-## Commands (target)
+## Commands
+Work now (M0, Rust side):
+- `cargo test --workspace` · `cargo test -p culla-core <name>` · `cargo test -p culla-adapters` (Windows-specific tests from M2)
+- `cargo clippy --workspace --all-targets -- -D warnings` · `cargo fmt --all` · `cargo deny check`
+- `scripts/ci/check-conflict-markers.sh` · `scripts/ci/check_lint_allows.py`
+
+Target (rest of M0, JS and app side):
 - `pnpm install` · `pnpm check` (Biome + tsc) · `pnpm test` · `pnpm test <file>`
-- `cargo test -p culla-core` · `cargo test -p culla-core <name>` · `cargo test -p culla-adapters` (Windows) · `cargo clippy --all-targets -- -D warnings` · `cargo deny check`
 - `pnpm tauri dev` (desktop) · `pnpm dev:demo` (web demo) · `pnpm gen:bindings` (TS bindings from Rust)
 
 ## Layout
@@ -22,7 +27,7 @@ Pre-code: design docs drafted (24 Nov); open decisions in SPEC §10 and file-eng
 ## Invariants (never break; tests and lints will enforce them from M0)
 - Nothing touches the user's files before the user confirms Apply.
 - Never overwrite a file: renames are no-replace (an existing target is a hard error, never replaced; mechanism in design/file-engine.md §9.3, ADR 0022 proposed), copies use `create_new`.
-- Never remove a file, except in the audited module `culla-adapters::winfs::remove_verified` (`remove_verified_source`, `remove_own_partial`; design/file-engine.md §9.7, §11), which removes only the source of a cross-volume move whose destination and source were re-read and hash-verified, and Culla's own `*.culla-partial` files. The lint covers `culla-core`, `culla-adapters`, `culla-cli` and `src-tauri`; tests and `culla-bench` remove only their own temp dirs.
+- Never remove a file, except in the audited module `culla-adapters::winfs::remove_verified` (`remove_verified_source`, `remove_own_partial`; design/file-engine.md §9.7, §11), which removes only the source of a cross-volume move whose destination and source were re-read and hash-verified, and Culla's own `*.culla-partial` files. The lint covers `culla-core`, `culla-adapters`, `culla-cli` and `src-tauri`; the lint can be switched off only in `winfs/`, `crates/bench/` and `crates/*/tests/` (temp dirs only); inline `#[cfg(test)]` code is not exempt.
 - Undecided photos are never touched.
 - The webview gets no filesystem permissions; it only knows opaque photo IDs.
 
