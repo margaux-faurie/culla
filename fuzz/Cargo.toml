@@ -1,0 +1,22 @@
+# cargo-fuzz targets (docs/testing.md §7). Own workspace (excluded in the root Cargo.toml): it
+# needs a nightly toolchain and libFuzzer, so it stays off the stable PR path.
+# Run: cargo +nightly fuzz run tiff_ifd_walk -- -max_total_time=60
+[package]
+name = "culla-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+
+[[bin]]
+name = "tiff_ifd_walk"
+path = "fuzz_targets/tiff_ifd_walk.rs"
+test = false
+doc = false
+bench = false
