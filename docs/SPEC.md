@@ -191,7 +191,7 @@ Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsm
 - Files moved outside Lightroom show as missing in its catalog (the README warns about this).
 - Colour on the G14's wide-gamut OLED: test that sRGB/Display P3 previews look right in WebView2.
 - Timings in the research notes are estimates and must be benchmarked on a real SD card (milestone 1).
-- Moving 2,000 pairs across volumes is about 140 GB and 25+ minutes, so the review screen shows an estimate.
+- Moving 2,000 pairs across volumes is about 140 GB of files, but about 280 GB read (the source is read twice for verification), so 50+ minutes from a UHS-I card. The review screen shows an estimate that includes the verification reads.
 
 ## 10. Open questions
 - Windows 10 22H2 support (out of mainstream support since Oct 2025): must, should, or dropped.

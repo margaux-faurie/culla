@@ -1,0 +1,142 @@
+# Culla: non-functional requirements (v1)
+
+Status: draft, 24 Nov 2026. Sources: [SPEC.md](SPEC.md) and the ADRs, which win over the research notes; the research notes are historical: [research/research-raw-perf.md](research/research-raw-perf.md), [research/critique.md](research/critique.md), [research/practices.md](research/practices.md). Scope and success criteria: [PRD.md](PRD.md).
+
+This document owns the quality targets. Each requirement has an ID, a measurable target, how it is verified and a priority:
+
+- **Must:** v1 does not ship without it.
+- **Should:** v1 aims for it; a miss is recorded as a known limit in the release notes.
+
+Targets marked **(est.)** come from estimates in the research notes, not from measurements. They are to validate in [benchmarks.md](benchmarks.md) at milestone M1 and may be revised there, with the change recorded in this file.
+
+## 1. Reference conditions
+
+Performance targets hold under these conditions unless a row says otherwise.
+
+| Name | Definition |
+|---|---|
+| Reference machine | ROG Zephyrus G14 2024: Ryzen 9 8945HS, internal NVMe SSD, 2880×1800 OLED at 120 Hz, Windows 11, on mains power, performance mode as shipped |
+| SD UHS-I | Full-size SD card in a USB UHS-I reader, about 90 MB/s sequential read (measured value recorded in benchmarks.md) |
+| SD built-in | microSD card in the G14's built-in UHS-II reader |
+| NVMe | The same folder copied to the internal NVMe SSD |
+| Dataset 24 | 3,000 files: 1,000 JPEG+NEF pairs from a 24 MP Nikon body, plus 1,000 lone NEFs and sidecars, in several `DCIM` subfolders |
+| Dataset 45 | Same shape from a 45 MP Nikon body (fine JPEG 15–25 MB, NEF 45–60 MB) |
+| Cached | Preview already in the in-memory LRU (prefetched) |
+| Cold | Preview neither in memory nor in the disk cache |
+
+Latencies are measured as p95 over at least 200 samples unless stated. "Visible" means the image is decoded (`img.decode()` resolved) and painted.
+
+## 2. Performance
+
+| ID | Requirement | Target | Verified by | Priority |
+|---|---|---|---|---|
+| NFR-PERF-01 | Time to first photo: from confirming the start screen to the first photo visible on the swipe screen, cold, before the EXIF pass has finished. | SD UHS-I, Dataset 45: ≤ 1.5 s must, ≤ 1.0 s should. NVMe: ≤ 0.8 s. (est.: one 45 MP read ~200–280 ms on UHS-I + scaled decode ~100–200 ms + resize and encode ~30–40 ms) | Benchmark harness with timestamps from the start command to first paint, 10 runs, cache cleared | Must |
+| NFR-PERF-02 | Input to visual response: from a decision key or the end of a drag to the first frame of the exit animation. | ≤ 1 frame at the display refresh rate (≤ 8.3 ms at 120 Hz should, ≤ 16.7 ms must). Never waits on I/O or IPC: the decision is committed in the reducer first. | Performance trace in WebView2 DevTools (event timestamp to next frame), 200 decisions | Must |
+| NFR-PERF-03 | Next-photo latency with prefetch: from the decision to the next photo visible, when the user decides no faster than the prefetch throughput (NFR-PERF-04). | Cached: ≤ 50 ms p95, on every medium. (est.) | Instrumented session: 500 decisions at a steady 1 per second, then at the NFR-PERF-04 rate | Must |
+| NFR-PERF-04 | Prefetch throughput: previews produced per second, sustained, in swipe order (5 ahead, 2 behind). | SD UHS-I: ≥ 3/s on Dataset 45, ≥ 5/s on Dataset 24. NVMe: ≥ 8/s on Dataset 45. (est.: SD is I/O-bound at about 3–4 photos/s for 45 MP JPEGs; NVMe is CPU-bound with 2–4 decode workers) | Benchmark: prefetch a 300-group run and divide by wall time | Must |
+| NFR-PERF-05 | Cold miss latency: next photo visible when it was not prefetched (jump, filter change, user faster than prefetch). Loading state shown as dots. | SD UHS-I, Dataset 45: ≤ 600 ms. NVMe: ≤ 300 ms. Disk-cache hit: ≤ 100 ms. (est.) | Benchmark: 50 random jumps per medium | Should |
+| NFR-PERF-06 | Swipe and spring animations (drag follow, exit, spring back, shake) on the reference machine at native resolution, full screen. | ≥ 60 fps with ≤ 1% dropped frames over 200 swipes (must). 120 fps at 120 Hz with ≤ 2% dropped frames (should). Only `transform` and `opacity` animate; at most 3 cards mounted. | Frame timing from the WebView2 DevTools Performance panel (frames track) or `requestAnimationFrame` deltas logged during the run, recorded per run in benchmarks.md | Must (60 fps), Should (120 fps) |
+| NFR-PERF-07 | 100% zoom: from pressing Z or holding Space to the full-resolution image visible. | SD UHS-I, 45 MP JPEG: ≤ 1.0 s. NVMe: ≤ 400 ms. Panning while zoomed ≥ 60 fps. (est.: full 45 MP decode ~200–350 ms plus read) | Benchmark: 50 zooms per medium | Should |
+| NFR-PERF-08 | Scan time for 3,000 files (Dataset 45, recursive, sidecars included). | Group list ready (directory walk and pairing): ≤ 2 s on SD UHS-I. EXIF pass (first ~128 KB per primary): ≤ 15 s must, ≤ 8 s should, on SD UHS-I; ≤ 3 s on NVMe. (est.: research gives 5–15 s on SD) | Benchmark: 5 runs per medium, cache cleared | Must |
+| NFR-PERF-09 | Memory ceiling: peak working set of the Rust process plus all WebView2 processes, during a 3,000-file session including one 100% zoom on a 45 MP photo. | ≤ 1 GB must, ≤ 600 MB should. Memory does not grow with the number of photos viewed (LRU of about 12 previews). (est.: ~12 MB of encoded previews, ~100 MB of decode buffers, ~65 MB for 3 mounted cards, ~145 MB for one 45 MP zoom, plus the WebView2 baseline) | Task Manager / `GetProcessMemoryInfo` sampled every second during the benchmark run; growth check after 1,000 photos | Must |
+| NFR-PERF-10 | Apply throughput, same-volume move (rename only). | 1,000 groups (about 3,000 files) in ≤ 30 s, journal included. (est.) | Benchmark on SD and NVMe | Should |
+| NFR-PERF-11 | Apply throughput, cross-volume move or copy (copy while hashing, fsync, read the destination back, re-read the source, rename). | ≥ 85% of the slower device's measured sequential throughput, counted over the bytes actually read from it. The source is read twice (copy pass and verification re-read), so a cross-volume move or copy reads about 2× the source size. Example on SD UHS-I at 90 MB/s: 2,000 pairs ≈ 140 GB, so ≈ 280 GB read ≈ 52 min at full speed, ≤ 61 min at 85%. Hashing never limits throughput. (est.) | Benchmark: 200 pairs SD → NVMe, compared with a raw sequential copy of the same files | Must |
+| NFR-PERF-12 | Time and size estimate on the review screen. | Size exact to the byte. Time within ±25% of the actual apply time, once measured throughput replaces the default estimate. | Compare the estimate with the apply report in the NFR-PERF-11 run | Should |
+| NFR-PERF-13 | UI stays responsive while scanning, prefetching and applying. | No main-thread task > 50 ms. Pause responds within 1 s; cancel stops after the current file. | Long Tasks API during the benchmark runs | Must |
+| NFR-PERF-14 | App launch to an interactive start screen. | ≤ 2 s on the reference machine, warm. | Benchmark, 10 runs | Should |
+| NFR-PERF-15 | Disk cache size. | Capped at 2 GB with least-recently-used eviction ([SPEC §5.1](SPEC.md#51-rust-core-and-adapters-cratescore-cratesadapters)). To decide: whether the user can clear it from the app. | Integration test filling the cache past the cap | Should |
+
+Note for M1: the research suggests the full-size JpgFromRaw embedded in a Z-body NEF may be faster to read than the camera JPEG. benchmarks.md compares both as the preview source for pairs; NFR-PERF-01, 04 and 05 apply to whichever is chosen.
+
+## 3. Reliability: zero data loss
+
+These are invariants. Each one has an automated test, and most are also enforced by a lint or by the structure of the code ([design/file-engine.md](design/file-engine.md) owns the algorithm).
+
+| ID | Requirement | Target | Verified by | Priority |
+|---|---|---|---|---|
+| NFR-REL-01 | Nothing touches the source or destination volume before the user confirms Apply. Sessions, journal and cache live on the internal disk. | Zero writes, renames or folder creations (including `_rejected/`) on the source or destination before confirm. | Integration test with a recording `FileSystem` port; manual check that the card stays unchanged after a session with no apply | Must |
+| NFR-REL-02 | Never overwrite. | Zero operations that replace an existing file. Every rename uses `MoveFileExW` with only `MOVEFILE_WRITE_THROUGH`: without `MOVEFILE_REPLACE_EXISTING` it fails atomically if the target exists, and without `MOVEFILE_COPY_ALLOWED` a rename across volumes fails with `ERROR_NOT_SAME_DEVICE` instead of silently copying and deleting. Copies open their target with `create_new`. A name already taken at plan time gives the whole group `_1`, `_2`…; a target that appears after planning is a hard error for that group, reported, never overwritten. | Property tests on `plan()` (collisions, pairs, sidecars); fault test that creates a colliding file between plan and execute and checks the group fails with the file intact; adapter test that a cross-volume rename returns `ERROR_NOT_SAME_DEVICE` and leaves both volumes unchanged; raw `std::fs::rename` banned via clippy `disallowed-methods` ([SPEC §7](SPEC.md#7-engineering-standards)) | Must |
+| NFR-REL-03 | Culla never deletes a photo without a verified copy at the destination. One audited function, `remove_verified`, is the only code that removes a file, and it removes only the source of a cross-volume move whose verification passed (NFR-REL-04), and Culla's own temporary `*.culla-partial` files. | No other removal anywhere. `std::fs::remove_*` banned elsewhere via clippy `disallowed-methods`. | CI lint; code review checklist; test that counts call sites | Must |
+| NFR-REL-04 | Verify before removing a source: three hashes must match. | A source is removed only after: the target was written as `*.culla-partial` while hashing the source (hash 1, xxh3 or blake3); it was fsynced; the destination was read back with `FILE_FLAG_NO_BUFFERING`, so the OS cache cannot answer for the disk (hash 2); the source was re-read (hash 3); all three match; and the partial was renamed into place. Any mismatch marks the file failed and keeps the source. Copies are verified the same way. | Unit tests per step; fault injection that corrupts one byte of the partial; fault test where the source reads differently on the second pass (flaky reader), which must fail the file and keep the source | Must |
+| NFR-REL-05 | Undecided photos are never touched. | Zero operations for undecided groups in the plan. After apply, every undecided file has the same path, bytes and mtime. | Property test on `plan()`; end-to-end test comparing hashes and mtimes before and after | Must |
+| NFR-REL-06 | Resumable apply. After a crash, power loss, killed process or pulled card at any point, the next launch detects the unfinished journal, checks volume identity and rolls forward. | For every file, at all times: at least one verified copy exists (source intact, or target verified). Zero files lost across 1,000 injected interruptions. | Fault-injection suite: kill at every journal transition, simulated card removal, disk-full; one manual card-pull run on real hardware ([testing.md](testing.md)) | Must |
+| NFR-REL-07 | Group consistency, and sidecars follow the file they describe ([SPEC §3.1](SPEC.md#31-photo-group)). Members that move together get the same target name and suffix, inside sidecar names too (`X_1.NEF.xmp`). `X.xmp` and `X.pp3` follow the primary; `X.NEF.xmp` and `NKSC_PARAM/X.NEF.nksc` follow the NEF, so they stay put when "RAW follows JPEG" is off. | 100% of applied groups share one basename; zero sidecars separated from the file they describe. A group left partly applied (one member failed) is listed in the report with each member's state. | Property tests on `plan()`; fault test failing one member | Must |
+| NFR-REL-08 | Preflight blocks unsafe applies. | Apply is refused, with the reason shown, when the source is write-protected or read-only, free space is short (copies and cross-volume moves), the destination is inside `_rejected/`, a path cannot be handled, a file is locked, or a symlink or junction is found. | Unit test per check; manual test with the SD lock switch | Must |
+| NFR-REL-09 | Transient locks do not stop the apply. | Sharing violations are retried with backoff (proposed: 5 times from 100 ms), then the file is marked failed and the apply continues. Every failed file is in the report. | Fault test holding a handle on one file | Must |
+| NFR-REL-10 | Decisions survive a crash. | After killing the process, every decision event older than 500 ms is restored on relaunch. Proposed, to confirm in [design/file-engine.md](design/file-engine.md): the 500 ms window and SQLite WAL with `synchronous=FULL`. | Test: kill during a scripted decision run, compare the log | Must |
+| NFR-REL-11 | Timestamps preserved on copy and cross-volume move. | mtime equal to the source within the filesystem's resolution (2 s on FAT). Creation time set to the source's where the filesystem supports it. | Integration test on FAT32, exFAT and NTFS images | Must (mtime), Should (creation time) |
+| NFR-REL-12 | Removable media are never memory-mapped. Pulling a card during a session never crashes the app. | No mmap on any file read from the source. A pulled card shows an error and pauses prefetch; the session stays intact. | Code check (no `memmap2` on the read path); manual card-pull during swipe | Must |
+| NFR-REL-13 | Reconcile on open. | When a folder with a stored session is opened, every missing file is flagged and every new file is added as undecided. A changed drive letter still matches the session (volume serial + relative path). | Integration tests: remove, add and remount on another letter | Must |
+| NFR-REL-14 | Operation log. | Every apply writes a plain-text log listing each operation (source, target, result, hashes) to `%LOCALAPPDATA%\Culla\logs`, openable from the apply report. | Test checks the log against the journal; UI test that the report opens it | Must |
+| NFR-REL-15 | The decision log is the single source of state ([SPEC §3.2](SPEC.md#32-decisions-and-history)). Events `Decided`, `Cleared`, `Undo` and `Redo` only append. | Replaying the stored log after a resume gives a state identical to the one before (every group's verdict, the undo and redo stacks). Any new `Decided` or `Cleared` empties the redo stack. A held key's auto-repeat never appends a decision. | Property tests on the TS reducer and on the core fold over random event sequences, with a shared golden fixture that both must replay identically; Vitest test that repeated `keydown` events with `repeat: true` append nothing | Must |
+
+## 4. Accessibility (WCAG 2.2 AA)
+
+Culla targets WCAG 2.2 level AA for the items below, plus 2.3.3 (AAA), which is adopted because the swipe animation is central. Colour values are from the Portfolio Design System `tokens.json` (version 1); ratios were computed with the WCAG relative-luminance formula.
+
+| ID | Requirement | Target | Verified by | Priority |
+|---|---|---|---|---|
+| NFR-A11Y-01 | Keyboard (2.1.1). Every function works from the keyboard: start, swipe, zoom, EXIF, filters, review grids, apply, pause, cancel, dialogs. | 100% of the flows in [stories.md](stories.md) done without a pointer. No keyboard trap (2.1.2). | Manual keyboard pass per release; Playwright keyboard-only flow on the demo | Must |
+| NFR-A11Y-02 | Dragging alternative (2.5.7). Keep and reject are possible with a single pointer click, without dragging. | Visible Keep and Reject buttons on the swipe screen (keyboard shortcuts alone do not satisfy 2.5.7). To decide: their placement. | Playwright: decide 10 photos with clicks only | Must |
+| NFR-A11Y-03 | Target size (2.5.8). | Every pointer target ≥ 24×24 CSS px, or spaced to meet the criterion. | Automated check in Playwright plus manual review | Must |
+| NFR-A11Y-04 | Focus visible (2.4.7) and not obscured (2.4.11). | A focus ring on every focusable element, ≥ 2 px with ≥ 3:1 contrast against what surrounds it, adopted from 2.4.13 Focus Appearance (AAA): `ink` on cream (16.3:1) and on Night (16.3:1). Never `orange` on cream (1.4:1). Toasts and overlays never cover the focused element, not even partly, which exceeds 2.4.11 (it only forbids entirely hidden focus). | Manual pass in both themes; axe-core | Must |
+| NFR-A11Y-05 | Reduced motion (2.3.3, AAA, adopted). | With `prefers-reduced-motion: reduce`, swipe exits become an instant swap or a fade ≤ 150 ms, the spring and the shake are off (the "Press U to undo" toast remains). Drag still follows the pointer. | Playwright with emulated reduced motion; manual check with the Windows "Animation effects" setting off | Must |
+| NFR-A11Y-06 | Text contrast (1.4.3). | Normal text ≥ 4.5:1, large text ≥ 3:1, in both themes. Checked pairs: `ink`/`paper` 16.3:1 (both themes); `ink-muted` 6.8:1 cream, 7.6:1 Night; `orange-ink` on cream 5.0:1; `on-orange` on `orange` 11.3:1; `keep` (#8fd3a8) on Night 11.3:1. **Fails:** `keep` on cream 1.4:1 and `orange` on cream 1.4:1, so neither is used for text on the start, review or apply screens. The "Kept" label on cream uses a darker `keep-ink` at ≥ 4.5:1 ([SPEC §5.6](SPEC.md#56-visual-design)); to decide: its value. `ink-faint` (2.9:1 cream, 3.6:1 Night) is never text. | Contrast script over `src/styles/tokens.css` in CI; axe-core | Must |
+| NFR-A11Y-07 | Non-text contrast (1.4.11). Controls' boundaries, state indicators and graphics needed to understand the UI. | ≥ 3:1 against adjacent colours. `rule` (1.3:1 cream, 1.4:1 Night) is decoration only: the reject outline badge and any control outline use `ink-muted` or `ink`. The progress line on cream uses `orange-ink` (5.0:1) or `ink`, not `orange` (1.4:1). On Night, `orange` (11.3:1) and `keep` (11.3:1) pass. | Contrast script; manual review of each state | Must |
+| NFR-A11Y-08 | Colour is not the only signal (1.4.1). | Every state has a label and a shape as well as a colour: keep = "Kept", filled badge, right; reject = "Rejected", outline badge, dimmed card, left. | Review in a greyscale and deuteranopia simulation (DevTools rendering emulation) | Must |
+| NFR-A11Y-09 | Status messages (4.1.3) and names (4.1.2). | Decisions, undo, toasts and apply progress are announced through a polite live region (for example "Kept, 12 of 1,000"). Every control has an accessible name. | NVDA smoke test on Windows; axe-core | Should |
+| NFR-A11Y-10 | Character key shortcuts (2.1.4). Single-key shortcuts (U, N, Z, I, F, ?) are active only while the swipe view has focus ([SPEC §4.1](SPEC.md#41-keyboard-map)). | With focus anywhere else (a dialog, a settings field, the review screen), these keys do nothing. | Playwright: press each key with focus outside the swipe view and check no state change; manual check in dialogs | Must |
+| NFR-A11Y-11 | Scaling and text size (1.4.4, 1.4.10). | Start, review and apply screens work at Windows display scale 100–250% and at 200% text size, without loss of content, and reflow without horizontal scrolling at a 320 CSS px wide viewport (1.4.10). | Manual pass at 100%, 150%, 200%, 250%; Playwright at a 320 px viewport on the demo | Should |
+
+## 5. Privacy
+
+Details for users go in `PRIVACY.md`. These are the requirements behind it.
+
+| ID | Requirement | Target | Verified by | Priority |
+|---|---|---|---|---|
+| NFR-PRIV-01 | No telemetry. | Zero analytics, crash upload, usage pings or remote logging, in the app and in the demo. | Dependency review (cargo-deny bans list for telemetry and HTTP client crates outside the updater); network capture test (NFR-PRIV-02) | Must |
+| NFR-PRIV-02 | The only network traffic is the updater check. | During a full session (start, swipe, zoom, review, apply), the only outbound connections are HTTPS requests to the update endpoint (GitHub Releases `latest.json` and, if accepted, the update download). | Packet or process capture (for example Wireshark or Resource Monitor) during a scripted session, per release | Must |
+| NFR-PRIV-03 | The user can turn off the updater check. | A setting turns it off. When off, zero outbound connections during a full session. To decide: on or off by default, and how often it checks. | Same capture with the setting off | Must |
+| NFR-PRIV-04 | The updater check sends nothing about the user. | Only what the update URL needs (app version, target, architecture). No identifier, no file names, no counts. | Inspect the request in the capture | Must |
+| NFR-PRIV-05 | The webview loads nothing remote. | CSP allows only the app's own origin and the `culla` image origin. Fonts are self-hosted. | CSP test; capture (NFR-PRIV-02) | Must |
+| NFR-PRIV-06 | Local data stays local and is documented. | Sessions, journal, cache and logs are stored under `%LOCALAPPDATA%\Culla` (`sessions`, `cache`, `logs`), never on the card. `PRIVACY.md` lists what each holds (paths, EXIF, decisions) and how to remove it. Uninstalling keeps this data unless the user ticks "remove my Culla data". | Review of `PRIVACY.md` against the code before release; uninstall test both ways: unticked leaves `%LOCALAPPDATA%\Culla` intact, ticked removes it entirely | Must |
+| NFR-PRIV-07 | The web demo uploads nothing. | In "your folder" mode, files are read in the browser only. No third-party scripts, analytics or cookies. Only same-origin static assets are requested. `PRIVACY.md` mentions the hosting provider's own access logs. | Playwright assertion on all network requests in both demo modes | Must |
+| NFR-PRIV-08 | Third-party components are disclosed. | `PRIVACY.md` states what Microsoft's WebView2 runtime and SmartScreen may send under the user's Windows settings, which Culla does not control. To check: the exact behaviour, before release. | Review before release | Should |
+
+## 6. Compatibility
+
+| ID | Requirement | Target | Verified by | Priority |
+|---|---|---|---|---|
+| NFR-COMP-01 | Operating system. | Windows 11 (all versions still serviced), x64: must. Windows 10 22H2: open question (out of mainstream support since October 2025, [SPEC §10](SPEC.md#10-open-questions)). To decide: ARM64 builds. | CI build on Windows; manual smoke test on Windows 11 (reference machine) | Must (Windows 11) |
+| NFR-COMP-02 | WebView2. | Evergreen WebView2 runtime. The NSIS installer installs it if missing. To decide: the minimum runtime version, and the install mode (the bootstrapper downloads at install time, which is outside NFR-PRIV-02's session scope but goes in `PRIVACY.md`). | Smoke test on a clean Windows 11 VM (install, first launch, update) | Must |
+| NFR-COMP-03 | Filesystems, as source and as destination. | FAT32, exFAT and NTFS. Handles case-insensitive names, 2 s mtime resolution on FAT, and FAT32's 4 GB file limit (preflight). | Integration tests on FAT32, exFAT and NTFS disk images in CI; manual test on a real exFAT card | Must |
+| NFR-COMP-04 | Storage devices. | SD cards in the built-in reader and in USB readers (UHS-I and UHS-II), external USB SSDs and HDDs, internal NVMe. The drive letter may change between sessions (NFR-REL-13). | Manual matrix in benchmarks.md | Must |
+| NFR-COMP-05 | Paths. | Paths longer than 260 characters (`\\?\` prefix) and Unicode file and folder names, at the source and in mirrored destinations. | Integration tests with deep and non-ASCII paths | Must |
+| NFR-COMP-06 | Nikon files. | JPEG; NEF lossless, lossy and uncompressed (preview and EXIF); HE/HE\* NEF (embedded preview and EXIF only); sidecars `.xmp`, `.NEF.xmp`, `.pp3`, NX Studio `NKSC_PARAM/*.nksc`. The bodies under test depend on the open question in [PRD.md §9](PRD.md#9-open-questions). | Fixture corpus in [testing.md](testing.md); fuzzing on the NEF parser | Must |
+| NFR-COMP-07 | Displays. | Any Windows display scale and refresh rate; per-monitor DPI. Previews look right on sRGB, Display P3 and AdobeRGB JPEGs on the G14's wide-gamut OLED. | Manual colour test with reference images ([SPEC §9](SPEC.md#9-known-limits-and-risks)) | Should |
+| NFR-COMP-08 | Install. | Per-user NSIS installer, no admin rights. The signed updater works on unsigned builds. | Install and update test on a standard (non-admin) account | Must |
+| NFR-COMP-09 | Web demo browsers. | Current and previous major versions of Chrome, Edge, Firefox and Safari. | Playwright on Chromium, Firefox and WebKit | Should |
+
+## 7. Security (summary)
+
+The threat model, trust boundaries and the full STRIDE table are in [threat-model.md](threat-model.md). These are the requirements that come out of it, listed here so every quality target is in one place.
+
+| ID | Requirement | Verified by | Priority |
+|---|---|---|---|
+| NFR-SEC-01 | The webview has no filesystem permissions and no fs plugin. It only sees opaque photo IDs. | Capability file review; test that commands reject raw paths from the UI | Must |
+| NFR-SEC-02 | Only the app's own commands are exposed (`AppManifest::commands` allowlist). | Capability review; test calling an unlisted command | Must |
+| NFR-SEC-03 | Strict CSP: `img-src` limited to the `culla` image origin, no remote origins, no inline scripts. | CSP test in CI | Must |
+| NFR-SEC-04 | No symlink or junction is ever followed; paths are re-checked right before each operation (TOCTOU). | Integration tests with symlinks and junctions | Must |
+| NFR-SEC-05 | Updates are verified against the updater public key before install; served over HTTPS. | Test with a tampered update artifact | Must |
+| NFR-SEC-06 | EXIF and NEF parsers are fuzzed and never panic or read out of bounds on malformed files. | cargo-fuzz targets run in CI (time-boxed) | Must |
+| NFR-SEC-07 | Supply chain: cargo-deny (advisories, bans, licences, sources), pnpm supply-chain settings, pinned action SHAs or workflow lockfile, CodeQL, OpenSSF Scorecard. | CI jobs | Must |
+| NFR-SEC-08 | A vulnerability reporting process is published (`SECURITY.md`, GitHub private vulnerability reporting). | Repository check before going public | Must |
+
+## 8. Open questions
+
+- Windows 10 22H2 support: must, should or dropped (NFR-COMP-01).
+- Minimum WebView2 version and installer mode (NFR-COMP-02).
+- Updater check default and frequency (NFR-PRIV-03).
+- A clear-cache control in the app (NFR-PERF-15).
+- The value of `keep-ink` (NFR-A11Y-06), and the placement of the Keep and Reject buttons (NFR-A11Y-02).
+- The crash-durability window and SQLite settings (NFR-REL-10).
