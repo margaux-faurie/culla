@@ -10,6 +10,7 @@ Work now (M0, Rust side):
 - `cargo test --workspace` · `cargo test -p culla-core <name>` · `cargo test -p culla-adapters` (Windows-specific tests from M2)
 - `cargo clippy --workspace --all-targets -- -D warnings` · `cargo fmt --all` · `cargo deny check`
 - `scripts/ci/check-conflict-markers.sh` · `scripts/ci/check_lint_allows.py`
+- `pwsh scripts/ci/vhdx.ps1 -Action mount|attach|detach|readonly|unmount` (Windows, admin; see `scripts/ci/README.md`)
 
 Target (rest of M0, JS and app side):
 - `pnpm install` · `pnpm check` (Biome + tsc) · `pnpm test` · `pnpm test <file>`

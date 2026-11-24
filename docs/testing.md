@@ -107,7 +107,7 @@ The cross-volume path (copy, hash, fsync, rename, delete source) only runs when 
 | `D:` temp disk | Present on some standard images, absent on others (larger runners, some newer images). | Do not rely on it. |
 | VHDX created and mounted in the job | Yes. Real volume, own serial, any file system. | **Use this.** |
 
-How: a script `scripts/ci/mount-test-volume.ps1` creates a small VHDX with `diskpart` (`create vdisk`, `attach vdisk`, `create partition primary`, `format quick fs=<fs>`, `assign letter=<L>`). The runner has admin rights. `diskpart` avoids a dependency on the Hyper-V `New-VHD` cmdlet. The `samypr100/setup-dev-drive` action does the same job and supports `NTFS`, `exFAT`, `FAT32` and `ReFS` on `windows-2022` and later; it is an option if the script proves flaky (pin by SHA).
+How: `scripts/ci/vhdx.ps1` (usage in [scripts/ci/README.md](../scripts/ci/README.md)) creates a small VHDX with `diskpart` (`create vdisk`, `attach vdisk`, `create partition primary`, `format quick fs=<fs>`, `assign letter=<L>`). The runner has admin rights. `diskpart` avoids a dependency on the Hyper-V `New-VHD` cmdlet. The `samypr100/setup-dev-drive` action does the same job and supports `NTFS`, `exFAT`, `FAT32` and `ReFS` on `windows-2022` and later; it is an option if the script proves flaky (pin by SHA).
 
 Volumes per job:
 - `T:` exFAT, 256 MB, stands in for an SD card (FAT-family timestamps, no ACLs).
@@ -254,7 +254,7 @@ These are the planned commands. M0 makes them real and keeps `CLAUDE.md` in sync
 | All Rust tests | `cargo test --workspace` |
 | One Rust test | `cargo test -p culla-core <name>` or `cargo test -p culla-adapters <name>` |
 | Property tests, long run | `PROPTEST_CASES=10000 cargo test -p culla-core prop_` |
-| Windows integration | `pwsh scripts/ci/mount-test-volume.ps1` then `cargo test -p culla-adapters --features windows-it` (Windows only) |
+| Windows integration | `pwsh scripts/ci/vhdx.ps1 -Action mount ...` then `cargo test -p culla-adapters --features windows-it` (Windows only, admin) |
 | Crash loop | `cargo xtask crash-loop --iterations 50` (Windows only, from M2; drives `culla apply` and `culla resume`) |
 | Installer test | `pwsh scripts/ci/installer-test.ps1` (Windows only, from M6) |
 | Lint Rust | `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` and `cargo deny check` |
