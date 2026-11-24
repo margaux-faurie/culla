@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (definition of "verified" refined by 0021)
 date: 2026-11-24
 ---
 
@@ -25,7 +25,7 @@ Chosen option: "Rejects to `_rejected/`, group suffix on collision, and let the 
 
 * Renames use `MoveFileExW` with only `MOVEFILE_WRITE_THROUGH`: no `MOVEFILE_REPLACE_EXISTING`, so an existing target is a hard error; no `MOVEFILE_COPY_ALLOWED`, so a cross-volume rename fails with `ERROR_NOT_SAME_DEVICE` instead of copying silently. Copies open targets with `create_new`.
 * The single audited removal function is `remove_verified` in `culla-adapters`. It removes only (a) the source of a cross-volume move once it is verified and (b) Culla's own `*.culla-partial` files. `std::fs::remove_*` is banned outside `remove_verified`; `std::fs::rename` is banned everywhere (the adapters use the no-replace `MoveFileExW`). Both through clippy `disallowed-methods`.
-* Verified means: the destination is fsynced, read back unbuffered (`FILE_FLAG_NO_BUFFERING`) and hashed, the source is hashed a second time, and all three hashes (copy-time source, destination read-back, source re-read) match.
+* Verified means: the destination is fsynced, read back unbuffered (`FILE_FLAG_NO_BUFFERING`) and hashed, the source is re-read unbuffered and hashed a second time ([ADR 0021](0021-unbuffered-source-re-read-for-hash-3.md)), and all three hashes (copy-time source, destination read-back, source re-read) match.
 * Every member of a group gets the same suffix, including inside sidecar names (`X_1.xmp`, `X_1.NEF.xmp`).
 * `_rejected/` and an in-source destination are excluded from scans.
 
