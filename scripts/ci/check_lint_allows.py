@@ -20,7 +20,7 @@ REMOVAL_LINTS = re.compile(
     r"\b(?:clippy::)?disallowed_methods?\b|\bclippy::(?:style|all)\b|\brenamed_and_removed_lints\b"
 )
 # Product code must not pull in source files from elsewhere (it would escape the path rules).
-FOREIGN_SOURCE = re.compile(r"#\s*\[\s*path\s*=|\binclude(?:_str)?!\s*\(")
+FOREIGN_SOURCE = re.compile(r"#!?\[[^\]]*\bpath\s*=|\binclude(?:_str)?\b")
 UNSAFE_LINT = re.compile(r"\bunsafe_code\b")
 
 
@@ -83,7 +83,7 @@ def main() -> int:
         if not re.match(r"^crates/[a-z-]+/tests/", path):
             for m in FOREIGN_SOURCE.finditer(src):
                 line = src.count("\n", 0, m.start()) + 1
-                problems.append(f"{path}:{line}: #[path] / include! is not allowed outside crates/*/tests/")
+                problems.append(f"{path}:{line}: #[path] (also inside cfg_attr) / include or include_str is not allowed outside crates/*/tests/")
         for m in ATTR.finditer(src):
             lints = m.group(2)
             line = src.count("\n", 0, m.start()) + 1
