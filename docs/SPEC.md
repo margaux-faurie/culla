@@ -51,7 +51,7 @@ Sidecar matching (case-insensitive, same folder):
 
 ### 3.3 Identity and resume
 - Sessions and caches are keyed by **volume serial + relative path**, never by drive letter. An SD card that comes back as `F:` instead of `E:` still resumes its session.
-- When a folder is opened, the app reconciles it against the stored session. Missing files are flagged. New files are added as undecided. Renamed files cannot be detected in v1: they show as one missing file plus one new file.
+- When a folder is opened, the app reconciles it against the stored session. Missing files are flagged. New files are added as undecided; a new file that joins an already decided group makes that group undecided again. Renamed files cannot be detected in v1: they show as one missing file plus one new file.
 - `_rejected/` and the destination folder (if it sits inside the source) are excluded from scans.
 
 ## 4. Interaction
@@ -116,12 +116,12 @@ The items below describe behaviour; the pure parts live in `culla-core` and the 
    - paths fit within the length limit (use the `\\?\` prefix);
    - no files are locked;
    - there are no symlinks or junctions (refuse to follow them).
-3. **Execute,** journalled with one row per file. The states and recovery rules are owned by [design/file-engine.md](design/file-engine.md) (`pending, renaming, copying, verifying, committed, source_removed, done, failed`):
-   - Every rename uses `MoveFileExW` with no flags except `MOVEFILE_WRITE_THROUGH`. Without `MOVEFILE_REPLACE_EXISTING`, an existing target makes it fail atomically (no check-then-rename race). Without `MOVEFILE_COPY_ALLOWED`, a rename across volumes fails with `ERROR_NOT_SAME_DEVICE` instead of silently copying and deleting. Copies open their target with `create_new`. "Target exists" is a hard error for that group.
+3. **Execute,** journalled with one row per file. The states and recovery rules are owned by [design/file-engine.md](design/file-engine.md) (`pending, renaming, copying, verifying, committed, source_removed, done, copied_source_kept, failed`):
+   - Every rename is no-replace and goes through the file handle that was checked: `SetFileInformationByHandle` with `FileRenameInfoEx` and no `FILE_RENAME_FLAG_REPLACE_IF_EXISTS`, the same semantics as `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` or `MOVEFILE_COPY_ALLOWED`. An existing target makes it fail atomically (no check-then-rename race), and a rename across volumes fails with `ERROR_NOT_SAME_DEVICE` instead of silently copying and deleting. Copies open their target with `create_new`. "Target exists" is a hard error for that group.
    - Move on the same volume: a single such rename.
    - Move across volumes: copy to `*.culla-partial` while hashing the source (xxh3/blake3), fsync, then verify: read the destination back with `FILE_FLAG_NO_BUFFERING` (so the OS cache can't answer for the disk) and **re-read the source for a second hash**; all three hashes must match (this catches a flaky card reader, which would corrupt the copy and the first hash alike). Then rename into place and remove the source.
    - Copy: same as across volumes, but the source is kept. Modification and creation times are preserved.
-   - A group's sources are removed only after every member of the group is committed.
+   - A group's sources are removed only after every member of the group is committed. If any member fails, the group fails before any of its sources is removed; members already copied are reported as "copied, source kept".
    - Sharing violations (Explorer, Defender, Lightroom): retry with backoff, then mark the file failed and continue.
 4. **Resume:** if an apply is interrupted (crash, card pulled), it rolls forward from the journal the next time the app opens. There is no rollback in v1.
 5. **Removal:** one audited function, `remove_verified`, is the only code allowed to remove a file. It removes only (a) the source of a cross-volume move whose verification passed, and (b) Culla's own `*.culla-partial` files (for example when resuming from `copying`). `std::fs::remove_*` is banned elsewhere by clippy `disallowed-methods`.
