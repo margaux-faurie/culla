@@ -1,0 +1,9 @@
+node_modules/
+dist/
+target/
+.claude/settings.local.json
+CLAUDE.local.md
+.worktrees/
+*.culla-partial
+.DS_Store
+Thumbs.db
