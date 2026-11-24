@@ -27,7 +27,7 @@ jobs:
     permissions:
       security-events: write # Upload SARIF to code scanning.
       id-token: write # Sign results published to api.scorecard.dev.
-      # While the repository is private, also grant `contents: read` and `actions: read`
+      # If the private-repo gate above is ever removed, also grant `contents: read` and `actions: read`
       # and set publish_results to false (see examples/scorecard-private.yml).
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
