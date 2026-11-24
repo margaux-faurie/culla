@@ -3,6 +3,8 @@ status: accepted
 date: 2026-11-24
 ---
 
+
+Refined by: [ADR 0021](0021-unbuffered-source-re-read-for-hash-3.md) (proposed), for the source re-read.
 # Journaled apply: copy, hash, fsync, verify, rename; roll forward only
 
 ## Context and problem statement
@@ -22,7 +24,7 @@ Chosen option: "Write-ahead journal per file, roll forward only, hash verificati
 
 * One journal row per file, written before each step. States in SPEC: `pending → copying → verified → done | failed`. The exact state machine is owned by [design/file-engine.md](../design/file-engine.md).
 * Same-volume move: one `MoveFileExW` rename (atomic, also on exFAT).
-* Cross-volume move or copy: copy to `*.culla-partial` with `create_new` while hashing the source (xxh3 or blake3, to decide), fsync, read the destination back unbuffered and hash it, re-read the source unbuffered and hash it ([ADR 0021](0021-unbuffered-source-re-read-for-hash-3.md)), require all three hashes to match, rename into place, preserve mtime. For a move, `remove_verified` then removes the source ([ADR 0004](0004-never-delete-or-overwrite.md)).
+* Cross-volume move or copy: copy to `*.culla-partial` with `create_new` while hashing the source (xxh3 or blake3, to decide), fsync, read the destination back unbuffered and hash it, hash the source again, require all three hashes to match, rename into place, preserve mtime. For a move, `remove_verified` then removes the source ([ADR 0004](0004-never-delete-or-overwrite.md)).
 * Sharing violations (Explorer, Defender, Lightroom) are retried with backoff, then the file is marked `failed` and the apply continues.
 * Resume: on the next start, check that the volumes are present and their serials match, then roll each unfinished row forward. A stale partial file is removed by `remove_verified`.
 * Size alone catches truncation only. FAT mtimes are ±2 s.

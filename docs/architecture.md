@@ -171,7 +171,7 @@ flowchart LR
 | `plan`, `preflight` | core | Expand decisions into operations, apply group-consistent suffixes, run preflight checks through the ports, estimate bytes and time. | Details in [file-engine.md](design/file-engine.md) |
 | journal state machine, apply executor | core | Legal transitions per operation; drive the operations through `FileSystem`, write each state through `SessionStore`, pause and cancel, roll forward on resume. | [ADR 0010](adr/0010-journaled-apply-with-roll-forward-only.md) |
 | `scan`, `session` | core | Drive the walk (exclude `_rejected/` and an in-source destination), stream groups in filename order, request capture-time order, reconcile with the stored session, append events. | [ADR 0008](adr/0008-key-sessions-and-caches-by-volume-serial-and-relative-path.md) |
-| `winfs` | adapters | Walk with `follow_links(false)`, skip reparse points, read into buffers (never mmap). Rename with `MoveFileExW` and only `MOVEFILE_WRITE_THROUGH`: an existing target is a hard error, and a cross-volume rename fails with `ERROR_NOT_SAME_DEVICE`. Copy with `create_new`; both verify reads (destination and source) use `FILE_FLAG_NO_BUFFERING` ([ADR 0021](adr/0021-unbuffered-source-re-read-for-hash-3.md)); hash the source while copying, fsync, read the destination back unbuffered, hash the source again. Owns `remove_verified`, the single audited removal function. | [ADR 0004](adr/0004-never-delete-or-overwrite.md). `unsafe` for Win32 calls is confined here. |
+| `winfs` | adapters | Walk with `follow_links(false)`, skip reparse points, read into buffers (never mmap). Rename with `MoveFileExW` and only `MOVEFILE_WRITE_THROUGH`: an existing target is a hard error, and a cross-volume rename fails with `ERROR_NOT_SAME_DEVICE`. Copy with `create_new`; both verify reads (destination and source) use `FILE_FLAG_NO_BUFFERING` ([ADR 0021](adr/0021-unbuffered-source-re-read-for-hash-3.md), proposed); hash the source while copying, fsync, read the destination back unbuffered, hash the source again. Owns `remove_verified`, the single audited removal function. | [ADR 0004](adr/0004-never-delete-or-overwrite.md). `unsafe` for Win32 calls is confined here. |
 | `metadata` | adapters | `kamadak-exif` tags (first ~128 KB). Own TIFF/IFD walker finds the largest embedded JPEG in a NEF. Fuzz targets. | [ADR 0011](adr/0011-own-ifd-walker-for-nef-previews-and-kamadak-exif.md) |
 | preview pipeline | adapters | 1–2 reader threads, 2–4 decode workers, prefetch 5 ahead and 2 behind, memory LRU of about 12 screen previews, disk cache, orientation. | [ADR 0012](adr/0012-turbojpeg-scaled-decode-preview-pipeline.md) |
 | `store` | adapters | One SQLite database per source: sessions, events, plans, journal. | [ADR 0009](adr/0009-sqlite-per-source-for-sessions-and-journal.md) |
@@ -565,7 +565,7 @@ Brief. Targets and measurement live in [nfr.md](nfr.md) and [benchmarks.md](benc
 | Risk or debt | Impact | Mitigation |
 |---|---|---|
 | A raw `std::fs::rename` slips in (it replaces the target on Windows) | Overwrite, the worst failure | `std::fs::rename` banned by `disallowed-methods`; collision tests on `windows-latest`. |
-| Verification re-reads each cross-volume file twice (destination unbuffered, source again) | Long applies get longer | The review estimate includes the extra reads; measure in [benchmarks.md](benchmarks.md). |
+| Verification re-reads each cross-volume file twice (destination unbuffered, source again; see ADR 0021) | Long applies get longer | The review estimate includes the extra reads; measure in [benchmarks.md](benchmarks.md). |
 | Widening `remove_verified` beyond its two cases | Data loss | One function, two cases, property and integration tests, reviewer agent checks the invariant. |
 | Performance numbers are estimates | Budgets may not hold on real SD cards | Benchmark on the G14 with a real card in M1 ([benchmarks.md](benchmarks.md)). Test whether the NEF's JpgFromRaw is a faster preview source. |
 | tauri-specta v2 is still an RC | Breaking changes, abandonment | Exact pin, CI diff check, `ts-rs` fallback ([ADR 0019](adr/0019-generate-typescript-bindings-with-tauri-specta.md)) |
@@ -603,7 +603,7 @@ Brief. Targets and measurement live in [nfr.md](nfr.md) and [benchmarks.md](benc
 | Resume (apply) | Rolling an interrupted apply forward from the journal. No rollback in v1. |
 | Partial file | `*.culla-partial`, the temporary target of a copy until it is verified. |
 | `remove_verified` | The single audited removal function, in `culla-adapters`. Removes only the source of a verified cross-volume move, or Culla's own partial file. |
-| Verified | A copy whose destination was fsynced and read back unbuffered, and whose source was hashed a second time, with all three hashes equal. |
+| Verified | A copy whose destination was fsynced and read back unbuffered, and whose source was hashed a second time, with all three hashes equal. | (see ADR 0021, proposed)
 | `_rejected/` | Folder at the source root that receives rejected groups, mirroring subfolders. Excluded from scans. |
 | Destination | Folder chosen per session for kept groups. Excluded from scans when it sits inside the source. |
 | Preview | Screen-sized JPEG made by the preview pipeline and served by `culla://`. |
