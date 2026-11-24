@@ -40,9 +40,9 @@ To decide: a calendar time budget for v1 (weeks per milestone). Milestones are i
 The details live in other documents. This is the shape only.
 
 1. **Start.** Pick a source folder (subfolders included), the "RAW follows JPEG" toggle, keep = move or copy, and a destination. A session that already exists for that folder can be resumed, even if the SD card comes back under another drive letter.
-2. **Swipe.** One photo at a time, full screen on a dark (Night) surround. Right = keep, left = reject, by keyboard or drag. A JPEG, its NEF and its sidecars are one group, decided once. Sidecars follow the file they describe: `X.NEF.xmp` follows the NEF, so it stays put when "RAW follows JPEG" is off. A lone NEF is shown through its embedded JPEG. Zoom to 100%, EXIF overlay, filters, jump to next undecided, global undo/redo.
+2. **Swipe.** One photo at a time, full screen on a dark (Night) surround. Right = keep, left = reject, by keyboard, drag or the Keep and Reject buttons. A JPEG, its NEF and its sidecars are one group, decided once. Sidecars follow the file they describe: `X.NEF.xmp` follows the NEF, so it stays put when "RAW follows JPEG" is off. A lone NEF is shown through its embedded JPEG. Zoom to 100%, EXIF overlay, filters, jump to next undecided, global undo/redo.
 3. **Review.** Counts, kept and rejected grids, the full operation plan, preflight results, estimated time and size. Apply needs an explicit confirmation that states the counts. Undecided photos are never touched.
-4. **Apply.** Rejects move to `<source>/_rejected/`, keeps move or copy to the destination, subfolders mirrored. Every operation is journalled. Culla never overwrites: a rename fails if the target exists. It never deletes a photo without a verified copy at the destination: the only removals are the source of a cross-volume move whose destination was read back and hash-compared, and Culla's own temporary `*.culla-partial` files. An interrupted apply rolls forward on the next launch. Ends with a report and a log file.
+4. **Apply.** Rejects move to `<source>/_rejected/`, keeps move or copy to the destination, subfolders mirrored. Every operation is journalled. Culla never overwrites: a rename fails if the target exists. It never deletes a photo without a verified copy at the destination: the only removals are the source of a cross-volume move that passed verification (fsync, destination read back without the OS cache, source re-read, all three hashes matching), and Culla's own temporary `*.culla-partial` files. An interrupted apply rolls forward on the next launch. Ends with a report and a log file.
 5. **Web demo.** The same UI in a browser, with about 25 sample photos and a simulated apply, plus an optional read-only "your folder" mode.
 
 Where to read more:
@@ -95,7 +95,7 @@ v1 is a success when all of the following hold. The numbers are proposed targets
 | S3 | Fast decisions | The author culls 1,000 pairs from SD in 30 minutes or less of swiping time (about 1.8 s per photo, decision time included) | Timed session log on the G14 |
 | S4 | The app never makes the user wait between photos once prefetch has caught up | Next photo visible within the budget of NFR-PERF-03 for at least 95% of decisions | Instrumented benchmark run |
 | S5 | Keyboard only | Every flow (start, swipe, review, apply) can be done without a mouse | Manual pass + Playwright on the demo |
-| S6 | Web demo live | Demo published on a margauxfaurie.com subdomain, loads and runs the full swipe-review-apply flow on sample photos | Playwright in CI against the deployed URL |
+| S6 | Web demo live | Demo published on a margauxfaurie.com subdomain (to confirm), loads and runs the full swipe-review-apply flow on sample photos | Playwright in CI against the deployed URL |
 | S7 | Portfolio-ready repository | README with GIF, ADRs for the main decisions, green CI, OpenSSF Scorecard published | Repository check before the v1 release |
 
 To decide: whether S3's 30-minute target is right for the author's real shooting, after the first M2 session.
@@ -113,6 +113,9 @@ To decide: whether the guide is one post or a series, and whether it ships with 
 
 From [SPEC §10](SPEC.md#10-open-questions):
 
+- Windows 10 22H2 support (out of mainstream support since October 2025): must, should or dropped.
+- Update check: on or off by default, and how often.
+- Minimum WebView2 version and installer mode (the bootstrapper downloads WebView2 at install time if missing).
 - Demo subdomain, and which photos to publish in the demo.
 - Which Nikon body or bodies the author uses, which sets the NEF variants (lossless, HE, HE\*) in the test corpus.
 
