@@ -3,9 +3,9 @@ status: accepted
 date: 2026-11-24
 ---
 
+# Journaled apply: copy, hash, fsync, verify, rename; roll forward only
 
 Refined by: [ADR 0021](0021-unbuffered-source-re-read-for-hash-3.md) (proposed), for the source re-read.
-# Journaled apply: copy, hash, fsync, verify, rename; roll forward only
 
 ## Context and problem statement
 
