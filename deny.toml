@@ -31,6 +31,7 @@ deny = [
   # The core and the adapters never depend on Tauri (ADR 0002). Only the app shell may.
   # `culla-app` is the package name of src-tauri; Tauri plugins depend on tauri directly and are listed as they are added.
   { crate = "tauri", wrappers = ["culla-app", "tauri-plugin-updater"] },
+  { crate = "tauri-plugin-updater", wrappers = ["culla-app"] },
   # Never memory-map files (removable media, design/file-engine.md).
   { crate = "memmap2" },
   # Crates that remove or move files on our behalf (design/file-engine.md §9.7).

@@ -1,6 +1,6 @@
 # Removal, rename and overwrite rules (SPEC §5.2, design/file-engine.md §9.7).
 # The list mirrors file-engine §9.7; paths that don't resolve yet (tokio, windows_sys) are inert until those crates are added.
-# Where the lint may be switched off (checked by scripts/ci/check-lint-allows.sh):
+# Where the lint may be switched off (checked by scripts/ci/check_lint_allows.py):
 #   crates/adapters/src/winfs/  (the audited module, from M2)
 #   crates/bench/               (outside the rule, temp dirs only, ADR 0020)
 #   crates/*/tests/             (integration tests, temp dirs only)

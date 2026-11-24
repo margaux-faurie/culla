@@ -28,7 +28,7 @@ jobs:
       - name: No merge-conflict markers
         run: scripts/ci/check-conflict-markers.sh
       - name: Removal lint only switched off where allowed
-        run: scripts/ci/check-lint-allows.sh
+        run: python3 scripts/ci/check_lint_allows.py
       - name: culla-core has no I/O or Tauri dependencies
         run: scripts/ci/check-core-deps.sh
 
