@@ -52,24 +52,24 @@ The tests in `crates/adapters/tests/vhdx_spike.rs` are `#[ignore]` and return ea
 
 ### Results
 
-Run: TODO (workflow run link, date, runner image `ImageOS`/`ImageVersion` from the "Set up job" step, Windows build from the Prepare step).
+Run: [workflow run 45351286023](https://github.com/margaux-faurie/culla/actions/runs/45351286023), 24 Nov 2026, image `win25-vs2026` 20261116.315 (Windows Server 2025 Datacenter, build 10.0.26100).
 
 | Question | Result |
 |---|---|
-| exFAT, FAT32 and NTFS mount at fixed letters | TODO |
-| Placeholder writes on each | TODO |
-| Detach with handles open: method that made `T:` vanish | TODO (`diskpart` / `mountvol` / `Dismount-DiskImage`), seconds: TODO |
-| `diskpart detach vdisk` with handles open: refused, blocked or done | TODO |
-| Write through held handle after detach | TODO (`kind`, raw code) |
-| `sync_all` through held handle after detach | TODO |
-| Read through held handles after detach | TODO |
-| Path access after detach (`metadata`, open, `create_new`, `read_dir`) | TODO |
-| Closing held handles after detach | TODO (returns, ms) |
-| Reattach on another letter, held file length | TODO (262144 or 327680) |
-| Read-only: `volume` attribute | TODO (blocks writes or not, error code) |
-| Read-only: `disk` attribute | TODO |
-| Read-only: `attach vdisk readonly` | TODO |
-| Unmount | TODO |
+| exFAT, FAT32 and NTFS mount at fixed letters | ok, about 2 s each (6 volumes) |
+| Placeholder writes on each | ok (1 MiB write + sync + read back, ≤ 2 ms) |
+| Detach with handles open: method that made `T:` vanish | `diskpart detach vdisk`, 1.4 s; no fallback needed |
+| `diskpart detach vdisk` with handles open: refused, blocked or done | done |
+| Write through held handle after detach | fails at once: `ERROR_NOT_READY` (21) |
+| `sync_all` through held handle after detach | fails at once: `ERROR_NOT_READY` (21) |
+| Read through held handles after detach | fails at once: `ERROR_NOT_READY` (21), read-write and read-only handles |
+| Path access after detach (`metadata`, open, `create_new`, `read_dir`) | `ERROR_PATH_NOT_FOUND` (3) |
+| Closing held handles after detach | returns at once |
+| Reattach on another letter, held file length | ok; 327680, so the unsynced 64 KiB tail survived on this virtual disk (a real card may lose it) |
+| Read-only: `volume` attribute | blocks creating files and folders (`ERROR_WRITE_PROTECT`, 19); opening an existing file for writing still succeeds, the write fails |
+| Read-only: `disk` attribute | same as `volume` |
+| Read-only: `attach vdisk readonly` | same as `volume` |
+| Unmount | ok |
 
-Method to use for the card-pull test (testing.md section 6, level 4): TODO.
-Method to use for the write-protect case: TODO.
+Method to use for the card-pull test (testing.md section 6, level 4): `diskpart detach vdisk` while the test holds handles; expect `ERROR_NOT_READY` on handles and `ERROR_PATH_NOT_FOUND` on paths.
+Method to use for the write-protect case: `attributes volume set readonly` (simplest). Note for the engine: an SD lock is not detected by opening a file for writing; preflight must use the volume read-only flag, and writes must still handle `ERROR_WRITE_PROTECT`.

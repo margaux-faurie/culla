@@ -297,9 +297,14 @@ fn vhdx_detach_spike() {
     report.flush();
 }
 
-/// Runs on a volume the workflow made read-only. Passes only if creating a file
-/// and opening an existing file for writing both fail, so its exit code tells the
-/// workflow whether a read-only method works.
+/// Runs on a volume the workflow made read-only. Passes only if creating a file,
+/// creating a folder and writing to an existing file all fail, so its exit code tells
+/// the workflow whether a read-only method works.
+///
+/// First CI run (24 Nov 2026): opening an existing file with write access *succeeds* on
+/// a write-protected volume; only the write fails (ERROR_WRITE_PROTECT, 19). So the
+/// engine's preflight can't detect an SD lock by opening a file; it uses the volume's
+/// read-only flag (design/file-engine.md, preflight).
 #[test]
 #[ignore = "needs a read-only VHDX volume (CULLA_VHDX_LETTER), see scripts/ci/README.md"]
 fn vhdx_readonly_spike() {
@@ -327,6 +332,18 @@ fn vhdx_readonly_spike() {
             OpenOptions::new().write(true).open(path)
         })
     });
+    let wrote = match &opened_rw {
+        Some(Ok(file)) => {
+            let mut file = file;
+            Some(report.op("write 1 byte at end + sync_all", || {
+                use std::io::{Seek, SeekFrom, Write};
+                file.seek(SeekFrom::End(0))?;
+                file.write_all(b"x")?;
+                file.sync_all()
+            }))
+        }
+        _ => None,
+    };
     if let Some(path) = &existing {
         let _ = report.op("read existing", || fs::read(path).map(|d| d.len()));
     } else {
@@ -345,10 +362,7 @@ fn vhdx_readonly_spike() {
         made_dir.is_err(),
         "create_dir succeeded on a read-only volume"
     );
-    if let Some(r) = opened_rw {
-        assert!(
-            r.is_err(),
-            "open for writing succeeded on a read-only volume"
-        );
+    if let Some(r) = wrote {
+        assert!(r.is_err(), "a write succeeded on a read-only volume");
     }
 }
