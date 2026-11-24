@@ -93,6 +93,8 @@ culla/
                     journal state machine). No I/O, no Tauri. Tests run on any OS.
   crates/adapters/  package culla-adapters: Windows file ops, EXIF/NEF parsing, decode, SQLite store.
                     No Tauri. Integration tests on windows-latest.
+  crates/cli/       package culla-cli, binary culla: headless scan|preview|plan|apply|resume (ADR 0020)
+  crates/bench/     package culla-bench: benchmark harness (ADR 0020)
   src-tauri/        Tauri 2 shell, wiring only: commands, culla:// image scheme, capabilities
   src/              React + TypeScript UI (one Vite app, two build modes: desktop | demo)
   docs/             SPEC.md, adr/, research/
@@ -119,9 +121,14 @@ The items below describe behaviour; the pure parts live in `culla-core` and the 
 3. **Execute,** journalled with one row per file. The states and recovery rules are owned by [design/file-engine.md](design/file-engine.md) (`pending, renaming, copying, verifying, committed, source_removed, done, copied_source_kept, failed`):
    - Every rename is no-replace and goes through the file handle that was checked: `SetFileInformationByHandle` with `FileRenameInfoEx` and no `FILE_RENAME_FLAG_REPLACE_IF_EXISTS`, the same semantics as `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` or `MOVEFILE_COPY_ALLOWED`. An existing target makes it fail atomically (no check-then-rename race), and a rename across volumes fails with `ERROR_NOT_SAME_DEVICE` instead of silently copying and deleting. Copies open their target with `create_new`. "Target exists" is a hard error for that group.
    - Move on the same volume: a single such rename.
+<<<<<<< HEAD
    - Move across volumes: copy to `*.culla-partial` while hashing the source (xxh3/blake3), fsync, then verify: read the destination back with `FILE_FLAG_NO_BUFFERING` (so the OS cache can't answer for the disk) and **re-read the source for a second hash**; all three hashes must match (this catches a flaky card reader, which would corrupt the copy and the first hash alike). Then rename into place and remove the source.
    - Copy: same as across volumes, but the source is kept. Modification and creation times are preserved.
    - A group's sources are removed only after every member of the group is committed. If any member fails, the group fails before any of its sources is removed; members already copied are reported as "copied, source kept".
+=======
+   - Move across volumes: copy to `*.culla-partial` while hashing the source (xxh3/blake3), fsync, then verify: read the destination back with `FILE_FLAG_NO_BUFFERING` (so the OS cache can't answer for the disk) and **re-read the source with `FILE_FLAG_NO_BUFFERING` for a second hash (ADR 0021, proposed)**; all three hashes must match (this catches a flaky card reader, which would corrupt the copy and the first hash alike). Then rename into place and remove the source.
+   - Copy: same as across volumes, but the source is kept. The mtime is preserved.
+>>>>>>> origin/main
    - Sharing violations (Explorer, Defender, Lightroom): retry with backoff, then mark the file failed and continue.
 4. **Resume:** if an apply is interrupted (crash, card pulled), it rolls forward from the journal the next time the app opens. There is no rollback in v1.
 5. **Removal:** one audited function, `remove_verified`, is the only code allowed to remove a file. It removes only (a) the source of a cross-volume move whose verification passed, and (b) Culla's own `*.culla-partial` files (for example when resuming from `copying`). `std::fs::remove_*` is banned elsewhere by clippy `disallowed-methods`.
@@ -171,7 +178,7 @@ Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsm
 - CI on PRs: lint, test, build. Release via release-please with Conventional Commits. Dependabot (grouped). Action SHAs pinned. OpenSSF Scorecard.
 - MIT license, README with GIF, CONTRIBUTING, SECURITY.md, third-party licences file.
 - Decisions recorded as ADRs in `docs/adr/` (these also feed the blog enablement guide).
-- Agent practices, security and architecture conventions: see `docs/research/practices.md`. Key rules: removal lives only in `remove_verified` (§5.2 step 5), and `std::fs::remove_*` is banned elsewhere via clippy `disallowed-methods`; `std::fs::rename` overwrites on Windows, so the adapters use the no-replace `MoveFileExW` and copies open targets with `create_new`; Tauri commands restricted with `AppManifest::commands`; the webview gets no fs plugin permissions; cargo-deny (no cargo-audit), CodeQL (JS/TS + Rust), workflow lockfiles, pnpm supply-chain settings; tauri-specta pinned (still RC), `ts-rs` as fallback; cargo-fuzz targets on the EXIF/NEF parsers.
+- Agent practices, security and architecture conventions: see `docs/research/practices.md`. Key rules: removal lives only in `remove_verified` (§5.2 step 5); `std::fs::remove_*` is banned outside `remove_verified`; `std::fs::rename` is banned everywhere (the adapters rename only through the checked handle with no-replace semantics, ADR 0022), both via clippy `disallowed-methods`; copies open targets with `create_new`; Tauri commands restricted with `AppManifest::commands`; the webview gets no fs plugin permissions; cargo-deny (no cargo-audit), CodeQL (JS/TS + Rust), workflow lockfiles, pnpm supply-chain settings; tauri-specta pinned (still RC), `ts-rs` as fallback; cargo-fuzz targets on the EXIF/NEF parsers.
 
 ## 8. Scope
 
