@@ -20,12 +20,10 @@ permissions: {}
 
 jobs:
   analysis:
-    # Scorecard publishing and SARIF upload need a public repo. Skipped while private (until v1).
-    if: ${{ !github.event.repository.private }}
     name: Scorecard analysis
     runs-on: ubuntu-latest
-    # Scorecard only supports the default branch.
-    if: ${{ github.event.repository.default_branch == github.ref_name }}
+    # Scorecard only supports the default branch, and publishing needs a public repo (private until v1).
+    if: ${{ github.event.repository.default_branch == github.ref_name && !github.event.repository.private }}
     permissions:
       security-events: write # Upload SARIF to code scanning.
       id-token: write # Sign results published to api.scorecard.dev.
