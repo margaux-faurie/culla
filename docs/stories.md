@@ -139,7 +139,7 @@ Links: NFR-REL, INV (path containment). Test: core unit, Windows integration (re
 
 ### US-17 Same-volume move never overwrites
 As a photographer, I want moves on the same drive to be instant and safe, so that culling an internal folder is fast and loses nothing.
-- Given a same-volume move, when it executes, then it is a single `MoveFileExW` with only `MOVEFILE_WRITE_THROUGH` (no replace-existing, no copy-allowed).
+- Given a same-volume move, when it executes, then it is a single no-replace rename through the checked handle (ADR 0022, proposed).
 - Given the target appeared after planning, when the move executes, then it fails as a hard error, the existing file is unchanged, the op is marked failed, and the apply continues with the next op.
 
 Links: INV (no overwrite). Test: Windows integration.

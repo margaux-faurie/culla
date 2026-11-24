@@ -147,7 +147,7 @@ flowchart LR
   end
 
   subgraph adapters["crates/adapters (culla-adapters) — no Tauri"]
-    afs["winfs<br/>no mmap, no link following,<br/>MoveFileExW WRITE_THROUGH only, create_new,<br/>remove_verified"]
+    afs["winfs<br/>no mmap, no link following,<br/>no-replace handle rename, create_new,<br/>remove_verified"]
     avol["volume<br/>GetVolumeInformationW"]
     ameta["metadata<br/>kamadak-exif, own IFD walker"]
     apre["preview pipeline<br/>reader threads, decode pool,<br/>LRU, disk cache, turbojpeg"]
@@ -171,7 +171,7 @@ flowchart LR
 | `plan`, `preflight` | core | Expand decisions into operations, apply group-consistent suffixes, run preflight checks through the ports, estimate bytes and time. | Details in [file-engine.md](design/file-engine.md) |
 | journal state machine, apply executor | core | Legal transitions per operation; drive the operations through `FileSystem`, write each state through `SessionStore`, pause and cancel, roll forward on resume. | [ADR 0010](adr/0010-journaled-apply-with-roll-forward-only.md) |
 | `scan`, `session` | core | Drive the walk (exclude `_rejected/` and an in-source destination), stream groups in filename order, request capture-time order, reconcile with the stored session, append events. | [ADR 0008](adr/0008-key-sessions-and-caches-by-volume-serial-and-relative-path.md) |
-| `winfs` | adapters | Walk with `follow_links(false)`, skip reparse points, read into buffers (never mmap). Rename with `MoveFileExW` and only `MOVEFILE_WRITE_THROUGH`: an existing target is a hard error, and a cross-volume rename fails with `ERROR_NOT_SAME_DEVICE`. Copy with `create_new`; both verify reads (destination and source) use `FILE_FLAG_NO_BUFFERING` ([ADR 0021](adr/0021-unbuffered-source-re-read-for-hash-3.md), proposed); hash the source while copying, fsync, read the destination back unbuffered, hash the source again. Owns `remove_verified`, the single audited removal function. | [ADR 0004](adr/0004-never-delete-or-overwrite.md). `unsafe` for Win32 calls is confined here. |
+| `winfs` | adapters | Walk with `follow_links(false)`, skip reparse points, read into buffers (never mmap). Rename through the checked handle with no-replace semantics ([ADR 0022](adr/0022-rename-through-the-checked-handle.md), proposed): an existing target is a hard error, and a cross-volume rename fails with `ERROR_NOT_SAME_DEVICE`. Copy with `create_new`; both verify reads (destination and source) use `FILE_FLAG_NO_BUFFERING` ([ADR 0021](adr/0021-unbuffered-source-re-read-for-hash-3.md), proposed); hash the source while copying, fsync, read the destination back unbuffered, hash the source again. Owns `remove_verified`, the single audited removal function. | [ADR 0004](adr/0004-never-delete-or-overwrite.md). `unsafe` for Win32 calls is confined here. |
 | `metadata` | adapters | `kamadak-exif` tags (first ~128 KB). Own TIFF/IFD walker finds the largest embedded JPEG in a NEF. Fuzz targets. | [ADR 0011](adr/0011-own-ifd-walker-for-nef-previews-and-kamadak-exif.md) |
 | preview pipeline | adapters | 1–2 reader threads, 2–4 decode workers, prefetch 5 ahead and 2 behind, memory LRU of about 12 screen previews, disk cache, orientation. | [ADR 0012](adr/0012-turbojpeg-scaled-decode-preview-pipeline.md) |
 | `store` | adapters | One SQLite database per source: sessions, events, plans, journal. | [ADR 0009](adr/0009-sqlite-per-source-for-sessions-and-journal.md) |
@@ -348,22 +348,28 @@ sequenceDiagram
   C->>DB: write all operations as pending (one transaction)
   loop Each operation, in order
     C->>FS: refuse links on the path
-    alt Move, same volume
-      C->>FS: MoveFileExW (WRITE_THROUGH only)
+    alt Move, same volume, or reject
+      C->>DB: renaming
+      C->>FS: no-replace rename via checked file and folder handles
       Note right of FS: existing target = hard error for the whole group
-      C->>DB: done
+      C->>DB: committed, then done
     else Move across volumes, or copy
-      C->>DB: copying
-      C->>FS: copy to *.culla-partial (create_new), hash source while copying, fsync
-      C->>FS: unbuffered read-back of destination, hash it
-      C->>FS: re-read source, hash it again
-      C->>C: all three hashes match? (no = failed, source kept)
-      C->>DB: verified
-      C->>FS: MoveFileExW partial into place (WRITE_THROUGH only), preserve mtime
-      opt Move
+      C->>DB: copying (attempt, partial path)
+      C->>FS: copy to *.culla-partial (create_new), hash source while copying, set times, fsync
+      C->>DB: verifying (hash 1)
+      C->>FS: unbuffered read-back of destination (hash 2), unbuffered re-read of source (hash 3)
+      C->>C: all three hashes match? (no = failed, partial removed, source kept)
+      C->>FS: rename partial into place via its handle, flush
+      C->>DB: committed
+      alt Copy
+        C->>DB: done
+      else Move, once every member of the group is committed
         C->>FS: remove_verified(source)
+        C->>DB: source_removed, then done
       end
-      C->>DB: done
+    end
+    opt A member failed
+      C->>DB: rest of the group failed, committed moves copied_source_kept
     end
     C-->>UI: progress
     opt Sharing violation
@@ -373,7 +379,7 @@ sequenceDiagram
   C-->>UI: report + log file
 ```
 
-Pause holds the loop between files. Cancel stops after the current file. Undecided groups are never part of the plan.
+Pause holds the loop between files. Cancel stops after the current file. States, edges and the recovery table are owned by [design/file-engine.md](design/file-engine.md) §9–§10. Undecided groups are never part of the plan.
 
 ### 6.5 Resume after a crash or a pulled card
 
@@ -493,8 +499,8 @@ Full analysis in [threat-model.md](threat-model.md). The main controls:
 - Strict CSP, nothing remote. `img-src` allows only `'self'` and the `culla` scheme origin (`http://culla.localhost` on Windows).
 - The scheme handler serves only IDs from the current scan.
 - Every destination comes from `plan()` and is checked to sit under its root. No link following at scan time or at apply time; links on the path are refused at apply time too.
-- No overwrite: renames use `MoveFileExW` with only `MOVEFILE_WRITE_THROUGH` (no replace, no copy-allowed), so the OS refuses an existing target; copies use `create_new`. There is no check-then-rename step.
-- `remove_verified` in `culla-adapters` is the single audited removal function. It removes only the source of a verified cross-volume move and Culla's own `*.culla-partial` files. `std::fs::remove_*` is banned outside `remove_verified`; `std::fs::rename` is banned everywhere (the adapters use the no-replace `MoveFileExW`). Both through clippy `disallowed-methods`.
+- No overwrite: renames go through the checked handle with no-replace semantics ([ADR 0022](adr/0022-rename-through-the-checked-handle.md), proposed), so the OS refuses an existing target; copies use `create_new`. There is no check-then-rename step.
+- `remove_verified` in `culla-adapters` is the single audited removal function. It removes only the source of a verified cross-volume move and Culla's own `*.culla-partial` files. `std::fs::remove_*` is banned outside `remove_verified`; `std::fs::rename` is banned everywhere (the adapters rename through the checked handle, ADR 0022, proposed). Both through clippy `disallowed-methods`.
 - Parsers (EXIF, IFD walker, embedded JPEG) are fuzzed with `cargo-fuzz`, with decode size limits.
 - Supply chain: cargo-deny, pnpm hardening, CodeQL, pinned or locked actions, Scorecard.
 - Updater artefacts are signed and served over HTTPS.
@@ -513,7 +519,7 @@ To decide (ADR candidate): Tauri isolation pattern. Culla loads no remote conten
 ### 8.7 Paths and identity
 
 - Inside the core, files are identified by (volume serial, relative path). Absolute paths are rebuilt from the current mount at use time.
-- Long paths: Rust std adds `\\?\` internally, but that does not cover raw Win32 calls. The adapters add the `\\?\` prefix themselves for `MoveFileExW` and `CreateFileW`. Deep mirrored destinations are covered by tests.
+- Long paths: Rust std adds `\\?\` internally, but that does not cover raw Win32 calls. The adapters add the `\\?\` prefix themselves for `CreateFileW` and the rename calls. Deep mirrored destinations are covered by tests.
 - Files on removable media are read into buffers, never memory-mapped, and handles are released before any move.
 - The data root (`%LOCALAPPDATA%\Culla`, holding `sessions`, `cache` and `logs`) is not looked up inside the adapters. The composition root resolves it once (`SHGetKnownFolderPath(FOLDERID_LocalAppData)`) and injects it through config; `culla-cli`, `culla-bench` and tests pass their own root. This keeps every write location testable.
 

@@ -128,10 +128,10 @@ The card-pull case uses `Dismount-DiskImage` or `diskpart detach vdisk` in the m
 | Unbuffered reads with odd sizes | verify on files of 1 byte, sector size − 1, sector size + 1 and a typical photo size, on exFAT and NTFS VHDX volumes: the aligned read loop and the final partial sector produce the right hash, no `ERROR_INVALID_PARAMETER` | NFR-REL-04 |
 | Read-back mismatch (test adapter flips a byte in the destination after fsync, or the source changes during the copy) | verify fails, source is kept, the op is marked failed, the bad partial is cleaned up | INV never delete |
 | `remove_verified`, direct calls | refuses a path that is not a journalled, verified cross-volume source and not a Culla `*.culla-partial`: an unverified source, a kept original, a file in `_rejected/`, a user file named `*.culla-partial` outside the journal, a junction target | INV never delete |
-| Copy across volumes | source kept, mtime kept (±2 s on exFAT) | INV |
-| Target appears between plan and execute (same volume) | `MoveFileExW` is called with only `MOVEFILE_WRITE_THROUGH` (no replace-existing, no copy-allowed); the existing target is a hard error, the op is marked failed, the existing file is byte-identical afterwards | INV no overwrite |
+| Copy across volumes | source kept, mtime kept (±2 s on FAT32, 10 ms on exFAT, exact on NTFS) | INV |
+| Target appears between plan and execute (same volume) | the rename goes through the checked handle without replace-if-exists (ADR 0022, proposed); the existing target is a hard error, the op is marked failed, the existing file is byte-identical afterwards | INV no overwrite |
 | Target appears between plan and execute (cross volume or copy, at the final rename of the partial) | same hard error; the partial is removed through `remove_verified`, the op ends `failed`, the source is kept, and the file that appeared is byte-identical afterwards | INV no overwrite, never delete |
-| Rename across volumes with the checked rename | fails with `ERROR_NOT_SAME_DEVICE` (no silent copy, since copy-allowed is not set); the engine takes the verified copy path instead | INV no overwrite |
+| Rename across volumes with the checked rename | fails with `ERROR_NOT_SAME_DEVICE` (no silent copy, since copy-allowed is not set); the operation ends `failed (plan_stale)` and is never turned into a copy (the kind is fixed at plan time, [file-engine §7.2](design/file-engine.md)) | INV no overwrite |
 | Raw `std::fs::rename` not used | enforced by clippy `disallowed-methods`; the checked rename is the only path | INV no overwrite |
 | `create_new` on copy target | fails if target exists | INV no overwrite |
 | File held open with no sharing by another process | retries with backoff, then marked failed, apply continues | NFR-REL |

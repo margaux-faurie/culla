@@ -26,3 +26,4 @@ One decision per file, in [MADR 4](https://adr.github.io/madr/) minimal format. 
 | [0019](0019-generate-typescript-bindings-with-tauri-specta.md) | Generate TypeScript bindings with tauri-specta, pinned RC, ts-rs as fallback | accepted |
 | [0020](0020-headless-cli-and-bench-crates.md) | Headless CLI and bench crates | accepted |
 | [0021](0021-unbuffered-source-re-read-for-hash-3.md) | Unbuffered source re-read for hash 3 | proposed |
+| [0022](0022-rename-through-the-checked-handle.md) | Rename through the checked handle, with no-replace semantics | proposed |
