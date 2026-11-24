@@ -630,6 +630,8 @@ Enforcement:
   ```toml
   disallowed-methods = [
     { path = "std::fs::remove_file",       reason = "use winfs::remove_verified" },
+    { path = "windows_sys::Wdk::Storage::FileSystem::NtCreateFile",      reason = "winfs only (create_partial)" },
+    { path = "windows_sys::Wdk::Storage::FileSystem::NtSetInformationFile", reason = "winfs only (rename_noreplace)" },
     { path = "std::fs::remove_dir",        reason = "Culla never removes folders" },
     { path = "std::fs::remove_dir_all",    reason = "Culla never removes folders" },
     { path = "std::fs::rename",            reason = "replaces the target on Windows; use winfs::rename_noreplace" },
@@ -715,7 +717,7 @@ Each invariant has at least one test in [testing.md](../testing.md): property te
 | ID | Invariant |
 |---|---|
 | INV-01 | No file is removed except by `remove_verified_source` with a valid `VerifiedMove`, or by `remove_own_partial` with a valid `OwnPartial` and the source present. No folder is ever removed. |
-| INV-02 | The content of a user file is never written. Culla opens no user file with write access, never replaces an existing file (renames are no-replace through a handle, new files are `create_new`), and writes only to its own partials. |
+| INV-02 | The content of a user file is never written. Culla opens no user file with write access, never replaces an existing file (renames are no-replace through a handle, new files are created with create-new semantics (`FILE_CREATE`)), and writes only to its own partials. |
 | INV-03 | Nothing on a user volume is written, renamed or created before the user confirms a plan. Scan, reconcile, preview, plan and preflight are read-only on user volumes. |
 | INV-04 | Undecided, ambiguous, held-back, missing, locked-elsewhere and applied groups get no operations. |
 | INV-05 | Every target and partial lies under its root (destination root for keep, `<source>\_rejected` for reject) and equals no source path. |
