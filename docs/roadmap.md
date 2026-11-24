@@ -79,7 +79,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
   - Session store and decision event log in SQLite (one database per source); reconcile on open (missing, new files).
   - `plan()`: reject to `_rejected/` mirrored, keep move or copy, RAW follows toggle, sidecars, group-consistent collision suffixes.
   - Preflight: writable source, free space, destination not inside `_rejected`, path length, locks, symlinks and junctions.
-  - Journal and apply (logic in `culla-core`, fs ops in `culla-adapters`): same-volume no-replace rename through the checked handle (ADR 0022; existing target is a hard error); cross-volume copy, fsync, re-read and hash of destination and source, rename, then removal of the source through the single audited function (which may only remove verified cross-volume sources and Culla's own `*.culla-partial` files); copy with `create_new` and mtime kept; sharing-violation retry.
+  - Journal and apply (logic in `culla-core`, fs ops in `culla-adapters`): same-volume no-replace rename through the checked handle (ADR 0022, proposed; existing target is a hard error); cross-volume copy, fsync, re-read and hash of destination and source, rename, then removal of the source through the single audited function (which may only remove verified cross-volume sources and Culla's own `*.culla-partial` files); copy with `create_new` and mtime kept; sharing-violation retry.
   - Sidecars follow the file they describe (`X.NEF.xmp` follows the NEF; `X.xmp` and `X.pp3` follow the primary), with the collision suffix inside sidecar names.
   - "Nothing touches the disk before Apply" tests ([testing.md](testing.md) section 4).
   - Resume (roll forward) after crash or card pull. Plain-text log file of operations.
