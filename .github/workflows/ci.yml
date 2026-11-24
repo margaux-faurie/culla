@@ -9,7 +9,7 @@ permissions: {}
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -29,6 +29,8 @@ jobs:
         run: scripts/ci/check-conflict-markers.sh
       - name: Removal lint only switched off where allowed
         run: scripts/ci/check-lint-allows.sh
+      - name: culla-core has no I/O or Tauri dependencies
+        run: scripts/ci/check-core-deps.sh
 
   rust:
     name: Rust (Linux)

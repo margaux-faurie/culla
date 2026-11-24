@@ -1,6 +1,7 @@
 # cargo-deny: advisories, licences, bans, sources (ADR 0017).
 [graph]
 all-features = true
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
 
 [advisories]
 version = 2
@@ -28,9 +29,14 @@ wildcards = "deny"
 allow-wildcard-paths = true
 deny = [
   # The core and the adapters never depend on Tauri (ADR 0002). Only the app shell may.
-  { crate = "tauri", wrappers = ["culla-app"] },
+  # `culla-app` is the package name of src-tauri; Tauri plugins depend on tauri directly and are listed as they are added.
+  { crate = "tauri", wrappers = ["culla-app", "tauri-plugin-updater"] },
   # Never memory-map files (removable media, design/file-engine.md).
   { crate = "memmap2" },
+  # Crates that remove or move files on our behalf (design/file-engine.md §9.7).
+  { crate = "remove_dir_all" },
+  { crate = "fs_extra" },
+  { crate = "trash" },
 ]
 
 [sources]

@@ -649,7 +649,7 @@ Enforcement:
     { path = "windows_sys::Win32::Storage::FileSystem::SetFileInformationByHandle", reason = "winfs only" },
   ]
   ```
-- `#[allow(clippy::disallowed_methods)]` may appear only in `crates/adapters/src/winfs/`. A CI step greps the workspace and fails otherwise, because an `allow` is easy to add. Test code is not exempt.
+- `allow`/`expect` of `clippy::disallowed_methods` (or of the `clippy::style`/`clippy::all` groups that contain it) may appear only in `crates/adapters/src/winfs/`, in `crates/bench/` (ADR 0020) and in integration tests under `crates/*/tests/`, which work in temp dirs only. Inline `#[cfg(test)]` code under `src/` is not exempt. A CI step (`scripts/ci/check-lint-allows.sh`) greps the workspace, and checks that every member crate inherits the workspace lints, because an `allow` is easy to add.
 - `cargo-deny` bans crates that remove or move files on our behalf (`remove_dir_all`, `fs_extra`, `trash`) and `memmap2` in `culla-adapters`.
 - Changes under `winfs/` and `clippy.toml` need the author's review (CODEOWNERS, and the agent hook described in [practices.md](../research/practices.md)).
 - The core's fake `FileSystem` has no removal method except these two, and property tests assert that every removal happened with a valid proof.
