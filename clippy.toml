@@ -1,0 +1,10 @@
+# Removal and rename rules (SPEC §5.2, design/file-engine.md §9.7).
+# Enforced on culla-core, culla-adapters, culla-cli and src-tauri.
+# culla-bench and test code are outside the rule (ADR 0020) and only touch their own temp dirs.
+disallowed-methods = [
+  { path = "std::fs::remove_file", reason = "removal goes through culla-adapters::winfs::remove_verified only" },
+  { path = "std::fs::remove_dir", reason = "Culla never removes folders" },
+  { path = "std::fs::remove_dir_all", reason = "Culla never removes folders" },
+  { path = "std::fs::rename", reason = "overwrites on Windows; use the no-replace rename in culla-adapters::winfs" },
+  { path = "std::fs::copy", reason = "use the verified copy in culla-adapters::winfs" },
+]

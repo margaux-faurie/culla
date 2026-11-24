@@ -3,11 +3,16 @@
 Culla is a Windows desktop app (Tauri 2 + Rust + React/TS) that culls Nikon JPEG+NEF photos with a swipe UI, then applies keep/reject as safe, journaled file operations. Start at `docs/SPEC.md`: it records the author's decisions and maps each topic to its owning doc (PRD, nfr, architecture, ADRs, file-engine design, threat model, testing, roadmap). `docs/research/` is historical input: where it disagrees with the spec or an ADR, the spec and ADRs win.
 
 ## Status
-Pre-code: design docs drafted (24 Nov); open decisions in SPEC §10 and file-engine §13. Next is milestone M0. Commands below are the target; they work once milestone M0 (repo tooling: workspaces, CI, lints, hooks) lands. Update this file in the PR that makes them real.
+Pre-code: design docs drafted (24 Nov); open decisions in SPEC §10 and file-engine §13. Next is milestone M0. M0 is landing in slices; move a command from Target to Work now in the PR that makes it real.
 
-## Commands (target)
+## Commands
+Work now (M0, Rust side):
+- `cargo test --workspace` · `cargo test -p culla-core <name>` · `cargo test -p culla-adapters` (Windows-specific tests from M2)
+- `cargo clippy --workspace --all-targets -- -D warnings` · `cargo fmt --all` · `cargo deny check`
+- `scripts/ci/check-conflict-markers.sh` · `scripts/ci/check-lint-allows.sh`
+
+Target (rest of M0, JS and app side):
 - `pnpm install` · `pnpm check` (Biome + tsc) · `pnpm test` · `pnpm test <file>`
-- `cargo test -p culla-core` · `cargo test -p culla-core <name>` · `cargo test -p culla-adapters` (Windows) · `cargo clippy --all-targets -- -D warnings` · `cargo deny check`
 - `pnpm tauri dev` (desktop) · `pnpm dev:demo` (web demo) · `pnpm gen:bindings` (TS bindings from Rust)
 
 ## Layout

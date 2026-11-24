@@ -1,0 +1,18 @@
+[package]
+name = "culla-cli"
+description = "Headless Culla: scan, preview, plan, apply, resume (ADR 0020)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "culla"
+path = "src/main.rs"
+
+[dependencies]
+culla-adapters = { path = "../adapters" }
+
+[lints]
+workspace = true
