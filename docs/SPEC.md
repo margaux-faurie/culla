@@ -14,7 +14,7 @@ A Windows desktop app that culls a folder of Nikon photos (JPEG + NEF) one photo
 |---|---|
 | Platform | Windows 10/11 first (target machine: ROG Zephyrus G14 2024, 2880×1800 OLED) |
 | Choices | Binary: keep / reject |
-| Reject | Move to `<source>/_rejected/`, mirroring subfolders. The app never deletes a photo; the only removal is the source of a verified cross-volume move. |
+| Reject | Move to `<source>/_rejected/`, mirroring subfolders. The app never deletes a photo; the only removals are listed in §5.2 step 5. |
 | Keep | Move or copy, chosen per session; destination folder chosen per session (last one remembered); subfolder structure mirrored |
 | Apply | Queue → review screen → explicit confirm → apply |
 | RAW pairing | Per-session toggle "RAW follows JPEG". When off, the NEF is left untouched. |
@@ -43,8 +43,10 @@ Sidecar matching (case-insensitive, same folder):
 ### 3.2 Decisions and history
 - Group state: `undecided | kept | rejected`.
 - Every change is appended to an event log: `{seq, groupId, from, to, ts}`. The current state is derived from the log, which is what makes undo and resume work.
-- **Ctrl+Z** (global undo) reverts the last event and jumps back to that photo. **Ctrl+Shift+Z** redoes it.
-- **U** undoes the decision on the photo currently shown (it becomes undecided) and appends an event for that.
+- Event types: `Decided{groupId, verdict}`, `Cleared{groupId}` (from U), `Undo{targetSeq}`, `Redo{targetSeq}`. The log only grows; state is a fold over it.
+- **Ctrl+Z** appends `Undo` for the most recent decision event (`Decided` or `Cleared`) that is not already undone, restores that photo's previous state, and jumps to it. Repeated Ctrl+Z walks further back.
+- **Ctrl+Shift+Z** appends `Redo` for the most recently undone event. Any new `Decided` or `Cleared` empties the redo stack.
+- **U** appends `Cleared` for the photo shown (it becomes undecided). It is itself undoable with Ctrl+Z.
 - ←/→ on a photo that already has a decision do nothing. A short shake animation and a toast saying "Press U to undo" explain why. This is the author's choice: undo first, then re-decide.
 
 ### 3.3 Identity and resume
@@ -114,9 +116,9 @@ The items below describe behaviour; the pure parts live in `culla-core` and the 
    - no files are locked;
    - there are no symlinks or junctions (refuse to follow them).
 3. **Execute,** journalled with one row per file (`pending → copying → verified → done | failed`):
-   - Every rename uses `MoveFileExW` **without** `MOVEFILE_REPLACE_EXISTING`, so an existing target makes it fail atomically (no check-then-rename race). Copies open their target with `create_new`. "Target exists" is a hard error for that group.
+   - Every rename uses `MoveFileExW` with no flags except `MOVEFILE_WRITE_THROUGH`. Without `MOVEFILE_REPLACE_EXISTING`, an existing target makes it fail atomically (no check-then-rename race). Without `MOVEFILE_COPY_ALLOWED`, a rename across volumes fails with `ERROR_NOT_SAME_DEVICE` instead of silently copying and deleting. Copies open their target with `create_new`. "Target exists" is a hard error for that group.
    - Move on the same volume: a single such rename.
-   - Move across volumes: copy to `*.culla-partial` while hashing the source (xxh3/blake3), fsync, **read the destination back and compare its hash**, rename into place, then remove the source.
+   - Move across volumes: copy to `*.culla-partial` while hashing the source (xxh3/blake3), fsync, then verify: read the destination back with `FILE_FLAG_NO_BUFFERING` (so the OS cache can't answer for the disk) and **re-read the source for a second hash**; all three hashes must match (this catches a flaky card reader, which would corrupt the copy and the first hash alike). Then rename into place and remove the source.
    - Copy: same as across volumes, but the source is kept. The mtime is preserved.
    - Sharing violations (Explorer, Defender, Lightroom): retry with backoff, then mark the file failed and continue.
 4. **Resume:** if an apply is interrupted (crash, card pulled), it rolls forward from the journal the next time the app opens. There is no rollback in v1.

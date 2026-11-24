@@ -7,7 +7,7 @@ Pre-code: documentation phase. Commands below are the target; they work once mil
 
 ## Commands (target)
 - `pnpm install` · `pnpm check` (Biome + tsc) · `pnpm test` · `pnpm test <file>`
-- `cargo test -p culla-core` · `cargo test -p culla-core <name>` · `cargo clippy --all-targets -- -D warnings` · `cargo deny check`
+- `cargo test -p culla-core` · `cargo test -p culla-core <name>` · `cargo test -p culla-adapters` (Windows) · `cargo clippy --all-targets -- -D warnings` · `cargo deny check`
 - `pnpm tauri dev` (desktop) · `pnpm dev:demo` (web demo) · `pnpm gen:bindings` (TS bindings from Rust)
 
 ## Layout
@@ -19,8 +19,8 @@ Pre-code: documentation phase. Commands below are the target; they work once mil
 
 ## Invariants (never break; tests and lints will enforce them from M0)
 - Nothing touches the user's files before the user confirms Apply.
-- Never overwrite a file: renames use `MoveFileExW` without replace-existing, copies use `create_new`.
-- Never remove a file, except in the single audited removal function (SPEC §5.2), which removes only the source of a cross-volume move whose destination was read back and hash-verified, and Culla's own `*.culla-partial` files.
+- Never overwrite a file: renames use `MoveFileExW` with only `MOVEFILE_WRITE_THROUGH` (no replace, no copy-allowed), copies use `create_new`.
+- Never remove a file, except in the single audited removal function (SPEC §5.2), which removes only the source of a cross-volume move whose destination and source were re-read and hash-verified, and Culla's own `*.culla-partial` files.
 - Undecided photos are never touched.
 - The webview gets no filesystem permissions; it only knows opaque photo IDs.
 
