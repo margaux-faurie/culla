@@ -20,6 +20,8 @@ permissions: {}
 
 jobs:
   analysis:
+    # Scorecard publishing and SARIF upload need a public repo. Skipped while private (until v1).
+    if: ${{ !github.event.repository.private }}
     name: Scorecard analysis
     runs-on: ubuntu-latest
     # Scorecard only supports the default branch.

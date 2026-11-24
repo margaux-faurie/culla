@@ -4,7 +4,7 @@ Culla moves and renames your photo files, so security bugs can mean lost or dama
 
 ## Reporting a vulnerability
 
-Report vulnerabilities privately through GitHub Security Advisories: open the repository's Security tab and select "Report a vulnerability". Please do not open a public issue, pull request or discussion for a suspected vulnerability.
+Report vulnerabilities privately through GitHub Security Advisories: open the repository's Security tab and select "Report a vulnerability". The button appears once the repository is public and private vulnerability reporting is switched on; until then, open an issue that only asks for a private channel, with no details, and the maintainer will reply. Please do not open a public issue, pull request or discussion for a suspected vulnerability.
 
 A useful report says what you found, the Culla version or commit, your Windows version, and the steps or file needed to reproduce it. If a crafted photo file triggers the issue, attach it to the advisory, not to a public issue.
 
@@ -20,7 +20,7 @@ In scope:
 
 - File operations: anything that could make Culla overwrite, remove, move or rename a file it should not, touch undecided photos, write outside the chosen folders, or follow a symlink or junction it should skip.
 - Parsers and decoding: crashes, hangs, excessive memory use or memory-safety issues caused by a crafted JPEG, NEF, EXIF or sidecar file.
-- Updater: anything that could make Culla install an update that was not signed with the project's updater key.
+- Updater (once it ships): anything that could make Culla install an update that was not signed with the project's updater key.
 - IPC between the user interface and the Rust backend: a way for the webview to reach files, paths or commands it should not.
 
 Out of scope:

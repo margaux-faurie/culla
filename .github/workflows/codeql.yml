@@ -18,6 +18,9 @@ concurrency:
 
 jobs:
   analyze:
+    # Code scanning needs a public repo (or GitHub Advanced Security). The repo is private
+    # until v1, so the job is skipped there; it starts running when the repo goes public.
+    if: ${{ !github.event.repository.private }}
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     permissions:

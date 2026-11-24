@@ -24,5 +24,9 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
+          # Uses GITHUB_TOKEN for now. Events from that token trigger no workflows, so CI does not
+          # run on the release PR and the release tag won't start the build. Before the first
+          # release (M6), pass a GitHub App or fine-grained PAT token here from a secret
+          # (Margaux's call), or re-run CI on the release PR by hand.
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
