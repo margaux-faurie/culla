@@ -353,7 +353,7 @@ Each event is one `INSERT` in its own transaction. The TS reducer and the Rust `
 ### 5.4 Locked and applied groups
 
 - **Locked:** the group has an operation in an open plan (`confirmed`, `applying`, `paused`, `interrupted`).
-- **Applied:** some operation of the group, in any plan, ever reached `committed` (read from the journal). Before `committed` no user file has moved or been copied into place; only Culla's partials existed, and they are removed on failure (§9.4).
+- **Applied:** some operation of the group, in any plan, ever reached `committed` (read from the journal). Before `committed`, the only moved files (a `rename` in `renaming`) are resolved by recovery while the plan is open, and no file has been copied into place; a `renaming` op that ends `failed (conflict)` after a torn rename is reported as a torn volume, not offered for retry; only Culla's partials existed, and they are removed on failure (§9.4).
 
 A locked or applied group's decision cannot change: `Decided`, `Cleared`, `Undo` and `Redo` that touch it are refused. If the top of `done` targets such a group, Ctrl+Z does nothing and the UI says "Already applied". Undoing an apply is a v2 candidate, and a decision that no longer matches the disk would make the next plan wrong. To confirm with the author: this also blocks Ctrl+Z on older, unapplied decisions behind it (U still works on them). When a plan closes, its untouched groups unlock.
 
@@ -531,7 +531,7 @@ Adapter primitives (`culla-adapters::winfs`). All paths start with the run's `\\
 |---|---|
 | `open_target_dir(root, rel)` | After `make_dirs`, opens the target folder with `FILE_FLAG_BACKUP_SEMANTICS \| FILE_FLAG_OPEN_REPARSE_POINT`, sharing read and write but not delete, and checks through the handle that it is a real directory (not a reparse point, not a placeholder). Returns `hD`, held until the rename has returned, so the folder cannot be renamed, removed or swapped for a junction meanwhile. |
 | `rename_noreplace(h, hD, name)` | `SetFileInformationByHandle(h, FileRenameInfoEx)` with `RootDirectory = hD` and `FileName` = the target's leaf name (relative), with flags 0, so without `FILE_RENAME_FLAG_REPLACE_IF_EXISTS`: an existing target fails atomically (`ERROR_ALREADY_EXISTS`), and a cross-volume target fails with `ERROR_NOT_SAME_DEVICE`. Where `FileRenameInfoEx` is not supported (to check on FAT32 and exFAT in adapter tests), `FileRenameInfo` with `ReplaceIfExists = FALSE`, which has the same semantics. `h` needs `DELETE` access. No check-then-rename. Same semantics as `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` or `MOVEFILE_COPY_ALLOWED`, but bound to the checked file handle and the checked folder handle; only the leaf name is resolved at rename time, and the OS refuses it if taken. Relative names with `RootDirectory` on FAT32 and exFAT are to check in adapter tests ([ADR 0022](../adr/0022-rename-through-the-checked-handle.md), proposed). |
-| `create_partial(p)` | `create_new` with `GENERIC_READ \| GENERIC_WRITE \| DELETE`, sharing read only. Returns `hP`, kept for the whole attempt. Never opens an existing file for writing. |
+| `create_partial(hD, name)` | `NtCreateFile` with `FILE_CREATE`, `RootDirectory = hD` and a relative name (std cannot open relative to a directory handle), `GENERIC_READ \| GENERIC_WRITE \| DELETE`, sharing read only; inside `winfs` only, covered by adapter tests on NTFS, FAT32 and exFAT. Returns `hP`, kept for the whole attempt. Never opens an existing file for writing. |
 | `copy_hashing(s, hP)` | Buffered sequential read of `s` through its own read-only handle (sharing read), in 1 MiB chunks, written to `hP`; BLAKE3 of the bytes read → H1. |
 | `set_times(hP, s)` | Modified, accessed and created times of `s` set on `hP` (`File::set_times`, `FileTimesExt::set_created`). |
 | `flush(hP)` | `FlushFileBuffers` on `hP`. It needs `GENERIC_WRITE`, which only Culla's own partial handle has; Culla never opens a user's file with write access. |
@@ -545,14 +545,14 @@ Adapter primitives (`culla-adapters::winfs`). All paths start with the run's `\\
 1. Re-check P9 and P10. Journal `pending → renaming`.
 2. `make_dirs` for the target folder; `hD = open_target_dir`.
 3. Open `hS` with `DELETE | GENERIC_READ`, sharing read only; check size and mtime through it. `rename_noreplace(hS, hD, name)`. Close `hS` and `hD`. Journal `renaming → committed` only after the call has returned.
-4. Journal `committed → done`.
+4. Journal `committed → done`. Provisional: this is option (c) of the §13 decision on unflushed user-file renames; it changes if the author picks (a) or (b).
 
 The rename cannot be flushed: flushing needs write access to the user's file, which Culla never takes. On NTFS the rename is in the file system log; on FAT and exFAT it is a directory update that Windows writes back within seconds on removable media. A crash before that write-back can revert the rename (the file is back at S) or, on FAT, tear it. A reverted rename loses nothing; recovery (§10.2) redoes it if the journal is not yet `done`, and reconciliation reports it as `reverted_move` if it is (§6.2). A torn rename is reported and never acted on.
 
 `copy` and `xmove`:
 
 1. Re-check P9 and P10. Remove stale partials of earlier attempts (§9.7). Journal `pending → copying` with the new attempt number and partial path.
-2. `make_dirs`; `hD = open_target_dir`; `hP = create_partial(partial)` (created relative to `hD`); `copy_hashing(src, hP)`; `set_times`; `flush(hP)` (**flush 1**). Journal `copying → verifying` with H1 and the size written. Size ≠ `expected_size` → `failed (short_copy)`.
+2. `make_dirs`; `hD = open_target_dir`; `hP = create_partial(hD, partial name)`; `copy_hashing(src, hP)`; `set_times`; `flush(hP)` (**flush 1**). Journal `copying → verifying` with H1 and the size written. Size ≠ `expected_size` → `failed (short_copy)`.
 3. `hS = open_source_verify(src)`; H3 = `hash_unbuffered(hS)` (ADR 0021, proposed). Open the partial a second time, read-only with `FILE_FLAG_NO_BUFFERING` (sharing read, write and delete, so it can coexist with `hP`); H2 = `hash_unbuffered`; close that handle. Require H1 = H2 = H3. On mismatch: `remove_own_partial` through `hP`, close `hS`, journal `verifying → failed (verify_mismatch)`. No automatic retry; the user can retry from the report.
 4. `rename_noreplace(hP, hD, name)`; `flush(hP)` (**flush 2**: the renamed file's metadata, through the same handle); close `hP` and `hD`. Journal `verifying → committed`.
 5. `copy`: close `hS`. Journal `committed → done`.
