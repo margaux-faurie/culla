@@ -1,0 +1,40 @@
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: build(deps)
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: ci(deps)
+
+  # Becomes active once package.json and pnpm-lock.yaml land at the repo root.
+  # Until then Dependabot reports that no manifest was found; that is expected.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: build(deps)
