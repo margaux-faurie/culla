@@ -114,7 +114,7 @@ CREATE TABLE photo_group (
   stem            TEXT NOT NULL,
   stem_key        TEXT NOT NULL,
   status          TEXT NOT NULL CHECK (status IN ('ok','ambiguous')),
-  capture_time    INTEGER,                  -- DateTimeOriginal, camera-local, ms
+  capture_time    INTEGER,                  -- ms; capture time per ADR 0028: camera-local for EXIF sources and for the file time (PC time zone; UTC until the time-zone lookup lands)
   display_ord     INTEGER,
   first_seen_scan INTEGER NOT NULL REFERENCES scan(id),
   UNIQUE (session_id, folder_key, stem_key)

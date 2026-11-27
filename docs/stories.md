@@ -51,7 +51,7 @@ Links: INV (path containment). Test: core unit, Windows integration.
 As a photographer, I want photos ordered by capture time, so that bursts stay together, without the list changing under me once I start.
 - Given a scan in filename order, when the EXIF pass finishes before the first decision, then the list is sorted by DateTimeOriginal.
 - Given at least one decision has been made, when the EXIF pass finishes, then the order of the list does not change.
-- Given a file without DateTimeOriginal, when sorting, then it keeps its filename position relative to its neighbours (rule to confirm in [design/file-engine.md](design/file-engine.md) or [architecture.md](architecture.md)).
+- Given a file without DateTimeOriginal, when sorting, then it falls back to `CreateDate`, then to the file time; a photo with no time at all keeps its filename position relative to its neighbours (rules in [ADR 0028](adr/0028-capture-time-sources-and-order.md)).
 
 Links: NFR-PERF. Test: core unit, B-03.
 

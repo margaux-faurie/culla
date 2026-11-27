@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 culla-core = { path = "../core" }
+# EXIF for JPEG and NEF (ADR 0011). BSD-2-Clause. Pure Rust, reads from a buffer, no mmap.
+kamadak-exif = "0.6.1"
 
 [features]
 # Windows integration tests (docs/testing.md §5), run on windows-latest with the VHDX volumes.

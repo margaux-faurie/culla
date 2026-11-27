@@ -132,26 +132,31 @@ fn synthetic_tree_groups_pairs_and_lone_nefs() {
         [
             "broken|ifd-loop",
             "broken|truncated",
+            "exif|DSC_0101",
+            "exif|DSC_0102",
+            "exif|DSC_0103",
+            "exif|DSC_0104",
+            "exif|DSC_0105",
             "lone|DSC_0002",
             "pair|DSC_0001"
         ]
     );
     assert!(g.unknown.is_empty(), "{:?}", g.unknown);
     assert!(g.excluded.is_empty(), "{:?}", g.excluded);
-    let pair = &g.groups[3];
+    let pair = &g.groups[8];
     assert_eq!(pair.primary.kind, PhotoKind::Jpeg);
     assert_eq!(pair.raw.as_ref().unwrap().entry.name, "DSC_0001.NEF");
     assert!(pair.primary.entry.size > 0 && pair.primary.entry.mtime_ns.is_some());
-    let lone = &g.groups[2];
+    let lone = &g.groups[7];
     assert!(lone.is_lone_nef() && lone.raw.is_none());
     assert!(g.groups.iter().all(|g| g.status == GroupStatus::Ok));
-    assert_eq!(summary.folders, 4);
+    assert_eq!(summary.folders, 5);
     assert!(!summary.stopped);
 
     // Subfolders off: the root has no files, its subfolders are counted only.
     let (g, _) = scan_and_group(&synthetic(), &ScanPolicy::default()).unwrap();
     assert!(g.groups.is_empty());
-    assert_eq!(g.excluded.len(), 3);
+    assert_eq!(g.excluded.len(), 4);
     assert!(
         g.excluded
             .iter()

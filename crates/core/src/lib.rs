@@ -3,6 +3,7 @@
 //! No I/O and no Tauri. See `docs/architecture.md` and `docs/design/file-engine.md`.
 #![forbid(unsafe_code)]
 
+pub mod exif;
 pub mod grouping;
 pub mod ifd;
 pub mod names;
