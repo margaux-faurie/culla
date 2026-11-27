@@ -522,7 +522,7 @@ To decide (ADR candidate): Tauri isolation pattern. Culla loads no remote conten
 - Inside the core, files are identified by (volume serial, relative path). Absolute paths are rebuilt from the current mount at use time.
 - Long paths: Rust std adds `\\?\` internally, but that does not cover raw Win32 calls. The adapters add the `\\?\` prefix themselves for `CreateFileW` and the rename calls. Deep mirrored destinations are covered by tests.
 - Files on removable media are read into buffers, never memory-mapped, and handles are released before any move.
-- The data root (`%LOCALAPPDATA%\Culla`, holding `sessions`, `cache` and `logs`) is not looked up inside the adapters. The composition root resolves it once (`SHGetKnownFolderPath(FOLDERID_LocalAppData)`) and injects it through config; `culla-cli`, `culla-bench` and tests pass their own root. This keeps every write location testable.
+- The data root (`%LOCALAPPDATA%\Culla`, holding the per-source session databases in `sessions`, `cache`, `logs`, and a small app-level settings store beside them with the last destination used anywhere, which a new source folder proposes as "same as last time") is not looked up inside the adapters. The composition root resolves it once (`SHGetKnownFolderPath(FOLDERID_LocalAppData)`) and injects it through config; `culla-cli`, `culla-bench` and tests pass their own root. This keeps every write location testable.
 
 ## 9. Architecture decisions
 

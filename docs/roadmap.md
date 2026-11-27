@@ -22,7 +22,7 @@ flowchart LR
   A2(["Author: G14 benchmark<br/>and test runs"]) -.-> M1
   A2 -.-> M2
   A2 -.-> M4
-  A3(["Author: demo photos,<br/>subdomain"]) -.-> M5
+  A3(["Author: demo photos,<br/>Access service token"]) -.-> M5
   A4(["Author: release approval,<br/>updater key, SignPath"]) -.-> M6
 ```
 
@@ -132,17 +132,18 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
 
 ### M5 — Web demo and design system polish
 
-- **Goal:** a public demo that shows the same UI, and an app that matches the Portfolio Design System.
+- **Goal:** a web demo at `culla.margauxfaurie.com` that shows the same UI (behind the site's Cloudflare Access policy until the portfolio opens, public after), and an app that matches the Portfolio Design System.
 - **Scope:**
   - Demo build with about 25 author photos (1600 px, AVIF/WebP, EXIF in JSON), simulated apply; optional read-only "your folder" mode (`webkitdirectory`).
-  - Hosting on Cloudflare Workers static assets.
+  - Hosting on Cloudflare Workers static assets at `culla.margauxfaurie.com`, gated by the site's Cloudflare Access policy until the portfolio opens.
+  - While the demo is gated, Playwright against the deployed URL authenticates with a Cloudflare Access service token stored as a CI secret (added in M5, with a security review of that change).
   - Tokens copied into `src/styles/tokens.css` with the source version; `keep` colour contrast checked on Night and cream; additions (`keep`, Night for photo screens) proposed back to the design system.
   - Loading dots, copy pass in the system voice, motion review.
 - **Exit criteria:**
-  - Demo deployed; Playwright and axe green against the deployed build in Chromium, Firefox and WebKit.
+  - Demo deployed; Playwright and axe green against the deployed URL in Chromium, Firefox and WebKit, gated or public.
   - No network request from the demo other than its own assets (checked in Playwright).
   - Design review against the Portfolio Design System done.
-- **Author:** choose and provide the demo photos (GPS and serial stripped); confirm the subdomain ([SPEC.md](SPEC.md) section 10); approve the design system additions.
+- **Author:** choose and provide the demo photos (GPS and serial stripped); create the Cloudflare Access service token for CI and add it as a repository secret; approve the design system additions; open the demo to the public when the portfolio goes public.
 
 ### M6 — Release v1.0
 
@@ -174,6 +175,7 @@ After v1.0: winget manifest, then the v2 candidates in [SPEC.md](SPEC.md) sectio
 | Real apply and card-pull run on the G14 | M2 exit |
 | Cull a real card and sign off on the swipe feel | M3 exit |
 | Run the full manual checklist | M4 exit, M6 exit |
-| Choose demo photos, confirm the subdomain, approve design system additions | M5 |
+| Choose demo photos, create the Cloudflare Access service token and CI secret for `culla.margauxfaurie.com`, approve design system additions | M5 |
+| Remove the Access gate on the demo when the portfolio goes public | Portfolio launch |
 | Decide the WebView2 installer mode (bootstrapper download or embedded) ([SPEC.md](SPEC.md) section 10) | M6 start |
 | Updater key custody, release approval, SignPath application | M6 |
