@@ -188,13 +188,23 @@ pub struct Limits {
     pub max_bytes: u64,
     /// Largest declared pixel count (frame header). The largest Nikon Z bodies are ~46 MP.
     pub max_pixels: u64,
+    /// Largest declared pixel count for a progressive frame. libjpeg-turbo keeps a progressive
+    /// JPEG's whole coefficient buffer in memory (2 bytes per sample: about 3 bytes per pixel
+    /// at 4:2:0 and 6 at 4:4:4, whatever the DCT scale), so a progressive file costs far more
+    /// than a baseline one of the same size. Nikon bodies write baseline JPEGs.
+    pub max_progressive_pixels: u64,
 }
+
+/// [`Limits::max_progressive_pixels`] in the app: 25 MP, a provisional safe default (about
+/// 150 MB of coefficients at worst), open for Margaux in SPEC §10.
+pub const MAX_PROGRESSIVE_PIXELS: u64 = 25_000_000;
 
 impl Limits {
     /// The app's limits: the same caps as the NEF walker's ([`ifd::Limits::DEFAULT`]).
     pub const DEFAULT: Self = Self {
         max_bytes: ifd::Limits::DEFAULT.max_preview_bytes,
         max_pixels: ifd::Limits::DEFAULT.max_pixels,
+        max_progressive_pixels: MAX_PROGRESSIVE_PIXELS,
     };
 }
 
@@ -215,6 +225,8 @@ pub enum PlanError {
     ZeroSize,
     /// The declared size is over [`Limits::max_pixels`].
     TooManyPixels { pixels: u64, cap: u64 },
+    /// A progressive frame declares more than [`Limits::max_progressive_pixels`].
+    ProgressiveTooManyPixels { pixels: u64, cap: u64 },
 }
 
 impl fmt::Display for PlanError {
@@ -225,6 +237,10 @@ impl fmt::Display for PlanError {
             Self::TooManyPixels { pixels, cap } => {
                 write!(f, "the JPEG declares {pixels} pixels, over the {cap} cap")
             }
+            Self::ProgressiveTooManyPixels { pixels, cap } => write!(
+                f,
+                "the progressive JPEG declares {pixels} pixels, over the {cap} cap for progressive files"
+            ),
         }
     }
 }
@@ -342,11 +358,12 @@ pub fn plan(
 }
 
 /// Checks the JPEG bytes with Culla's own parser ([`ifd::check_jpeg`]): size cap, SOI, EOI,
-/// an 8-bit baseline, extended or progressive frame, and the pixel cap. Run before any decoder.
+/// an 8-bit baseline, extended or progressive frame, the pixel cap, and the lower cap for a
+/// progressive frame. Run before any decoder.
 ///
 /// # Errors
 ///
-/// [`PlanError::Rejected`], or as [`check_size`].
+/// [`PlanError::Rejected`], [`PlanError::ProgressiveTooManyPixels`], or as [`check_size`].
 pub fn check_frame(jpeg: &[u8], limits: &Limits) -> Result<JpegFrame, PlanError> {
     let walker_limits = ifd::Limits {
         max_preview_bytes: limits.max_bytes,
@@ -364,7 +381,14 @@ pub fn check_frame(jpeg: &[u8], limits: &Limits) -> Result<JpegFrame, PlanError>
         }
         Err(r) => return Err(PlanError::Rejected(r)),
     };
-    check_size(Size::new(frame.width, frame.height), limits)?;
+    let size = Size::new(frame.width, frame.height);
+    check_size(size, limits)?;
+    if frame.progressive && size.pixels() > limits.max_progressive_pixels {
+        return Err(PlanError::ProgressiveTooManyPixels {
+            pixels: size.pixels(),
+            cap: limits.max_progressive_pixels,
+        });
+    }
     Ok(frame)
 }
 
@@ -399,35 +423,65 @@ pub fn plan_for_jpeg(
     )
 }
 
+/// Why [`orient`] could not turn a buffer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OrientError {
+    /// The buffer length is not `width * height * channels`, or `channels` is 0.
+    WrongLength,
+    /// The output buffer could not be reserved.
+    OutOfMemory { bytes: usize },
+}
+
+impl fmt::Display for OrientError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::WrongLength => f.write_str("the pixel buffer has the wrong length"),
+            Self::OutOfMemory { bytes } => write!(f, "cannot reserve {bytes} bytes"),
+        }
+    }
+}
+
+impl std::error::Error for OrientError {}
+
 /// Turns `pixels` (rows of `size.width` pixels of `channels` bytes, stored orientation)
 /// upright for `orientation`, and returns them with their upright size. Orientation 1 returns
-/// the buffer unchanged; the others write one new buffer of the same length.
+/// the buffer unchanged; the others write one new buffer of the same length, reserved with
+/// `try_reserve_exact`.
 ///
-/// `None` when the buffer length is not `width * height * channels` or `channels` is 0.
-#[must_use]
+/// # Errors
+///
+/// [`OrientError::WrongLength`] when the buffer length is not `width * height * channels` or
+/// `channels` is 0; [`OrientError::OutOfMemory`] when the new buffer cannot be reserved.
 pub fn orient(
     pixels: Vec<u8>,
     size: Size,
     channels: usize,
     orientation: Orientation,
-) -> Option<(Vec<u8>, Size)> {
+) -> Result<(Vec<u8>, Size), OrientError> {
+    let wrong = |_| OrientError::WrongLength;
     let (w, h) = (
-        usize::try_from(size.width).ok()?,
-        usize::try_from(size.height).ok()?,
+        usize::try_from(size.width).map_err(wrong)?,
+        usize::try_from(size.height).map_err(wrong)?,
     );
-    let len = w.checked_mul(h)?.checked_mul(channels)?;
+    let len = w
+        .checked_mul(h)
+        .and_then(|n| n.checked_mul(channels))
+        .ok_or(OrientError::WrongLength)?;
     if channels == 0 || pixels.len() != len {
-        return None;
+        return Err(OrientError::WrongLength);
     }
     let out_size = size.oriented(orientation);
     if len == 0 {
-        return Some((pixels, out_size));
+        return Ok((pixels, out_size));
     }
     let row = w * channels;
     if orientation == Orientation::Normal {
-        return Some((pixels, out_size));
+        return Ok((pixels, out_size));
     }
-    let mut out = vec![0u8; len];
+    let mut out = Vec::new();
+    out.try_reserve_exact(len)
+        .map_err(|_| OrientError::OutOfMemory { bytes: len })?;
+    out.resize(len, 0);
     match orientation {
         Orientation::Normal => {}
         // Row moves only: mirror within rows, or reverse the row order.
@@ -471,7 +525,7 @@ pub fn orient(
             }
         }
     }
-    Some((out, out_size))
+    Ok((out, out_size))
 }
 
 /// Tile size for the transposing orientations: the strided side stays in cache.

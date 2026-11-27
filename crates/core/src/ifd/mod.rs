@@ -377,6 +377,10 @@ pub struct JpegFrame {
     /// Width and height from the frame header (SOFn).
     pub width: u32,
     pub height: u32,
+    /// The frame is progressive (SOF2). libjpeg-turbo then keeps the whole image's DCT
+    /// coefficients in memory while decoding, whatever the output scale, so the preview check
+    /// gives it a lower pixel cap (threat model T5).
+    pub progressive: bool,
 }
 
 /// Checks a whole JPEG in memory with the same rules as an embedded candidate: at most
@@ -396,6 +400,7 @@ pub fn check_jpeg(jpeg: &[u8], limits: &Limits) -> Result<JpegFrame, Reject> {
             length: f.length,
             width: f.width,
             height: f.height,
+            progressive: f.marker == 0xC2,
         }),
         Ok(Err(reject)) => Err(reject),
         Err(_) => Err(Reject::OutOfBounds),

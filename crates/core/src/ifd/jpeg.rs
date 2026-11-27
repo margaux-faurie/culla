@@ -12,6 +12,8 @@ pub(super) struct Frame {
     pub length: u64,
     pub width: u32,
     pub height: u32,
+    /// The SOFn marker: 0xC0 baseline, 0xC1 extended sequential, 0xC2 progressive.
+    pub marker: u8,
 }
 
 /// Bytes read from the end to find EOI behind zero padding (so up to ~500 bytes of padding).
@@ -103,6 +105,7 @@ pub(super) fn probe<R: ReadAt + ?Sized>(
                 length,
                 width,
                 height,
+                marker,
             }));
         }
         pos += 2 + seg;

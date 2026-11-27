@@ -207,6 +207,19 @@ fn caps_refuse_before_decoding() {
             cap: 100_000_000
         }))
     );
+    // The same JPEG marked progressive (SOF2) and claiming 45 MP: under the general cap but
+    // over the progressive one, so refused before turbojpeg holds any coefficients.
+    let mut prog = jpeg.clone();
+    prog[sof + 1] = 0xC2;
+    prog[sof + 5..sof + 7].copy_from_slice(&5504u16.to_be_bytes());
+    prog[sof + 7..sof + 9].copy_from_slice(&8256u16.to_be_bytes());
+    assert_eq!(
+        build_preview(&prog, Orientation::Normal, &PreviewOptions::default()),
+        Err(PreviewError::Plan(PlanError::ProgressiveTooManyPixels {
+            pixels: 8256 * 5504,
+            cap: 25_000_000
+        }))
+    );
 }
 
 #[test]

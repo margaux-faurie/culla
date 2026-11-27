@@ -237,6 +237,7 @@ fn plans_hold_their_invariants() {
     let limits = Limits {
         max_bytes: u64::MAX,
         max_pixels: u64::MAX,
+        max_progressive_pixels: u64::MAX,
     };
     let mut n = 0;
     for &w in &sides {
@@ -350,6 +351,7 @@ fn pixel_cap_is_checked_before_anything_else() {
     let tight = Limits {
         max_bytes: 1024,
         max_pixels: 64,
+        max_progressive_pixels: 64,
     };
     assert!(check_size(Size::new(8, 8), &tight).is_ok());
     assert!(check_size(Size::new(9, 8), &tight).is_err());
@@ -611,17 +613,98 @@ fn orient_inverses_round_trip() {
 
 #[test]
 fn orient_refuses_a_wrong_buffer() {
-    assert!(orient(vec![0; 5], Size::new(3, 2), 1, Orientation::Rotate90).is_none());
-    assert!(orient(vec![0; 6], Size::new(3, 2), 0, Orientation::Normal).is_none());
-    assert!(orient(vec![0; 18], Size::new(3, 2), 3, Orientation::Normal).is_some());
-    assert!(orient(vec![], Size::new(0, 2), 3, Orientation::Rotate90).is_some());
-    assert!(
+    assert_eq!(
+        orient(vec![0; 5], Size::new(3, 2), 1, Orientation::Rotate90),
+        Err(OrientError::WrongLength)
+    );
+    assert_eq!(
+        orient(vec![0; 6], Size::new(3, 2), 0, Orientation::Normal),
+        Err(OrientError::WrongLength)
+    );
+    assert!(orient(vec![0; 18], Size::new(3, 2), 3, Orientation::Normal).is_ok());
+    assert!(orient(vec![], Size::new(0, 2), 3, Orientation::Rotate90).is_ok());
+    assert_eq!(
         orient(
             vec![0; 6],
             Size::new(u32::MAX, u32::MAX),
             3,
             Orientation::Normal
-        )
-        .is_none()
+        ),
+        Err(OrientError::WrongLength)
     );
+    assert!(
+        OrientError::OutOfMemory { bytes: 9 }
+            .to_string()
+            .contains('9')
+    );
+}
+
+#[test]
+fn progressive_frames_have_a_lower_pixel_cap() {
+    let l = Limits::DEFAULT;
+    assert_eq!(l.max_progressive_pixels, 25_000_000);
+    assert_eq!(MAX_PROGRESSIVE_PIXELS, 25_000_000);
+    // The flag follows the marker.
+    assert!(
+        check_frame(&jpeg_with(0xC2, 8, 64, 48), &l)
+            .unwrap()
+            .progressive
+    );
+    assert!(
+        !check_frame(&jpeg_with(0xC0, 8, 64, 48), &l)
+            .unwrap()
+            .progressive
+    );
+    assert!(
+        !check_frame(&jpeg_with(0xC1, 8, 64, 48), &l)
+            .unwrap()
+            .progressive
+    );
+    // 6124 x 4082 = 24.998 MP progressive: accepted; 6125 x 4082 is just over.
+    assert!(check_frame(&jpeg_with(0xC2, 8, 6124, 4082), &l).is_ok());
+    assert_eq!(
+        check_frame(&jpeg_with(0xC2, 8, 6125, 4082), &l),
+        Err(PlanError::ProgressiveTooManyPixels {
+            pixels: 6125 * 4082,
+            cap: 25_000_000
+        })
+    );
+    // A 45 MP Z8 frame: fine as baseline or extended, refused as progressive.
+    for m in [0xC0, 0xC1] {
+        assert!(
+            plan_for_jpeg(
+                &jpeg_with(m, 8, 8256, 5504),
+                Orientation::Normal,
+                PreviewBox::G14,
+                &l
+            )
+            .is_ok()
+        );
+    }
+    let e = plan_for_jpeg(
+        &jpeg_with(0xC2, 8, 8256, 5504),
+        Orientation::Normal,
+        PreviewBox::G14,
+        &l,
+    )
+    .unwrap_err();
+    assert_eq!(
+        e,
+        PlanError::ProgressiveTooManyPixels {
+            pixels: 8256 * 5504,
+            cap: 25_000_000
+        }
+    );
+    assert!(e.to_string().contains("progressive"));
+    // Over the general cap, the general error wins.
+    assert!(matches!(
+        check_frame(&jpeg_with(0xC2, 8, 20_000, 20_000), &l),
+        Err(PlanError::TooManyPixels { .. })
+    ));
+    // The cap is a limit like the others: a caller may set it.
+    let open = Limits {
+        max_progressive_pixels: l.max_pixels,
+        ..l
+    };
+    assert!(check_frame(&jpeg_with(0xC2, 8, 8256, 5504), &open).is_ok());
 }

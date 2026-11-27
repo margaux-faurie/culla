@@ -9,7 +9,8 @@
 //! 2. turbojpeg reads the header again, which must declare the same size, then decodes with
 //!    DCT scaling (`set_scaling_factor`) into an RGB buffer reserved with `try_reserve_exact`.
 //! 3. `fast_image_resize` (Lanczos3) shrinks it to the planned size, if needed.
-//! 4. [`culla_core::preview::orient`] turns it upright for the EXIF orientation.
+//! 4. [`culla_core::preview::orient`] turns it upright for the EXIF orientation, into a buffer
+//!    it also reserves with `try_reserve_exact`.
 //! 5. turbojpeg encodes it at [`QUALITY`] (4:2:0).
 //!
 //! A panic anywhere in the pipeline fails that preview only ([`PreviewError::Panicked`]).
@@ -17,8 +18,11 @@
 //! Memory per call is bounded by the plan: at most the input, one decode buffer (about 6 MP
 //! for a 24 or 45 MP photo on the G14, 18 MB), one resized and one oriented buffer (5 MP each,
 //! 15 MB) and the encoded output (about 1 MB), plus libjpeg-turbo's working memory, which for a
-//! progressive JPEG holds the whole image's coefficients (up to ~2 bytes per pixel and channel
-//! at the pixel cap; Nikon cameras write baseline JPEGs).
+//! progressive JPEG holds the whole image's coefficients (2 bytes per sample, whatever the
+//! scale), so progressive frames get a lower pixel cap
+//! ([`Limits::max_progressive_pixels`], 25 MP; Nikon cameras write baseline JPEGs). The decode
+//! and resize buffers and the oriented one are reserved fallibly; the input, the encoded output
+//! and libjpeg-turbo's own memory are not.
 //!
 //! The reader threads, decode pool, prefetch, LRU and disk cache come in the next slice.
 
@@ -27,7 +31,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::time::{Duration, Instant};
 
 use culla_core::exif::Orientation;
-use culla_core::preview::{self, CHANNELS, Limits, Plan, PlanError, PreviewBox, Size};
+use culla_core::preview::{self, CHANNELS, Limits, OrientError, Plan, PlanError, PreviewBox, Size};
 
 use fast_image_resize as fir;
 
@@ -182,8 +186,13 @@ fn build(
     timings.resize = t.elapsed();
 
     let t = Instant::now();
-    let (upright, size) = preview::orient(resized, plan.resized, CHANNELS, orientation)
-        .ok_or_else(|| PreviewError::Resize("resized buffer has the wrong length".into()))?;
+    let (upright, size) =
+        preview::orient(resized, plan.resized, CHANNELS, orientation).map_err(|e| match e {
+            OrientError::OutOfMemory { bytes } => PreviewError::OutOfMemory { bytes },
+            OrientError::WrongLength => {
+                PreviewError::Resize("resized buffer has the wrong length".into())
+            }
+        })?;
     timings.orient = t.elapsed();
 
     let t = Instant::now();
