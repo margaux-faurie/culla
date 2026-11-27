@@ -1,0 +1,79 @@
+name: Refresh lockfiles
+
+# Manual tool for agents and Margaux: the development container can't reach crates.io or npm,
+# so after a PR adds or changes a dependency, run this workflow on that PR's branch. It
+# re-resolves Cargo.lock and pnpm-lock.yaml and pushes a commit to the branch. CI then runs on
+# the next push to the branch (events from GITHUB_TOKEN don't trigger workflows).
+# Added with Margaux's go-ahead (27 Nov 2026).
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to update (never main)"
+        required: true
+        type: string
+      cargo:
+        description: "Arguments for cargo update (empty = only add missing entries)"
+        required: false
+        default: ""
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: lockfile-refresh-${{ inputs.branch }}
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Refresh lockfiles on ${{ inputs.branch }}
+    if: inputs.branch != 'main' && inputs.branch != github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      BRANCH: ${{ inputs.branch }}
+      CARGO_ARGS: ${{ inputs.cargo }}
+      DEFAULT: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Check the branch name
+        run: |
+          lower=$(printf '%s' "$BRANCH" | tr '[:upper:]' '[:lower:]')
+          case "$lower" in
+            ""|main|refs/*|*..*|-*|*" "*) echo "Refusing branch '$BRANCH'"; exit 1 ;;
+          esac
+          [ "$lower" != "$(printf '%s' "$DEFAULT" | tr '[:upper:]' '[:lower:]')" ] || { echo "Refusing the default branch"; exit 1; }
+          echo "$BRANCH" | grep -Eq '^[A-Za-z0-9._/-]+$' || { echo "Refusing branch '$BRANCH'"; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.branch }}
+          # The write token is never stored in .git/config while branch code (.pnpmfile.cjs,
+          # .cargo/config.toml) can run; it is passed only to the final push.
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Cargo.lock
+        run: |
+          set -f
+          case " $CARGO_ARGS " in
+            *--config*|*--manifest-path*|*" -Z"*|*--lockfile-path*) echo "Refusing cargo arguments"; exit 1 ;;
+          esac
+          # shellcheck disable=SC2086
+          if [ -n "$CARGO_ARGS" ]; then cargo update $CARGO_ARGS; else cargo metadata --format-version 1 > /dev/null; fi
+      - name: pnpm-lock.yaml
+        run: pnpm install --lockfile-only --no-frozen-lockfile --ignore-pnpmfile
+      - name: Commit and push
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock pnpm-lock.yaml
+          if git diff --cached --quiet; then echo "Lockfiles unchanged."; exit 0; fi
+          git -c core.hooksPath=/dev/null commit --no-verify -m "build: refresh lockfiles (generated in CI)"
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c core.hooksPath=/dev/null -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push --no-verify origin "HEAD:refs/heads/$BRANCH"

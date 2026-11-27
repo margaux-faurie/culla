@@ -9,13 +9,13 @@ M0 (repo and tooling) is landing; the app is an empty shell. Design docs drafted
 Work now (M0):
 - `cargo test --workspace` · `cargo test -p culla-core <name>` · `cargo test -p culla-adapters [--features windows-it]` (Windows integration tests from M2)
 - `cargo clippy --workspace --all-targets -- -D warnings` · `cargo fmt --all` · `cargo deny check` (`culla-app` needs WebView2 on Windows or libwebkit2gtk-4.1-dev on Linux)
-- `scripts/ci/check-conflict-markers.sh` · `scripts/ci/check_lint_allows.py`
-- `pwsh scripts/ci/vhdx.ps1 -Action mount|attach|detach|readonly|unmount` (Windows, admin; see `scripts/ci/README.md`)
+- `scripts/ci/check-conflict-markers.sh` · `scripts/ci/check_lint_allows.py` · `pwsh scripts/ci/vhdx.ps1 -Action mount|attach|detach|readonly|unmount` (Windows, admin; see `scripts/ci/README.md`)
 - `pnpm install` · `pnpm check` (Biome + tsc) · `pnpm test` · `pnpm test <file>`
 - `pnpm dev:demo` · `pnpm build:demo` (web demo, `dist-demo/`) · `pnpm tauri dev` · `pnpm tauri build` (Windows, NSIS)
 - `pnpm build:demo && pnpm e2e` (Playwright + axe on `dist-demo/`; first time `pnpm exec playwright install chromium`)
 - `pnpm gen:bindings` (placeholder until the first tauri-specta command in M1)
 - `cargo xtask fixtures [--check]` · `cargo xtask golden --check` · `cargo xtask crash-loop --iterations N` (M2)
+- Dependencies changed: run the `Refresh lockfiles` workflow on the PR branch (`gh api -X POST repos/margaux-faurie/culla/actions/workflows/lockfile-refresh.yml/dispatches -f ref=main -f inputs[branch]=<branch>`), then push any commit to rerun CI
 - `cargo llvm-cov -p culla-core -p culla-adapters --html` · `cargo +nightly fuzz run tiff_ifd_walk -- -max_total_time=60` (setup: testing.md §7, §10)
 
 ## Layout
