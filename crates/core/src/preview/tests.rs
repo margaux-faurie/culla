@@ -237,7 +237,7 @@ fn plans_hold_their_invariants() {
     let limits = Limits {
         max_bytes: u64::MAX,
         max_pixels: u64::MAX,
-        max_progressive_pixels: u64::MAX,
+        max_multi_scan_pixels: u64::MAX,
     };
     let mut n = 0;
     for &w in &sides {
@@ -351,13 +351,14 @@ fn pixel_cap_is_checked_before_anything_else() {
     let tight = Limits {
         max_bytes: 1024,
         max_pixels: 64,
-        max_progressive_pixels: 64,
+        max_multi_scan_pixels: 64,
     };
     assert!(check_size(Size::new(8, 8), &tight).is_ok());
     assert!(check_size(Size::new(9, 8), &tight).is_err());
 }
 
-/// SOI, an APP1, a frame header, a stand-in scan and EOI (as in the IFD walker tests).
+/// SOI, an APP1, a one-component frame header, a stand-in scan and EOI (as in the IFD walker
+/// tests).
 fn jpeg_with(marker: u8, precision: u8, w: u16, h: u16) -> Vec<u8> {
     let mut j = vec![0xFF, 0xD8];
     j.extend_from_slice(&[0xFF, 0xE1, 0x00, 0x06, b'E', b'x', b'i', b'f']);
@@ -365,7 +366,9 @@ fn jpeg_with(marker: u8, precision: u8, w: u16, h: u16) -> Vec<u8> {
     j.extend_from_slice(&h.to_be_bytes());
     j.extend_from_slice(&w.to_be_bytes());
     j.extend_from_slice(&[0x01, 0x01, 0x11, 0x00]);
-    j.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x02, 0x12, 0x34, 0xFF, 0xD9]);
+    // SOS: one component, tables 0/0, spectral 0..63; then stand-in entropy data and EOI.
+    j.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00]);
+    j.extend_from_slice(&[0x12, 0x34, 0xFF, 0xD9]);
     j
 }
 
@@ -639,17 +642,84 @@ fn orient_refuses_a_wrong_buffer() {
     );
 }
 
+/// SOI, a frame header with `nf` components (`marker`, 8-bit, `w` x `h`), a first scan header
+/// with `ns` of them, stand-in entropy data and EOI.
+fn jpeg_scan(marker: u8, w: u16, h: u16, nf: u8, ns: u8) -> Vec<u8> {
+    let mut j = vec![0xFF, 0xD8];
+    let sof_len = 8 + 3 * u16::from(nf);
+    j.extend_from_slice(&[0xFF, marker]);
+    j.extend_from_slice(&sof_len.to_be_bytes());
+    j.push(8);
+    j.extend_from_slice(&h.to_be_bytes());
+    j.extend_from_slice(&w.to_be_bytes());
+    j.push(nf);
+    for c in 1..=nf {
+        j.extend_from_slice(&[c, 0x11, 0x00]);
+    }
+    let sos_len = 6 + 2 * u16::from(ns);
+    j.extend_from_slice(&[0xFF, 0xDA]);
+    j.extend_from_slice(&sos_len.to_be_bytes());
+    j.push(ns);
+    for c in 1..=ns {
+        j.extend_from_slice(&[c, 0x00]);
+    }
+    j.extend_from_slice(&[0x00, 0x3F, 0x00, 0x12, 0x34, 0xFF, 0xD9]);
+    j
+}
+
 #[test]
-fn progressive_frames_have_a_lower_pixel_cap() {
+fn non_interleaved_frames_have_the_multi_scan_cap() {
     let l = Limits::DEFAULT;
-    assert_eq!(l.max_progressive_pixels, 25_000_000);
-    assert_eq!(MAX_PROGRESSIVE_PIXELS, 25_000_000);
-    // The flag follows the marker.
+    // Interleaved: all three components in the first scan, one scan in all.
+    let f = check_frame(&jpeg_scan(0xC0, 64, 48, 3, 3), &l).unwrap();
+    assert!(!f.progressive && !f.multi_scan);
+    // Non-interleaved: one component per scan, so libjpeg-turbo buffers the whole image.
+    for m in [0xC0, 0xC1] {
+        let f = check_frame(&jpeg_scan(m, 64, 48, 3, 1), &l).unwrap();
+        assert!(!f.progressive && f.multi_scan);
+    }
+    // Two of three components in the first scan is still more than one scan.
     assert!(
-        check_frame(&jpeg_with(0xC2, 8, 64, 48), &l)
+        check_frame(&jpeg_scan(0xC0, 64, 48, 3, 2), &l)
             .unwrap()
-            .progressive
+            .multi_scan
     );
+    // A greyscale frame has one component and one scan.
+    assert!(
+        !check_frame(&jpeg_scan(0xC0, 64, 48, 1, 1), &l)
+            .unwrap()
+            .multi_scan
+    );
+    // A 45 MP Z8-sized frame: accepted interleaved, refused non-interleaved.
+    let o = Orientation::Normal;
+    assert!(plan_for_jpeg(&jpeg_scan(0xC0, 8256, 5504, 3, 3), o, PreviewBox::G14, &l).is_ok());
+    for m in [0xC0, 0xC1] {
+        assert_eq!(
+            plan_for_jpeg(&jpeg_scan(m, 8256, 5504, 3, 1), o, PreviewBox::G14, &l),
+            Err(PlanError::MultiScanTooManyPixels {
+                pixels: 8256 * 5504,
+                cap: 25_000_000
+            })
+        );
+    }
+    // A frame with no scan header before EOI is refused.
+    let mut no_sos = jpeg_scan(0xC0, 64, 48, 3, 3);
+    let sos = no_sos.windows(2).position(|w| w == [0xFF, 0xDA]).unwrap();
+    no_sos.drain(sos..no_sos.len() - 2);
+    assert_eq!(
+        check_frame(&no_sos, &l),
+        Err(PlanError::Rejected(Reject::NoScan))
+    );
+}
+
+#[test]
+fn progressive_frames_have_the_multi_scan_cap() {
+    let l = Limits::DEFAULT;
+    assert_eq!(l.max_multi_scan_pixels, 25_000_000);
+    assert_eq!(MAX_MULTI_SCAN_PIXELS, 25_000_000);
+    // The flags follow the marker: progressive is always multi-scan.
+    let f = check_frame(&jpeg_with(0xC2, 8, 64, 48), &l).unwrap();
+    assert!(f.progressive && f.multi_scan);
     assert!(
         !check_frame(&jpeg_with(0xC0, 8, 64, 48), &l)
             .unwrap()
@@ -664,7 +734,7 @@ fn progressive_frames_have_a_lower_pixel_cap() {
     assert!(check_frame(&jpeg_with(0xC2, 8, 6124, 4082), &l).is_ok());
     assert_eq!(
         check_frame(&jpeg_with(0xC2, 8, 6125, 4082), &l),
-        Err(PlanError::ProgressiveTooManyPixels {
+        Err(PlanError::MultiScanTooManyPixels {
             pixels: 6125 * 4082,
             cap: 25_000_000
         })
@@ -690,12 +760,12 @@ fn progressive_frames_have_a_lower_pixel_cap() {
     .unwrap_err();
     assert_eq!(
         e,
-        PlanError::ProgressiveTooManyPixels {
+        PlanError::MultiScanTooManyPixels {
             pixels: 8256 * 5504,
             cap: 25_000_000
         }
     );
-    assert!(e.to_string().contains("progressive"));
+    assert!(e.to_string().contains("multi-scan"));
     // Over the general cap, the general error wins.
     assert!(matches!(
         check_frame(&jpeg_with(0xC2, 8, 20_000, 20_000), &l),
@@ -703,7 +773,7 @@ fn progressive_frames_have_a_lower_pixel_cap() {
     ));
     // The cap is a limit like the others: a caller may set it.
     let open = Limits {
-        max_progressive_pixels: l.max_pixels,
+        max_multi_scan_pixels: l.max_pixels,
         ..l
     };
     assert!(check_frame(&jpeg_with(0xC2, 8, 8256, 5504), &open).is_ok());

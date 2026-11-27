@@ -188,23 +188,24 @@ pub struct Limits {
     pub max_bytes: u64,
     /// Largest declared pixel count (frame header). The largest Nikon Z bodies are ~46 MP.
     pub max_pixels: u64,
-    /// Largest declared pixel count for a progressive frame. libjpeg-turbo keeps a progressive
-    /// JPEG's whole coefficient buffer in memory (2 bytes per sample: about 3 bytes per pixel
-    /// at 4:2:0 and 6 at 4:4:4, whatever the DCT scale), so a progressive file costs far more
-    /// than a baseline one of the same size. Nikon bodies write baseline JPEGs.
-    pub max_progressive_pixels: u64,
+    /// Largest declared pixel count for a multi-scan frame ([`JpegFrame::multi_scan`]:
+    /// progressive, or non-interleaved). libjpeg-turbo keeps such a JPEG's whole coefficient
+    /// buffer in memory (2 bytes per sample: about 3 bytes per pixel at 4:2:0 and 6 at 4:4:4,
+    /// whatever the DCT scale), so a multi-scan file costs far more than a single-scan one of
+    /// the same size. Nikon bodies write interleaved baseline JPEGs.
+    pub max_multi_scan_pixels: u64,
 }
 
-/// [`Limits::max_progressive_pixels`] in the app: 25 MP, a provisional safe default (about
+/// [`Limits::max_multi_scan_pixels`] in the app: 25 MP, a provisional safe default (about
 /// 150 MB of coefficients at worst), open for Margaux in SPEC §10.
-pub const MAX_PROGRESSIVE_PIXELS: u64 = 25_000_000;
+pub const MAX_MULTI_SCAN_PIXELS: u64 = 25_000_000;
 
 impl Limits {
     /// The app's limits: the same caps as the NEF walker's ([`ifd::Limits::DEFAULT`]).
     pub const DEFAULT: Self = Self {
         max_bytes: ifd::Limits::DEFAULT.max_preview_bytes,
         max_pixels: ifd::Limits::DEFAULT.max_pixels,
-        max_progressive_pixels: MAX_PROGRESSIVE_PIXELS,
+        max_multi_scan_pixels: MAX_MULTI_SCAN_PIXELS,
     };
 }
 
@@ -225,8 +226,9 @@ pub enum PlanError {
     ZeroSize,
     /// The declared size is over [`Limits::max_pixels`].
     TooManyPixels { pixels: u64, cap: u64 },
-    /// A progressive frame declares more than [`Limits::max_progressive_pixels`].
-    ProgressiveTooManyPixels { pixels: u64, cap: u64 },
+    /// A multi-scan frame (progressive or non-interleaved) declares more than
+    /// [`Limits::max_multi_scan_pixels`].
+    MultiScanTooManyPixels { pixels: u64, cap: u64 },
 }
 
 impl fmt::Display for PlanError {
@@ -237,9 +239,9 @@ impl fmt::Display for PlanError {
             Self::TooManyPixels { pixels, cap } => {
                 write!(f, "the JPEG declares {pixels} pixels, over the {cap} cap")
             }
-            Self::ProgressiveTooManyPixels { pixels, cap } => write!(
+            Self::MultiScanTooManyPixels { pixels, cap } => write!(
                 f,
-                "the progressive JPEG declares {pixels} pixels, over the {cap} cap for progressive files"
+                "the multi-scan (progressive or non-interleaved) JPEG declares {pixels} pixels, over the {cap} cap for multi-scan files"
             ),
         }
     }
@@ -358,12 +360,12 @@ pub fn plan(
 }
 
 /// Checks the JPEG bytes with Culla's own parser ([`ifd::check_jpeg`]): size cap, SOI, EOI,
-/// an 8-bit baseline, extended or progressive frame, the pixel cap, and the lower cap for a
-/// progressive frame. Run before any decoder.
+/// an 8-bit baseline, extended or progressive frame, a scan header, the pixel cap, and the
+/// lower cap for a multi-scan frame. Run before any decoder.
 ///
 /// # Errors
 ///
-/// [`PlanError::Rejected`], [`PlanError::ProgressiveTooManyPixels`], or as [`check_size`].
+/// [`PlanError::Rejected`], [`PlanError::MultiScanTooManyPixels`], or as [`check_size`].
 pub fn check_frame(jpeg: &[u8], limits: &Limits) -> Result<JpegFrame, PlanError> {
     let walker_limits = ifd::Limits {
         max_preview_bytes: limits.max_bytes,
@@ -383,10 +385,10 @@ pub fn check_frame(jpeg: &[u8], limits: &Limits) -> Result<JpegFrame, PlanError>
     };
     let size = Size::new(frame.width, frame.height);
     check_size(size, limits)?;
-    if frame.progressive && size.pixels() > limits.max_progressive_pixels {
-        return Err(PlanError::ProgressiveTooManyPixels {
+    if frame.multi_scan && size.pixels() > limits.max_multi_scan_pixels {
+        return Err(PlanError::MultiScanTooManyPixels {
             pixels: size.pixels(),
-            cap: limits.max_progressive_pixels,
+            cap: limits.max_multi_scan_pixels,
         });
     }
     Ok(frame)

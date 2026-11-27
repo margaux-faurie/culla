@@ -2,7 +2,7 @@
 //!
 //! Runs Culla's frame check and preview plan on arbitrary bytes, in every orientation. Pass
 //! bar: no panic, no timeout; an accepted JPEG declares at most the pixel cap (the lower cap
-//! for a progressive frame), fits the box and is never decoded larger than it is. Pure core
+//! for a multi-scan frame: progressive or non-interleaved), fits the box and is never decoded larger than it is. Pure core
 //! code: turbojpeg itself is not run here. Seed corpus: `testdata/synthetic/` (the JPEGs).
 #![no_main]
 
@@ -19,10 +19,12 @@ fuzz_target!(|data: &[u8]| {
             return;
         };
         assert!(plan.source.pixels() <= limits.max_pixels);
-        // A progressive frame (all its coefficients held in memory) is under the lower cap.
+        // A multi-scan frame (all its coefficients held in memory) is under the lower cap,
+        // and a progressive one is always multi-scan.
         let frame = preview::check_frame(data, &limits).expect("planned, so checked");
-        if frame.progressive {
-            assert!(plan.source.pixels() <= limits.max_progressive_pixels);
+        assert!(!frame.progressive || frame.multi_scan);
+        if frame.multi_scan {
+            assert!(plan.source.pixels() <= limits.max_multi_scan_pixels);
         }
         assert!(plan.source.pixels() > 0);
         assert!(plan.output.long_edge() <= target.long_edge());

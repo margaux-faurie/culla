@@ -18,9 +18,10 @@
 //! Memory per call is bounded by the plan: at most the input, one decode buffer (about 6 MP
 //! for a 24 or 45 MP photo on the G14, 18 MB), one resized and one oriented buffer (5 MP each,
 //! 15 MB) and the encoded output (about 1 MB), plus libjpeg-turbo's working memory, which for a
-//! progressive JPEG holds the whole image's coefficients (2 bytes per sample, whatever the
-//! scale), so progressive frames get a lower pixel cap
-//! ([`Limits::max_progressive_pixels`], 25 MP; Nikon cameras write baseline JPEGs). The decode
+//! multi-scan JPEG (progressive, or non-interleaved: first scan with fewer components than the
+//! frame) holds the whole image's coefficients (2 bytes per sample, whatever the scale), so
+//! multi-scan frames get a lower pixel cap ([`Limits::max_multi_scan_pixels`], 25 MP; Nikon
+//! cameras write interleaved baseline JPEGs). The decode
 //! and resize buffers and the oriented one are reserved fallibly; the input, the encoded output
 //! and libjpeg-turbo's own memory are not.
 //!
@@ -319,7 +320,9 @@ mod tests {
         let mut j = vec![0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x0B, 8];
         j.extend_from_slice(&20_000u16.to_be_bytes());
         j.extend_from_slice(&20_000u16.to_be_bytes());
-        j.extend_from_slice(&[1, 1, 0x11, 0, 0xFF, 0xDA, 0, 2, 0xFF, 0xD9]);
+        j.extend_from_slice(&[
+            1, 1, 0x11, 0, 0xFF, 0xDA, 0, 8, 1, 1, 0, 0, 0x3F, 0, 0xFF, 0xD9,
+        ]);
         let e = build_preview(&j, Orientation::Normal, &PreviewOptions::default()).unwrap_err();
         assert_eq!(
             e,

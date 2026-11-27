@@ -25,8 +25,9 @@
 //! Every embedded JPEG candidate: `JPEGInterchangeFormat`/`Length` (0x0201/0x0202) in any image
 //! IFD, and single-strip `StripOffsets`/`StripByteCounts` (0x0111/0x0117) in an IFD whose
 //! Compression is 6 or 7. Each candidate is checked: in bounds, under the size cap, SOI at the
-//! start, EOI at the end (trailing zero padding is trimmed), and a baseline, extended or
-//! progressive 8-bit frame header, whose size becomes the candidate's width and height.
+//! start, EOI at the end (trailing zero padding is trimmed), a baseline, extended or
+//! progressive 8-bit frame header, whose size becomes the candidate's width and height, and a
+//! scan header after it.
 //! [`Walk::best`] picks the valid candidate with the most pixels, then the most bytes.
 //!
 //! # Hostile input (threat model T5)
@@ -180,8 +181,12 @@ pub enum Reject {
     NoSoi,
     /// No EOI (FF D9) at the end, ignoring trailing zero padding.
     NoEoi,
-    /// No frame header before the scan, a bad marker, or more segments than allowed.
+    /// No frame header before the scan, a bad marker, a bad frame header length, or more
+    /// segments than allowed.
     NoFrame,
+    /// A frame header but no valid scan header (SOS) after it: EOI first, a bad marker or
+    /// scan header, or more segments than allowed.
+    NoScan,
     /// A frame type or precision a JPEG decoder for previews does not take (lossless,
     /// hierarchical, arithmetic or 12-bit JPEG, as in raw data stored as JPEG).
     UnsupportedFrame { marker: u8, precision: u8 },
@@ -377,17 +382,22 @@ pub struct JpegFrame {
     /// Width and height from the frame header (SOFn).
     pub width: u32,
     pub height: u32,
-    /// The frame is progressive (SOF2). libjpeg-turbo then keeps the whole image's DCT
-    /// coefficients in memory while decoding, whatever the output scale, so the preview check
-    /// gives it a lower pixel cap (threat model T5).
+    /// The frame is progressive (SOF2).
     pub progressive: bool,
+    /// The image comes in more than one scan: progressive, or non-interleaved (the first scan
+    /// holds fewer components than the frame, Ns < Nf). libjpeg-turbo then keeps the whole
+    /// image's DCT coefficients in memory while decoding, whatever the output scale
+    /// (`has_multiple_scans` in jdinput.c), so the preview check gives it a lower pixel cap
+    /// (threat model T5).
+    pub multi_scan: bool,
 }
 
 /// Checks a whole JPEG in memory with the same rules as an embedded candidate: at most
 /// [`Limits::max_preview_bytes`], SOI at the start, EOI at the end (zero padding trimmed),
 /// an 8-bit baseline, extended or progressive frame header, a non-zero size and at most
-/// [`Limits::max_pixels`]. The preview decoder calls it before any decoder sees the bytes
-/// (threat model T5). Only the frame header and the last bytes are read.
+/// [`Limits::max_pixels`], then a scan header. The preview decoder calls it before any decoder
+/// sees the bytes (threat model T5). Only the marker segments up to the first scan header and
+/// the last bytes are read.
 pub fn check_jpeg(jpeg: &[u8], limits: &Limits) -> Result<JpegFrame, Reject> {
     let range = ByteRange {
         offset: 0,
@@ -401,6 +411,7 @@ pub fn check_jpeg(jpeg: &[u8], limits: &Limits) -> Result<JpegFrame, Reject> {
             width: f.width,
             height: f.height,
             progressive: f.marker == 0xC2,
+            multi_scan: f.marker == 0xC2 || f.scan_components < f.components,
         }),
         Ok(Err(reject)) => Err(reject),
         Err(_) => Err(Reject::OutOfBounds),

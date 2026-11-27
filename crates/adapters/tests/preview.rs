@@ -208,14 +208,38 @@ fn caps_refuse_before_decoding() {
         }))
     );
     // The same JPEG marked progressive (SOF2) and claiming 45 MP: under the general cap but
-    // over the progressive one, so refused before turbojpeg holds any coefficients.
+    // over the multi-scan one, so refused before turbojpeg holds any coefficients.
     let mut prog = jpeg.clone();
     prog[sof + 1] = 0xC2;
     prog[sof + 5..sof + 7].copy_from_slice(&5504u16.to_be_bytes());
     prog[sof + 7..sof + 9].copy_from_slice(&8256u16.to_be_bytes());
     assert_eq!(
         build_preview(&prog, Orientation::Normal, &PreviewOptions::default()),
-        Err(PreviewError::Plan(PlanError::ProgressiveTooManyPixels {
+        Err(PreviewError::Plan(PlanError::MultiScanTooManyPixels {
+            pixels: 8256 * 5504,
+            cap: 25_000_000
+        }))
+    );
+    // The baseline JPEG made non-interleaved: its interleaved scan header (all three
+    // components) replaced by one for the first component only, and 45 MP claimed. Still
+    // SOF0, but libjpeg-turbo would buffer every coefficient, so it is refused the same way.
+    assert_eq!(jpeg[sof + 9], 3, "a three-component frame");
+    let mut split = jpeg.clone();
+    split[sof + 5..sof + 7].copy_from_slice(&5504u16.to_be_bytes());
+    split[sof + 7..sof + 9].copy_from_slice(&8256u16.to_be_bytes());
+    let sos = split
+        .windows(2)
+        .position(|w| w == [0xFF, 0xDA])
+        .expect("scan header");
+    let sos_len = usize::from(u16::from_be_bytes([split[sos + 2], split[sos + 3]]));
+    let first = split[sos + 5];
+    split.splice(
+        sos..sos + 2 + sos_len,
+        [0xFF, 0xDA, 0x00, 0x08, 0x01, first, 0x00, 0x00, 0x3F, 0x00],
+    );
+    assert_eq!(
+        build_preview(&split, Orientation::Normal, &PreviewOptions::default()),
+        Err(PreviewError::Plan(PlanError::MultiScanTooManyPixels {
             pixels: 8256 * 5504,
             cap: 25_000_000
         }))

@@ -203,7 +203,7 @@ The exact transitions and resume rules are owned by [design/file-engine.md](desi
   1. `tiff_ifd_walk`: IFD0, SubIFDs, MakerNote PreviewIFD, offsets and counts out of range, loops between IFDs.
   2. `nef_preview_extract`: picks the largest embedded JPEG; must never read past the buffer or allocate more than the configured limit.
   3. `exif_fields`: the fields Culla reads through `kamadak-exif` (DateTimeOriginal, Orientation, LensModel, LensSpecification).
-  4. `jpeg_header`: the decode-size guard in front of turbojpeg (decompression bombs): `culla_core::preview::plan_for_jpeg` in every orientation; an accepted input is under the pixel cap (and the lower 25 MP cap when its frame is progressive), fits the box and is never decoded larger than it is.
+  4. `jpeg_header`: the decode-size guard in front of turbojpeg (decompression bombs): `culla_core::preview::plan_for_jpeg` in every orientation; an accepted input is under the pixel cap (and the lower 25 MP cap when its frame is multi-scan: progressive or non-interleaved), fits the box and is never decoded larger than it is.
 - Seed corpus: the synthetic fixtures (section 9) plus the stripped real samples.
 - Schedule: nightly GitHub Actions job, 10 minutes per target, corpus cached between runs. `practices.md` suggested weekly; nightly is cheap at this size.
 - A crash opens an issue, and the minimized input is added to `testdata/fuzz-regressions/` with a unit test that runs on every PR.

@@ -146,7 +146,7 @@ fn len(b: &[u8]) -> u32 {
     u32::try_from(b.len()).unwrap()
 }
 
-/// SOI, a frame header with `marker`, `precision`, width and height, then EOI.
+/// SOI, a frame header with `marker`, `precision`, width and height, a scan header, then EOI.
 fn jpeg_with(marker: u8, precision: u8, w: u16, h: u16) -> Vec<u8> {
     let mut j = vec![0xFF, 0xD8];
     // An APP1 segment first, as Nikon's previews have.
@@ -155,7 +155,9 @@ fn jpeg_with(marker: u8, precision: u8, w: u16, h: u16) -> Vec<u8> {
     j.extend_from_slice(&h.to_be_bytes());
     j.extend_from_slice(&w.to_be_bytes());
     j.extend_from_slice(&[0x01, 0x01, 0x11, 0x00]);
-    j.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x02, 0x12, 0x34, 0xFF, 0xD9]);
+    // SOS: one component, tables 0/0, spectral 0..63; then stand-in entropy data and EOI.
+    j.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00]);
+    j.extend_from_slice(&[0x12, 0x34, 0xFF, 0xD9]);
     j
 }
 
@@ -734,6 +736,23 @@ fn jpeg_checks() {
         probe(&[0xFF, 0xD8, 0xFF, 0xE1, 0xFF, 0xFF, 0xFF, 0xD9], &l).0,
         inv(Reject::NoFrame)
     );
+    // A frame header but no scan header before EOI.
+    let mut no_sos = jpeg(8, 8);
+    let sos = no_sos.windows(2).position(|w| w == [0xFF, 0xDA]).unwrap();
+    no_sos.drain(sos..no_sos.len() - 2);
+    assert_eq!(probe(&no_sos, &l).0, inv(Reject::NoScan));
+    // A scan header with more components than the frame, or a length that does not match Ns.
+    let mut bad_ns = jpeg(8, 8);
+    bad_ns[sos + 4] = 2;
+    assert_eq!(probe(&bad_ns, &l).0, inv(Reject::NoScan));
+    let mut bad_len = jpeg(8, 8);
+    bad_len[sos + 3] = 0x0A;
+    assert_eq!(probe(&bad_len, &l).0, inv(Reject::NoScan));
+    // A frame header whose length does not match Nf.
+    let mut bad_nf = jpeg(8, 8);
+    let sof = bad_nf.windows(2).position(|w| w == [0xFF, 0xC0]).unwrap();
+    bad_nf[sof + 9] = 3;
+    assert_eq!(probe(&bad_nf, &l).0, inv(Reject::NoFrame));
     // A flood of fill bytes hits the segment cap.
     let mut flood = vec![0xFF, 0xD8];
     flood.extend_from_slice(&[0xFF; 1000]);
