@@ -90,10 +90,32 @@ fn roots() -> Roots {
     }
 }
 
-/// The facts of a disk that matches the plan exactly: every source as scanned, plenty of
-/// space, the destination root a folder, the targets free.
+/// Plain folders above the roots.
+fn add_ancestors(f: &mut Facts, roots: &Roots) {
+    for r in std::iter::once(&roots.source).chain(roots.dest.iter()) {
+        let c = r.components();
+        for n in 1..c.len() {
+            f.add_folder(Tree::Volume(r.volume()), &c[..n], Attributes::default());
+        }
+    }
+}
+
+/// The facts of a disk that matches the plan exactly, for [`roots`].
 fn clean(p: &Plan, groups: &[PlanGroup], mounted: Vec<VolumeInfo>) -> Facts {
-    let mut f = Facts::new();
+    clean_at(p, groups, mounted, &roots())
+}
+
+/// The facts of a disk that matches the plan exactly: every source as scanned with its folders
+/// plain, the folders above the roots plain, plenty of space, the destination root a folder
+/// outside any sync root, the targets free, the preview pipeline idle.
+fn clean_at(p: &Plan, groups: &[PlanGroup], mounted: Vec<VolumeInfo>, roots: &Roots) -> Facts {
+    let mut f = Facts::new(
+        FolderFact::Exists(Attributes::default()),
+        DestRoot::Folder(Attributes::default()),
+    );
+    f.preview_idle = true;
+    f.dest_in_sync_root = Some(false);
+    add_ancestors(&mut f, roots);
     for v in &mounted {
         f.space.insert(
             v.guid_path.clone(),
@@ -104,8 +126,11 @@ fn clean(p: &Plan, groups: &[PlanGroup], mounted: Vec<VolumeInfo>) -> Facts {
         );
     }
     f.mounted = mounted;
-    f.dest_root = DestRoot::Folder(Attributes::default());
     for o in &p.ops {
+        let folder = &o.src[..o.src.len() - 1];
+        for n in 1..=folder.len() {
+            f.add_folder(Tree::Source, &folder[..n], Attributes::default());
+        }
         let m = groups
             .iter()
             .flat_map(|g| &g.members)
@@ -159,6 +184,39 @@ fn op_of(p: &Plan, name: &str) -> PlannedOp {
         .clone()
 }
 
+/// The target folders of `o`, as P9 looks at them: under the destination root, or `_rejected`
+/// and its folders under the source root.
+fn target_folders(o: &PlannedOp) -> Vec<(Tree, Vec<String>)> {
+    let folder = &o.dst[..o.dst.len() - 1];
+    match o.root {
+        Root::Dest => (1..=folder.len())
+            .map(|n| (Tree::Dest, folder[..n].to_vec()))
+            .collect(),
+        Root::Rejected => (0..=folder.len())
+            .map(|n| {
+                let mut p = vec![REJECTED.to_owned()];
+                p.extend(folder[..n].iter().cloned());
+                (Tree::Source, p)
+            })
+            .collect(),
+    }
+}
+
+/// The folders between the source root and the source of `o`.
+fn source_folders(o: &PlannedOp) -> Vec<(Tree, Vec<String>)> {
+    let folder = &o.src[..o.src.len() - 1];
+    (1..=folder.len())
+        .map(|n| (Tree::Source, folder[..n].to_vec()))
+        .collect()
+}
+
+/// Plain facts for the target folders of `o`, as an adapter that sees them gives.
+fn add_target_folders(f: &mut Facts, o: &PlannedOp) {
+    for (t, p) in target_folders(o) {
+        f.add_folder(t, &p, Attributes::default());
+    }
+}
+
 fn fact_of<'a>(f: &'a mut Facts, o: &PlannedOp) -> &'a mut SourceFact {
     f.sources.get_mut(&key(&o.src)).unwrap()
 }
@@ -208,10 +266,18 @@ fn p1_source_volume_missing_or_ambiguous_or_refused() {
 fn p9_source_root_that_became_a_link_blocks() {
     let (groups, p) = standard();
     let mut f = clean(&p, &groups, vec![card(), disk()]);
-    f.source_root.reparse_point = true;
+    f.source_root = FolderFact::Exists(Attributes {
+        reparse_point: true,
+        ..Attributes::default()
+    });
     assert_eq!(
         preflight(&p, &roots(), &f).blockers,
         vec![Blocker::SourceRootLink]
+    );
+    f.source_root = FolderFact::Unreadable;
+    assert_eq!(
+        preflight(&p, &roots(), &f).blockers,
+        vec![Blocker::SourceRootUnreadable]
     );
 }
 
@@ -228,8 +294,14 @@ fn p2_destination_volume_and_root() {
         preflight(&p, &roots(), &f).blockers,
         vec![Blocker::DestRootMissing]
     );
-    f.dest_root = DestRoot::ParentExists;
+    f.dest_root = DestRoot::ParentExists(Attributes::default());
     assert!(preflight(&p, &roots(), &f).can_apply());
+    f.dest_root = DestRoot::Unreadable;
+    assert_eq!(
+        preflight(&p, &roots(), &f).blockers,
+        vec![Blocker::DestRootUnreadable]
+    );
+    f.dest_root = DestRoot::ParentExists(Attributes::default());
 
     let mut no_dest = roots();
     no_dest.dest = None;
@@ -446,7 +518,8 @@ fn p6_destination_rules() {
         source: Source::new(VolumeId::new(CARD), parts("DCIM")).unwrap(),
         dest: Some(Source::new(VolumeId::new(CARD), parts(rel)).unwrap()),
     };
-    let f = clean(&p, &groups, vec![card()]);
+    let mut f = clean(&p, &groups, vec![card()]);
+    add_ancestors(&mut f, &on_card("DCIM/_REJECTED/x"));
     assert!(preflight(&p, &on_card("Keep"), &f).can_apply());
     // Inside the source is allowed (the scan does not enter it).
     assert!(preflight(&p, &on_card("DCIM/Keep"), &f).can_apply());
@@ -575,11 +648,11 @@ fn p7_bad_duplicate_or_source_targets_are_bugs() {
 #[test]
 fn p8_long_paths_and_names_hold_the_group() {
     let (groups, p) = standard();
-    let f = clean(&p, &groups, vec![card(), disk()]);
     // A destination 32,700 units deep: every target with its partial is over the limit.
     let deep: Vec<String> = (0..300).map(|_| "a".repeat(108)).collect();
     let mut r = roots();
     r.dest = Some(Source::new(VolumeId::new(DISK), deep).unwrap());
+    let f = clean_at(&p, &groups, vec![card(), disk()], &r);
     let rep = preflight(&p, &r, &f);
     let kept: BTreeSet<GroupId> = p
         .ops
@@ -757,7 +830,8 @@ fn time_rule() {
     assert!(d.matches(Some(5), Some(HOUR + 5)));
     assert!(!d.matches(Some(5), Some(HOUR + 6)));
     assert!(!d.matches(Some(5), Some(2 * HOUR + 5)));
-    assert!(d.matches(None, None));
+    assert!(!d.matches(None, None));
+    assert!(!TimeRule::Exact.matches(None, None));
     assert!(!d.matches(None, Some(5)));
     assert!(!TimeRule::Exact.matches(Some(HOUR), Some(0)));
     assert!(!d.matches(Some(i64::MIN), Some(i64::MAX)));
@@ -772,6 +846,14 @@ fn p11_a_target_taken_since_planning_needs_a_new_plan() {
     let mut f = clean(&p, &groups, vec![card(), disk()]);
     let path: Vec<&str> = o.dst.iter().map(String::as_str).collect();
     f.targets.add_file(Root::Dest, &path);
+    // The snapshot now shows the target folder, so it needs a fact: without one the group is
+    // held (fail closed), with one it needs a new plan.
+    let first = p.ops.iter().find(|x| x.group == 1).unwrap().member;
+    assert_eq!(
+        preflight(&p, &roots(), &f).held,
+        vec![(1, Hold::FolderUnknown { member: first })]
+    );
+    add_target_folders(&mut f, &o);
     let r = preflight(&p, &roots(), &f);
     assert_eq!(
         r.replan,
@@ -782,6 +864,8 @@ fn p11_a_target_taken_since_planning_needs_a_new_plan() {
     // A file where the target folder should be.
     let mut f = clean(&p, &groups, vec![card(), disk()]);
     f.targets.add_file(Root::Rejected, &["100NIKON"]);
+    // The snapshot shows `_rejected`, so its fact is there too.
+    f.add_folder(Tree::Source, &parts("_rejected"), Attributes::default());
     let r = preflight(&p, &roots(), &f);
     assert_eq!(r.replan.len(), 1);
     assert_eq!(r.replan[0].0, 2);
@@ -889,7 +973,7 @@ fn p15_paths_over_259_characters_are_a_warning() {
 fn p17_cloud_synced_destination_is_a_warning_only_when_keeping() {
     let (groups, p) = standard();
     let mut f = clean(&p, &groups, vec![card(), disk()]);
-    f.dest_in_sync_root = true;
+    f.dest_in_sync_root = Some(true);
     let r = preflight(&p, &roots(), &f);
     assert_eq!(r.warnings, vec![Warning::CloudSynced]);
     assert!(r.can_apply());
@@ -904,7 +988,7 @@ fn p17_cloud_synced_destination_is_a_warning_only_when_keeping() {
     )
     .unwrap();
     let mut f = clean(&p, &groups, vec![card(), disk()]);
-    f.dest_in_sync_root = true;
+    f.dest_in_sync_root = Some(true);
     assert!(preflight(&p, &roots(), &f).warnings.is_empty());
 }
 
@@ -964,6 +1048,218 @@ fn p16_a_busy_preview_pipeline_blocks() {
     );
 }
 
+// --- Fail closed: folders, roots and facts not given ----------------------------------------
+
+#[test]
+fn p9_a_source_folder_with_no_fact_or_unreadable_holds() {
+    let (groups, p) = standard();
+    let first = |g| p.ops.iter().find(|o| o.group == g).unwrap().member;
+    let mut f = clean(&p, &groups, vec![card(), disk()]);
+    f.folders.remove(&(Tree::Source, key(&parts("101NIKON"))));
+    assert_eq!(
+        preflight(&p, &roots(), &f).held,
+        vec![(3, Hold::FolderUnknown { member: first(3) })]
+    );
+    let mut f = clean(&p, &groups, vec![card(), disk()]);
+    f.add_unreadable_folder(Tree::Source, &parts("100NIKON"));
+    assert_eq!(
+        preflight(&p, &roots(), &f).held,
+        vec![
+            (1, Hold::FolderUnknown { member: first(1) }),
+            (2, Hold::FolderUnknown { member: first(2) })
+        ]
+    );
+    // A link found elsewhere on the same member wins over an unknown folder.
+    let o = op_of(&p, "DSC_0003.JPG");
+    let mut f = clean(&p, &groups, vec![card(), disk()]);
+    f.add_unreadable_folder(Tree::Source, &parts("101NIKON"));
+    fact_of(&mut f, &o).attrs.reparse_point = true;
+    assert_eq!(
+        preflight(&p, &roots(), &f).held,
+        vec![(3, Hold::Link { member: o.member })]
+    );
+}
+
+#[test]
+fn p9_a_target_folder_shown_existing_needs_a_fact() {
+    let (groups, p) = standard();
+    let first = |g| p.ops.iter().find(|o| o.group == g).unwrap().member;
+    // Under the destination.
+    let mut f = clean(&p, &groups, vec![card(), disk()]);
+    f.targets.add_dir(Root::Dest, &["101NIKON"]);
+    assert_eq!(
+        preflight(&p, &roots(), &f).held,
+        vec![(3, Hold::FolderUnknown { member: first(3) })]
+    );
+    f.add_folder(Tree::Dest, &parts("101NIKON"), Attributes::default());
+    assert_eq!(preflight(&p, &roots(), &f), Report::default());
+    f.add_unreadable_folder(Tree::Dest, &parts("101NIKON"));
+    assert_eq!(
+        preflight(&p, &roots(), &f).held,
+        vec![(3, Hold::FolderUnknown { member: first(3) })]
+    );
+    // An unreadable target folder holds even when the snapshot does not show it.
+    let mut f = clean(&p, &groups, vec![card(), disk()]);
+    f.add_unreadable_folder(Tree::Dest, &parts("100NIKON"));
+    assert_eq!(
+        preflight(&p, &roots(), &f).held,
+        vec![(1, Hold::FolderUnknown { member: first(1) })]
+    );
+    // Under `_rejected`: anything shown under it shows `_rejected` itself.
+    let mut f = clean(&p, &groups, vec![card(), disk()]);
+    f.targets.add_dir(Root::Rejected, &["999NIKON"]);
+    assert_eq!(
+        preflight(&p, &roots(), &f).held,
+        vec![(2, Hold::FolderUnknown { member: first(2) })]
+    );
+    f.add_folder(Tree::Source, &parts("_rejected"), Attributes::default());
+    assert_eq!(preflight(&p, &roots(), &f), Report::default());
+}
+
+#[test]
+fn p9_folders_above_the_roots_block() {
+    let (groups, p) = standard();
+    let r = Roots {
+        source: Source::new(VolumeId::new(CARD), parts("Card/DCIM")).unwrap(),
+        dest: Some(Source::new(VolumeId::new(DISK), parts("Users/Photos")).unwrap()),
+    };
+    let base = clean_at(&p, &groups, vec![card(), disk()], &r);
+    assert_eq!(preflight(&p, &r, &base), Report::default());
+    let link = Attributes {
+        reparse_point: true,
+        ..Attributes::default()
+    };
+    let placeholder = Attributes {
+        cloud_placeholder: true,
+        ..Attributes::default()
+    };
+    let src_up = (Tree::Volume(VolumeId::new(CARD)), key(&parts("Card")));
+    let dst_up = (Tree::Volume(VolumeId::new(DISK)), key(&parts("Users")));
+    for (at, fact, want) in [
+        (
+            &src_up,
+            Some(FolderFact::Exists(link)),
+            Blocker::SourceAncestor(FolderIssue::Link),
+        ),
+        (
+            &src_up,
+            Some(FolderFact::Exists(placeholder)),
+            Blocker::SourceAncestor(FolderIssue::Placeholder),
+        ),
+        (
+            &src_up,
+            Some(FolderFact::Unreadable),
+            Blocker::SourceAncestor(FolderIssue::Unknown),
+        ),
+        (&src_up, None, Blocker::SourceAncestor(FolderIssue::Unknown)),
+        (
+            &dst_up,
+            Some(FolderFact::Exists(link)),
+            Blocker::DestAncestor(FolderIssue::Link),
+        ),
+        (&dst_up, None, Blocker::DestAncestor(FolderIssue::Unknown)),
+    ] {
+        let mut f = base.clone();
+        match fact {
+            Some(x) => f.folders.insert(at.clone(), x),
+            None => f.folders.remove(at),
+        };
+        assert_eq!(
+            preflight(&p, &r, &f).blockers,
+            vec![want],
+            "{at:?} {fact:?}"
+        );
+    }
+    // The destination's parent, when the destination does not exist yet.
+    let mut f = base.clone();
+    for (a, want) in [
+        (link, Some(Blocker::DestAncestor(FolderIssue::Link))),
+        (
+            placeholder,
+            Some(Blocker::DestAncestor(FolderIssue::Placeholder)),
+        ),
+        (Attributes::default(), None),
+    ] {
+        f.dest_root = DestRoot::ParentExists(a);
+        assert_eq!(
+            preflight(&p, &r, &f).blockers,
+            want.into_iter().collect::<Vec<_>>()
+        );
+    }
+    // A missing destination is blocked as such, its folders above not looked at.
+    f.dest_root = DestRoot::Missing;
+    f.folders.remove(&dst_up);
+    assert_eq!(
+        preflight(&p, &r, &f).blockers,
+        vec![Blocker::DestRootMissing]
+    );
+}
+
+#[test]
+fn facts_not_given_fail_closed() {
+    let (groups, p) = standard();
+    let mut f = clean(&p, &groups, vec![card(), disk()]);
+    let fresh = Facts::new(
+        FolderFact::Exists(Attributes::default()),
+        DestRoot::Folder(Attributes::default()),
+    );
+    assert!(!fresh.preview_idle);
+    assert_eq!(fresh.dest_in_sync_root, None);
+    f.preview_idle = fresh.preview_idle;
+    f.dest_in_sync_root = fresh.dest_in_sync_root;
+    let r = preflight(&p, &roots(), &f);
+    assert_eq!(r.blockers, vec![Blocker::PreviewBusy]);
+    assert_eq!(r.warnings, vec![Warning::SyncRootUnknown]);
+    // No sync-root warning when nothing is kept.
+    let groups = scan(PAIRS, &[]);
+    let d = decide(&groups, &[Verdict::Reject]);
+    let p = plan(
+        &groups,
+        &d,
+        &settings(KeepMode::Move, false),
+        &Existing::new(),
+    )
+    .unwrap();
+    let mut f = clean(&p, &groups, vec![card(), disk()]);
+    f.dest_in_sync_root = None;
+    assert!(preflight(&p, &roots(), &f).warnings.is_empty());
+}
+
+#[test]
+fn p10_unknown_mtimes_hold() {
+    let (groups, p) = standard();
+    let mut p = p;
+    let o = op_of(&p, "DSC_0003.JPG");
+    let mut f = clean(&p, &groups, vec![card(), disk()]);
+    fact_of(&mut f, &o).mtime_ns = None;
+    for x in p.ops.iter_mut().filter(|x| x.member == o.member) {
+        x.src_mtime_ns = None;
+    }
+    assert_eq!(
+        preflight(&p, &roots(), &f).held,
+        vec![(3, Hold::ChangedSinceScan { member: o.member })]
+    );
+}
+
+#[test]
+fn p7_covers_held_groups_too() {
+    let (groups, p) = standard();
+    let mut dup = p.clone();
+    let last = dup.ops.len() - 1;
+    dup.ops[last].dst = dup.ops[last - 1].dst.clone();
+    dup.ops[last].root = dup.ops[last - 1].root;
+    let mut f = clean(&p, &groups, vec![card(), disk()]);
+    // Hold the group of the last operation: P7 still sees the duplicate.
+    let o = dup.ops[last].clone();
+    f.sources.remove(&key(&o.src));
+    let r = preflight(&dup, &roots(), &f);
+    assert!(r.is_held(o.group), "{r:?}");
+    assert!(r.blockers.contains(&Blocker::Inconsistent {
+        ord: o.ord,
+        why: Inconsistency::DuplicateTarget
+    }));
+}
+
 // --- Interplay -------------------------------------------------------------------------------
 
 #[test]
@@ -983,7 +1279,7 @@ fn held_groups_do_not_count_for_volume_checks() {
     let mut f = clean(&p, &groups, vec![card(), disk()]);
     f.sources.remove(&key(&o.src));
     f.dest_root = DestRoot::Missing;
-    f.dest_in_sync_root = true;
+    f.dest_in_sync_root = Some(true);
     f.space.clear();
     let r = preflight(&p, &roots(), &f);
     assert_eq!(
@@ -1029,6 +1325,10 @@ fn messages_are_plain() {
             free: 1,
         },
         Blocker::PreviewBusy,
+        Blocker::SourceAncestor(FolderIssue::Link),
+        Blocker::DestAncestor(FolderIssue::Unknown),
+        Blocker::SourceRootUnreadable,
+        Blocker::DestRootUnreadable,
     ] {
         let s = b.to_string();
         assert!(!s.is_empty() && !s.contains('!'), "{s}");
@@ -1083,6 +1383,7 @@ const FILES: &[&str] = &[
 
 #[derive(Clone, Copy, Debug)]
 enum Change {
+    // One source fact of one operation.
     Missing,
     Size,
     Mtime,
@@ -1091,6 +1392,39 @@ enum Change {
     Locked,
     ReadOnly,
     Taken,
+    // One folder on the way to a source or a target.
+    SourceFolderLink,
+    SourceFolderPlaceholder,
+    SourceFolderRemoved,
+    SourceFolderUnreadable,
+    TargetFolderLink,
+    TargetFolderPlaceholder,
+    TargetFolderUnreadable,
+    TargetFolderShownNoFact,
+    // A folder above a root.
+    AncestorLink,
+    AncestorPlaceholder,
+    AncestorRemoved,
+    AncestorUnreadable,
+    // The roots.
+    SourceRootLink,
+    SourceRootUnreadable,
+    DestRootMissing,
+    DestRootUnreadable,
+    DestRootNotAFolder,
+    DestRootLink,
+    DestParentPlaceholder,
+    DestParentPlain,
+    // Volumes, space, the pipeline, the sync root.
+    SourceVolumeMissing,
+    DestVolumeMissing,
+    CardReadOnly,
+    DiskReadOnly,
+    NoSpace,
+    SpaceUnknown,
+    PreviewBusy,
+    Synced,
+    SyncUnknown,
 }
 
 const CHANGES: &[Change] = &[
@@ -1102,10 +1436,70 @@ const CHANGES: &[Change] = &[
     Change::Locked,
     Change::ReadOnly,
     Change::Taken,
+    Change::SourceFolderLink,
+    Change::SourceFolderPlaceholder,
+    Change::SourceFolderRemoved,
+    Change::SourceFolderUnreadable,
+    Change::TargetFolderLink,
+    Change::TargetFolderPlaceholder,
+    Change::TargetFolderUnreadable,
+    Change::TargetFolderShownNoFact,
+    Change::AncestorLink,
+    Change::AncestorPlaceholder,
+    Change::AncestorRemoved,
+    Change::AncestorUnreadable,
+    Change::SourceRootLink,
+    Change::SourceRootUnreadable,
+    Change::DestRootMissing,
+    Change::DestRootUnreadable,
+    Change::DestRootNotAFolder,
+    Change::DestRootLink,
+    Change::DestParentPlaceholder,
+    Change::DestParentPlain,
+    Change::SourceVolumeMissing,
+    Change::DestVolumeMissing,
+    Change::CardReadOnly,
+    Change::DiskReadOnly,
+    Change::NoSpace,
+    Change::SpaceUnknown,
+    Change::PreviewBusy,
+    Change::Synced,
+    Change::SyncUnknown,
 ];
+
+/// The holds that a set of bad folders gives: for each group, its first operation in plan
+/// order whose source or target folders include one of them.
+fn holds_for(
+    p: &Plan,
+    bad: &BTreeSet<(Tree, String)>,
+    hold: fn(MemberId) -> Hold,
+) -> Vec<(GroupId, Hold)> {
+    let mut held: BTreeMap<GroupId, Hold> = BTreeMap::new();
+    for o in &p.ops {
+        if held.contains_key(&o.group) {
+            continue;
+        }
+        let hit = source_folders(o)
+            .into_iter()
+            .chain(target_folders(o))
+            .any(|(t, f)| bad.contains(&(t, key(&f))));
+        if hit {
+            held.insert(o.group, hold(o.member));
+        }
+    }
+    held.into_iter().collect()
+}
 
 fn run_property(n: u64) -> BTreeMap<String, u64> {
     let mut seen: BTreeMap<String, u64> = BTreeMap::new();
+    let link = Attributes {
+        reparse_point: true,
+        ..Attributes::default()
+    };
+    let placeholder = Attributes {
+        cloud_placeholder: true,
+        ..Attributes::default()
+    };
     for case in 0..n {
         let mut rng = Rng::new(case + 1);
         let paths: Vec<&str> = FILES.iter().copied().filter(|_| rng.chance(70)).collect();
@@ -1141,60 +1535,303 @@ fn run_property(n: u64) -> BTreeMap<String, u64> {
         ) else {
             continue;
         };
-        let mut r = roots();
+        // Roots one folder down, so each has a folder above it.
+        let mut r = Roots {
+            source: Source::new(VolumeId::new(CARD), parts("DCIM/Shoot")).unwrap(),
+            dest: Some(Source::new(VolumeId::new(DISK), parts("Photos/2026")).unwrap()),
+        };
         let mounted = if same {
-            r.dest = Some(Source::new(VolumeId::new(CARD), parts("Keep")).unwrap());
+            r.dest = Some(Source::new(VolumeId::new(CARD), parts("Keep/2026")).unwrap());
             vec![card()]
         } else {
             vec![card(), disk()]
         };
-        let f = clean(&p, &groups, mounted);
+        let dest_vol = VolumeId::new(if same { CARD } else { DISK });
+        let f = clean_at(&p, &groups, mounted, &r);
         let rep = preflight(&p, &r, &f);
         assert_eq!(rep, Report::default(), "case {case}: clean");
         if p.ops.is_empty() {
             continue;
         }
+        let keeps = p.ops.iter().any(|o| o.root == Root::Dest);
+        let writes_source = p.ops.iter().any(|o| {
+            matches!(o.kind, OpKind::Rename | OpKind::XMove)
+                || (o.kind == OpKind::Copy && o.root == Root::Rejected)
+        });
         let o = p.ops[rng.below(p.ops.len())].clone();
         let change = CHANGES[rng.below(CHANGES.len())];
+        let m = o.member;
+        let g = o.group;
         let mut f = f;
+        let mut want = Report::default();
+        let only_keeping = |b: Blocker| if keeps { vec![b] } else { Vec::new() };
         match change {
             Change::Missing => {
                 f.sources.remove(&key(&o.src));
-            }
-            Change::Size => fact_of(&mut f, &o).size += 1 + rng.below(10) as u64,
-            Change::Mtime => fact_of(&mut f, &o).mtime_ns = Some(MTIME + 1),
-            Change::Link => fact_of(&mut f, &o).attrs.reparse_point = true,
-            Change::Placeholder => fact_of(&mut f, &o).attrs.cloud_placeholder = true,
-            Change::Locked => fact_of(&mut f, &o).locked = true,
-            Change::ReadOnly => fact_of(&mut f, &o).attrs.read_only = true,
-            Change::Taken => {
-                let path: Vec<&str> = o.dst.iter().map(String::as_str).collect();
-                f.targets.add_file(o.root, &path);
-            }
-        }
-        let rep = preflight(&p, &r, &f);
-        let m = o.member;
-        let g = o.group;
-        let mut want = Report::default();
-        match change {
-            Change::Missing | Change::Size | Change::Mtime => {
                 want.held = vec![(g, Hold::ChangedSinceScan { member: m })];
             }
-            Change::Link => want.held = vec![(g, Hold::Link { member: m })],
-            Change::Placeholder => want.held = vec![(g, Hold::Placeholder { member: m })],
+            Change::Size => {
+                fact_of(&mut f, &o).size += 1 + rng.below(10) as u64;
+                want.held = vec![(g, Hold::ChangedSinceScan { member: m })];
+            }
+            Change::Mtime => {
+                fact_of(&mut f, &o).mtime_ns = Some(MTIME + 1);
+                want.held = vec![(g, Hold::ChangedSinceScan { member: m })];
+            }
+            Change::Link => {
+                fact_of(&mut f, &o).attrs.reparse_point = true;
+                want.held = vec![(g, Hold::Link { member: m })];
+            }
+            Change::Placeholder => {
+                fact_of(&mut f, &o).attrs.cloud_placeholder = true;
+                want.held = vec![(g, Hold::Placeholder { member: m })];
+            }
             Change::Locked => {
+                fact_of(&mut f, &o).locked = true;
                 want.warnings = vec![Warning::Locked {
                     group: g,
                     member: m,
-                }]
+                }];
             }
             Change::ReadOnly => {
+                fact_of(&mut f, &o).attrs.read_only = true;
                 if matches!(o.kind, OpKind::Rename | OpKind::XMove) {
                     want.replan = vec![(g, Replan::ReadOnlyAppeared { member: m })];
                 }
             }
-            Change::Taken => want.replan = vec![(g, Replan::TargetTaken { member: m })],
+            Change::Taken => {
+                let path: Vec<&str> = o.dst.iter().map(String::as_str).collect();
+                f.targets.add_file(o.root, &path);
+                // An adapter that sees the target sees its folders too.
+                add_target_folders(&mut f, &o);
+                want.replan = vec![(g, Replan::TargetTaken { member: m })];
+            }
+            Change::SourceFolderLink
+            | Change::SourceFolderPlaceholder
+            | Change::SourceFolderRemoved
+            | Change::SourceFolderUnreadable => {
+                let folders = source_folders(&o);
+                let (t, folder) = folders[rng.below(folders.len())].clone();
+                let at = (t, key(&folder));
+                let hold: fn(MemberId) -> Hold = match change {
+                    Change::SourceFolderLink => {
+                        f.add_folder(t, &folder, link);
+                        |member| Hold::Link { member }
+                    }
+                    Change::SourceFolderPlaceholder => {
+                        f.add_folder(t, &folder, placeholder);
+                        |member| Hold::Placeholder { member }
+                    }
+                    Change::SourceFolderRemoved => {
+                        f.folders.remove(&at);
+                        |member| Hold::FolderUnknown { member }
+                    }
+                    _ => {
+                        f.add_unreadable_folder(t, &folder);
+                        |member| Hold::FolderUnknown { member }
+                    }
+                };
+                want.held = holds_for(&p, &BTreeSet::from([at]), hold);
+            }
+            Change::TargetFolderLink
+            | Change::TargetFolderPlaceholder
+            | Change::TargetFolderUnreadable => {
+                let folders = target_folders(&o);
+                let (t, folder) = folders[rng.below(folders.len())].clone();
+                let hold: fn(MemberId) -> Hold = match change {
+                    Change::TargetFolderLink => {
+                        f.add_folder(t, &folder, link);
+                        |member| Hold::Link { member }
+                    }
+                    Change::TargetFolderPlaceholder => {
+                        f.add_folder(t, &folder, placeholder);
+                        |member| Hold::Placeholder { member }
+                    }
+                    _ => {
+                        f.add_unreadable_folder(t, &folder);
+                        |member| Hold::FolderUnknown { member }
+                    }
+                };
+                want.held = holds_for(&p, &BTreeSet::from([(t, key(&folder))]), hold);
+            }
+            Change::TargetFolderShownNoFact => {
+                // The snapshot shows a target folder, and every folder above it, with no fact.
+                let folders = target_folders(&o);
+                let (t, folder) = folders[rng.below(folders.len())].clone();
+                let mut bad = BTreeSet::new();
+                match o.root {
+                    Root::Dest => {
+                        let rel: Vec<&str> = folder.iter().map(String::as_str).collect();
+                        f.targets.add_dir(Root::Dest, &rel);
+                        for n in 1..=folder.len() {
+                            bad.insert((t, key(&folder[..n])));
+                        }
+                    }
+                    Root::Rejected => {
+                        // `folder` starts with `_rejected`; the snapshot is relative to it.
+                        let rel: Vec<&str> = folder[1..].iter().map(String::as_str).collect();
+                        if rel.is_empty() {
+                            f.targets.add_dir(Root::Rejected, &["zz-not-planned"]);
+                        } else {
+                            f.targets.add_dir(Root::Rejected, &rel);
+                        }
+                        for n in 1..=folder.len() {
+                            bad.insert((t, key(&folder[..n])));
+                        }
+                    }
+                }
+                want.held = holds_for(&p, &bad, |member| Hold::FolderUnknown { member });
+            }
+            Change::AncestorLink
+            | Change::AncestorPlaceholder
+            | Change::AncestorRemoved
+            | Change::AncestorUnreadable => {
+                let on_source = rng.chance(50);
+                let (vol, up) = if on_source {
+                    (VolumeId::new(CARD), parts("DCIM"))
+                } else {
+                    (dest_vol, parts(if same { "Keep" } else { "Photos" }))
+                };
+                let tree = Tree::Volume(vol);
+                let issue = match change {
+                    Change::AncestorLink => {
+                        f.add_folder(tree, &up, link);
+                        FolderIssue::Link
+                    }
+                    Change::AncestorPlaceholder => {
+                        f.add_folder(tree, &up, placeholder);
+                        FolderIssue::Placeholder
+                    }
+                    Change::AncestorRemoved => {
+                        f.folders.remove(&(tree, key(&up)));
+                        FolderIssue::Unknown
+                    }
+                    _ => {
+                        f.add_unreadable_folder(tree, &up);
+                        FolderIssue::Unknown
+                    }
+                };
+                want.blockers = if on_source {
+                    vec![Blocker::SourceAncestor(issue)]
+                } else {
+                    only_keeping(Blocker::DestAncestor(issue))
+                };
+            }
+            Change::SourceRootLink => {
+                f.source_root = FolderFact::Exists(if rng.chance(50) { link } else { placeholder });
+                want.blockers = vec![Blocker::SourceRootLink];
+            }
+            Change::SourceRootUnreadable => {
+                f.source_root = FolderFact::Unreadable;
+                want.blockers = vec![Blocker::SourceRootUnreadable];
+            }
+            Change::DestRootMissing => {
+                f.dest_root = DestRoot::Missing;
+                want.blockers = only_keeping(Blocker::DestRootMissing);
+            }
+            Change::DestRootUnreadable => {
+                f.dest_root = DestRoot::Unreadable;
+                want.blockers = only_keeping(Blocker::DestRootUnreadable);
+            }
+            Change::DestRootNotAFolder => {
+                f.dest_root = DestRoot::NotAFolder;
+                want.blockers = only_keeping(Blocker::DestNotAFolder);
+            }
+            Change::DestRootLink => {
+                f.dest_root = DestRoot::Folder(link);
+                want.blockers = only_keeping(Blocker::DestLink);
+            }
+            Change::DestParentPlaceholder => {
+                f.dest_root = DestRoot::ParentExists(placeholder);
+                want.blockers = only_keeping(Blocker::DestAncestor(FolderIssue::Placeholder));
+            }
+            Change::DestParentPlain => f.dest_root = DestRoot::ParentExists(Attributes::default()),
+            Change::SourceVolumeMissing => {
+                f.mounted.retain(|v| v.id != VolumeId::new(CARD));
+                want.blockers = vec![Blocker::SourceVolume(Unbound::Missing)];
+                if same {
+                    want.blockers
+                        .extend(only_keeping(Blocker::DestVolume(Unbound::Missing)));
+                }
+            }
+            Change::DestVolumeMissing => {
+                if !same {
+                    f.mounted.retain(|v| v.id != VolumeId::new(DISK));
+                    want.blockers = only_keeping(Blocker::DestVolume(Unbound::Missing));
+                }
+            }
+            Change::CardReadOnly => {
+                for v in f.mounted.iter_mut().filter(|v| v.id == VolumeId::new(CARD)) {
+                    v.flags = VolumeFlags(VolumeFlags::READ_ONLY);
+                }
+                if same {
+                    want.blockers = only_keeping(Blocker::DestReadOnly);
+                }
+                if writes_source {
+                    want.blockers.push(Blocker::SourceReadOnly);
+                }
+            }
+            Change::DiskReadOnly => {
+                if !same {
+                    for v in f.mounted.iter_mut().filter(|v| v.id == VolumeId::new(DISK)) {
+                        v.flags = VolumeFlags(VolumeFlags::READ_ONLY);
+                    }
+                    want.blockers = only_keeping(Blocker::DestReadOnly);
+                }
+            }
+            Change::NoSpace | Change::SpaceUnknown => {
+                let v = f.mounted[rng.below(f.mounted.len())].clone();
+                let sizes: Vec<u64> = p
+                    .ops
+                    .iter()
+                    .filter(|x| x.kind != OpKind::Rename)
+                    .filter(|x| match x.root {
+                        Root::Dest => dest_vol == v.id,
+                        Root::Rejected => v.id == VolumeId::new(CARD),
+                    })
+                    .map(|x| x.expected_size)
+                    .collect();
+                if matches!(change, Change::NoSpace) {
+                    f.space.insert(
+                        v.guid_path.clone(),
+                        Space {
+                            free: 0,
+                            cluster: 4096,
+                        },
+                    );
+                    if !sizes.is_empty() {
+                        let bytes: u64 = sizes.iter().map(|s| s.div_ceil(4096) * 4096).sum();
+                        want.blockers = vec![Blocker::NoSpace {
+                            volume: v.id,
+                            needed: bytes + margin(bytes),
+                            free: 0,
+                        }];
+                    }
+                } else {
+                    f.space.remove(&v.guid_path);
+                    if !sizes.is_empty() {
+                        want.blockers = vec![Blocker::SpaceUnknown(v.id)];
+                    }
+                }
+            }
+            Change::PreviewBusy => {
+                f.preview_idle = false;
+                want.blockers = vec![Blocker::PreviewBusy];
+            }
+            Change::Synced => {
+                f.dest_in_sync_root = Some(true);
+                if keeps {
+                    want.warnings = vec![Warning::CloudSynced];
+                }
+            }
+            Change::SyncUnknown => {
+                f.dest_in_sync_root = None;
+                if keeps {
+                    want.warnings = vec![Warning::SyncRootUnknown];
+                }
+            }
         }
+        let rep = preflight(&p, &r, &f);
         assert_eq!(rep, want, "case {case}: {change:?} on {o:?}");
         // Held groups keep no runnable operation; the others all remain.
         for x in rep.runnable(&p) {

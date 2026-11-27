@@ -6,8 +6,11 @@
 //! over as plain data ([`Facts`]): the mounted volumes and their flags, free space and cluster
 //! size per volume, what each planned source looks like now (size, mtime, attributes, a lock
 //! held by another process), the attributes of the folders between each root and the files
-//! that exist, the destination root, a fresh snapshot of the target roots ([`Existing`]), and
-//! whether the preview pipeline is idle. It runs at review and again in the instant before the
+//! that exist and of the folders above each root ([`FolderFact`]), the source and destination
+//! roots, whether the destination is in a sync root, a fresh snapshot of the target roots
+//! ([`Existing`]), and whether the preview pipeline is idle. Facts fail closed: a folder that
+//! must exist and has no fact, or one the adapter could not read, holds its group or blocks,
+//! and a fact the constructor does not ask for defaults to the answer that stops apply. It runs at review and again in the instant before the
 //! first operation, on the same facts gathered afresh.
 //!
 //! The result ([`Report`]) sorts every finding into one of four kinds, as §8 says:
@@ -20,10 +23,12 @@
 //!   (P11, P13, and a destination whose volume relation to the source changed since planning).
 //! - [`Warning`]: listed in the review, apply is allowed (P12, P15, P17).
 //!
-//! A group gets at most one hold, the first in rule order (P8, P9, P10, P14) over its members in
-//! plan order; replans are found only for groups that are not held, and every volume-level
+//! A group gets at most one hold: its first member in plan order that is held, with that
+//! member's first rule in rule order (P8, P9, P10, P14); replans are found only for groups that are not held, and every volume-level
 //! check (P3, P4, P5, P6, P17) counts only the operations of groups that are not held, so a held
-//! group never blocks the others. These orderings, the margin of P5, the length bound of P8 for
+//! group never blocks the others. The destination volume is still bound (P2) when any operation
+//! keeps into it, held or not, and P7 runs over every operation, held ones included. These
+//! orderings, the margin of P5, the length bound of P8 for
 //! partials and the bound of P15 are proposed by the agent and await Margaux (SPEC §10).
 
 #[cfg(test)]
@@ -74,6 +79,47 @@ pub enum Tree {
     Source,
     /// Paths from the destination root.
     Dest,
+    /// Paths from the root of this volume: the folders above the source and destination roots.
+    Volume(VolumeId),
+}
+
+/// How a folder looks, through a lookup that does not follow links.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FolderFact {
+    /// It exists, with these attributes.
+    Exists(Attributes),
+    /// The lookup failed (access denied, an I/O error…): how it looks is unknown, so it holds
+    /// or blocks like a link would.
+    Unreadable,
+}
+
+/// What is wrong with a folder on the way to a root, a source or a target (P9).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FolderIssue {
+    /// A link (symlink, junction, mount point).
+    Link,
+    /// A cloud placeholder.
+    Placeholder,
+    /// It must exist but has no fact, or it could not be read.
+    Unknown,
+}
+
+fn attrs_issue(a: &Attributes) -> Option<FolderIssue> {
+    if a.reparse_point {
+        Some(FolderIssue::Link)
+    } else if a.cloud_placeholder {
+        Some(FolderIssue::Placeholder)
+    } else {
+        None
+    }
+}
+
+/// The issue of a folder that must exist: no fact is an issue too.
+fn issue_of(fact: Option<&FolderFact>) -> Option<FolderIssue> {
+    match fact {
+        Some(FolderFact::Exists(a)) => attrs_issue(a),
+        Some(FolderFact::Unreadable) | None => Some(FolderIssue::Unknown),
+    }
 }
 
 /// How a planned source looks now, through a lookup that does not follow links.
@@ -99,10 +145,13 @@ pub enum DestRoot {
     Folder(Attributes),
     /// Something that is not a folder.
     NotAFolder,
-    /// Nothing, but its parent folder exists (`make_dirs` will create it).
-    ParentExists,
+    /// Nothing, but its parent folder exists, with these attributes (`make_dirs` will create
+    /// the root). A parent that is a link or a placeholder blocks.
+    ParentExists(Attributes),
     /// Neither it nor its parent.
     Missing,
+    /// The lookup failed: blocks.
+    Unreadable,
 }
 
 /// Free space on one volume (P5).
@@ -135,12 +184,11 @@ impl TimeRule {
         }
     }
 
-    /// The two times match under this rule. Two unknown times match; a known and an unknown
-    /// one do not.
+    /// The two times match under this rule. An unknown time matches nothing, not even another
+    /// unknown one: a change cannot be ruled out, so P10 holds the group (fails closed).
     pub fn matches(self, a: Option<i64>, b: Option<i64>) -> bool {
         const HOUR_NS: i64 = 3_600 * 1_000_000_000;
         match (a, b) {
-            (None, None) => true,
             (Some(a), Some(b)) => {
                 a == b || (self == Self::DstHour && a.abs_diff(b) == HOUR_NS.unsigned_abs())
             }
@@ -176,36 +224,33 @@ pub struct Facts {
     /// Free space per volume, by GUID path (P5). A volume that needs space and has no entry
     /// blocks apply.
     pub space: BTreeMap<VolumeGuidPath, Space>,
-    /// The source root's attributes (P9: no link or placeholder at the root).
-    pub source_root: Attributes,
+    /// The source root (P9: no link or placeholder at the root; unreadable blocks).
+    pub source_root: FolderFact,
     /// What is at the destination root (ignored when the plan keeps nothing).
     pub dest_root: DestRoot,
-    /// The destination is inside a folder that a cloud sync client registered (P17).
-    pub dest_in_sync_root: bool,
-    /// Culla's preview pipeline is stopped and holds no handle (P16).
+    /// The destination is inside a folder that a cloud sync client registered (P17). `None`:
+    /// the lookup failed, which gives its own warning.
+    pub dest_in_sync_root: Option<bool>,
+    /// Culla's preview pipeline is stopped and holds no handle (P16). `false` until the
+    /// pipeline says so.
     pub preview_idle: bool,
     /// A fresh snapshot of the entries under the target roots (P11).
     pub targets: Existing,
     sources: BTreeMap<String, SourceFact>,
-    folders: BTreeMap<(Tree, String), Attributes>,
-}
-
-impl Default for Facts {
-    fn default() -> Self {
-        Self::new()
-    }
+    folders: BTreeMap<(Tree, String), FolderFact>,
 }
 
 impl Facts {
-    /// No volumes, no sources, no folders; the destination root missing; the preview idle.
-    pub fn new() -> Self {
+    /// The two root facts, which every run needs; no volumes, no space, no sources, no
+    /// folders; the sync-root lookup not done; the preview pipeline not known to be idle.
+    pub fn new(source_root: FolderFact, dest_root: DestRoot) -> Self {
         Self {
             mounted: Vec::new(),
             space: BTreeMap::new(),
-            source_root: Attributes::default(),
-            dest_root: DestRoot::Missing,
-            dest_in_sync_root: false,
-            preview_idle: true,
+            source_root,
+            dest_root,
+            dest_in_sync_root: None,
+            preview_idle: false,
             targets: Existing::new(),
             sources: BTreeMap::new(),
             folders: BTreeMap::new(),
@@ -218,18 +263,36 @@ impl Facts {
         self.sources.insert(key(path), fact);
     }
 
-    /// The folder at `path` under `tree` exists with these attributes. A folder with no fact
-    /// does not exist yet (`make_dirs` creates target folders at apply).
+    /// The folder at `path` under `tree` exists with these attributes.
+    ///
+    /// A folder with no fact is taken as absent only where that is possible: a target folder
+    /// the snapshot ([`Facts::targets`]) does not show (`make_dirs` creates it at apply). A
+    /// folder between the source root and a planned source, a target folder the snapshot
+    /// shows, and a folder above a root must exist, so no fact holds the group or blocks.
     pub fn add_folder(&mut self, tree: Tree, path: &[String], attrs: Attributes) {
-        self.folders.insert((tree, key(path)), attrs);
+        self.folders
+            .insert((tree, key(path)), FolderFact::Exists(attrs));
+    }
+
+    /// The lookup of the folder at `path` under `tree` failed: it holds or blocks.
+    pub fn add_unreadable_folder(&mut self, tree: Tree, path: &[String]) {
+        self.folders
+            .insert((tree, key(path)), FolderFact::Unreadable);
     }
 
     fn source(&self, path: &[String]) -> Option<&SourceFact> {
         self.sources.get(&key(path))
     }
 
-    fn folder(&self, tree: Tree, path: &[String]) -> Option<&Attributes> {
+    fn folder(&self, tree: Tree, path: &[String]) -> Option<&FolderFact> {
         self.folders.get(&(tree, key(path)))
+    }
+
+    /// The first issue among the folders above `root`, from the top (the volume's own root is
+    /// not looked at).
+    fn ancestor_issue(&self, root: &Source) -> Option<FolderIssue> {
+        let c = root.components();
+        (1..c.len()).find_map(|n| issue_of(self.folder(Tree::Volume(root.volume()), &c[..n])))
     }
 }
 
@@ -261,12 +324,22 @@ pub enum Blocker {
     SourceVolumeRefused(VolumePathError),
     /// P9 at the root: the source folder is now a link or a cloud placeholder.
     SourceRootLink,
+    /// P9 at the root: the source folder could not be looked at.
+    SourceRootUnreadable,
+    /// P9 above the root: a folder above the source folder is a link or a placeholder, could
+    /// not be read, or has no fact.
+    SourceAncestor(FolderIssue),
     /// P2: the plan keeps groups but no destination is given (a bug in the caller).
     NoDestination,
     /// P2: the destination volume is not bound to exactly one mounted volume.
     DestVolume(Unbound),
     /// P2: neither the destination folder nor its parent exists.
     DestRootMissing,
+    /// P2: the destination folder could not be looked at.
+    DestRootUnreadable,
+    /// P6 above the root: a folder above the destination folder (its parent included) is a
+    /// link or a placeholder, could not be read, or has no fact.
+    DestAncestor(FolderIssue),
     /// P3: the source volume is read-only (the SD card's lock switch) and the plan renames,
     /// moves or copies into `_rejected` on it.
     SourceReadOnly,
@@ -338,6 +411,12 @@ pub enum Hold {
         /// The member.
         member: MemberId,
     },
+    /// P9: a folder of a source, or a target folder the snapshot shows, has no fact or could
+    /// not be read, so links and placeholders cannot be ruled out.
+    FolderUnknown {
+        /// The member.
+        member: MemberId,
+    },
     /// P10: a source is missing, no longer a file, or its size or mtime changed: "changed since
     /// scan, rescan".
     ChangedSinceScan {
@@ -391,6 +470,8 @@ pub enum Warning {
     /// P17: the destination is inside a cloud-synced folder; the sync client may upload,
     /// change or move the files during and after the apply.
     CloudSynced,
+    /// P17: whether the destination is inside a cloud-synced folder could not be found out.
+    SyncRootUnknown,
 }
 
 /// The result of a preflight run.
@@ -485,8 +566,16 @@ pub fn preflight(plan: &Plan, roots: &Roots, facts: &Facts) -> Report {
             None
         }
     };
-    if facts.source_root.reparse_point || facts.source_root.cloud_placeholder {
-        r.blockers.push(Blocker::SourceRootLink);
+    match facts.source_root {
+        FolderFact::Exists(a) => {
+            if attrs_issue(&a).is_some() {
+                r.blockers.push(Blocker::SourceRootLink);
+            }
+        }
+        FolderFact::Unreadable => r.blockers.push(Blocker::SourceRootUnreadable),
+    }
+    if let Some(i) = facts.ancestor_issue(&roots.source) {
+        r.blockers.push(Blocker::SourceAncestor(i));
     }
     let src = Vol {
         id: roots.source.volume(),
@@ -587,7 +676,7 @@ pub fn preflight(plan: &Plan, roots: &Roots, facts: &Facts) -> Report {
         Warning::Locked { group, .. } | Warning::LongPath { group, .. } => {
             !held.contains_key(group)
         }
-        Warning::CloudSynced => true,
+        Warning::CloudSynced | Warning::SyncRootUnknown => true,
     });
     let runnable: Vec<&PlannedOp> = plan
         .ops
@@ -607,8 +696,18 @@ pub fn preflight(plan: &Plan, roots: &Roots, facts: &Facts) -> Report {
                 }
             }
             DestRoot::NotAFolder => r.blockers.push(Blocker::DestNotAFolder),
-            DestRoot::ParentExists => {}
+            DestRoot::ParentExists(_) => {}
             DestRoot::Missing => r.blockers.push(Blocker::DestRootMissing),
+            DestRoot::Unreadable => r.blockers.push(Blocker::DestRootUnreadable),
+        }
+        if facts.dest_root != DestRoot::Missing {
+            let parent = match facts.dest_root {
+                DestRoot::ParentExists(a) => attrs_issue(&a),
+                _ => None,
+            };
+            if let Some(i) = facts.ancestor_issue(d).or(parent) {
+                r.blockers.push(Blocker::DestAncestor(i));
+            }
         }
         if let Some(info) = v.info {
             if info.read_only() {
@@ -685,8 +784,8 @@ pub fn preflight(plan: &Plan, roots: &Roots, facts: &Facts) -> Report {
         }
     }
 
-    // P7: every runnable target is a valid path under its root, equals no source and is
-    // unique. Compared as (volume, folded absolute path).
+    // P7: every target, held groups included, is a valid path under its root, equals no
+    // source and is unique. Compared as (volume, folded absolute path).
     let abs = |vol: VolumeId, root: &[String], rel: &[String]| {
         let mut p = root.to_vec();
         p.extend(rel.iter().cloned());
@@ -699,7 +798,7 @@ pub fn preflight(plan: &Plan, roots: &Roots, facts: &Facts) -> Report {
         .map(|o| abs(roots.source.volume(), &src_parts, &o.src))
         .collect();
     let mut seen = BTreeSet::new();
-    for o in &runnable {
+    for o in &plan.ops {
         let (vol, root_parts) = match o.root {
             Root::Dest => match &roots.dest {
                 Some(d) => (d.volume(), d.components().to_vec()),
@@ -739,8 +838,12 @@ pub fn preflight(plan: &Plan, roots: &Roots, facts: &Facts) -> Report {
         .filter(|(g, _)| !r.held.iter().any(|(h, _)| h == g))
         .collect();
     r.warnings = group_warnings;
-    if keeps_now && facts.dest_in_sync_root {
-        r.warnings.push(Warning::CloudSynced);
+    if keeps_now {
+        match facts.dest_in_sync_root {
+            Some(true) => r.warnings.push(Warning::CloudSynced),
+            Some(false) => {}
+            None => r.warnings.push(Warning::SyncRootUnknown),
+        }
     }
     r
 }
@@ -773,39 +876,56 @@ fn hold_for(
     }
     // P9: the source, its folders, the target folders (the roots are checked apart).
     let fact = facts.source(&o.src);
-    let link = |a: &Attributes| a.reparse_point;
-    let placeholder = |a: &Attributes| a.cloud_placeholder;
-    let src_folder = &o.src[..o.src.len().saturating_sub(1)];
-    let mut folders: Vec<(Tree, Vec<String>)> = (1..=src_folder.len())
-        .map(|n| (Tree::Source, src_folder[..n].to_vec()))
+    let mut issues: Vec<FolderIssue> = fact
+        .and_then(|f| attrs_issue(&f.attrs))
+        .into_iter()
         .collect();
+    // The folders between the source root and the source must exist.
+    let src_folder = &o.src[..o.src.len().saturating_sub(1)];
+    issues.extend(
+        (1..=src_folder.len())
+            .filter_map(|n| issue_of(facts.folder(Tree::Source, &src_folder[..n]))),
+    );
+    // A target folder with no fact is absent, unless the snapshot shows it.
     let dst_folder = &o.dst[..o.dst.len().saturating_sub(1)];
+    let shown = |n: usize| {
+        let root = o.root;
+        let t = &facts.targets;
+        if n == 0 {
+            // `_rejected` itself exists if anything under it does.
+            t.has_entries(root)
+        } else {
+            // A file in the way is P11's (a re-plan), not a folder to look at.
+            t.is_taken(root, &dst_folder[..n]) && !t.is_blocked(root, &dst_folder[..n])
+        }
+    };
+    let target = |tree: Tree, path: &[String], n: usize| match facts.folder(tree, path) {
+        Some(f) => issue_of(Some(f)),
+        None if shown(n) => Some(FolderIssue::Unknown),
+        None => None,
+    };
     match o.root {
         Root::Dest => {
-            folders.extend((1..=dst_folder.len()).map(|n| (Tree::Dest, dst_folder[..n].to_vec())));
+            issues.extend(
+                (1..=dst_folder.len()).filter_map(|n| target(Tree::Dest, &dst_folder[..n], n)),
+            );
         }
         Root::Rejected => {
             for n in 0..=dst_folder.len() {
                 let mut p = vec![REJECTED.to_owned()];
                 p.extend(dst_folder[..n].iter().cloned());
-                folders.push((Tree::Source, p));
+                issues.extend(target(Tree::Source, &p, n));
             }
         }
     }
-    let attrs: Vec<Attributes> = fact
-        .map(|f| f.attrs)
-        .into_iter()
-        .chain(
-            folders
-                .iter()
-                .filter_map(|(t, p)| facts.folder(*t, p).copied()),
-        )
-        .collect();
-    if attrs.iter().any(link) {
+    if issues.contains(&FolderIssue::Link) {
         return Some(Hold::Link { member });
     }
-    if attrs.iter().any(placeholder) {
+    if issues.contains(&FolderIssue::Placeholder) {
         return Some(Hold::Placeholder { member });
+    }
+    if issues.contains(&FolderIssue::Unknown) {
+        return Some(Hold::FolderUnknown { member });
     }
     // P10: still there, a file, with the scanned size and mtime.
     let rule = TimeRule::for_fs(src.fs_name());
@@ -831,17 +951,31 @@ impl fmt::Display for Unbound {
     }
 }
 
+impl fmt::Display for FolderIssue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Link => "is a link",
+            Self::Placeholder => "is a cloud placeholder",
+            Self::Unknown => "could not be read",
+        })
+    }
+}
+
 impl fmt::Display for Blocker {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::SourceVolume(u) => write!(f, "source volume not bound: {u}"),
             Self::SourceVolumeRefused(e) => write!(f, "source volume refused: {e}"),
             Self::SourceRootLink => f.write_str("the source folder is a link or a placeholder"),
+            Self::SourceRootUnreadable => f.write_str("the source folder could not be read"),
+            Self::SourceAncestor(i) => write!(f, "a folder above the source folder {i}"),
             Self::NoDestination => f.write_str("the plan keeps groups but has no destination"),
             Self::DestVolume(u) => write!(f, "destination volume not bound: {u}"),
             Self::DestRootMissing => {
                 f.write_str("the destination folder and its parent are missing")
             }
+            Self::DestRootUnreadable => f.write_str("the destination folder could not be read"),
+            Self::DestAncestor(i) => write!(f, "a folder above the destination folder {i}"),
             Self::SourceReadOnly => {
                 f.write_str("the card is write-protected: check the lock switch on its side")
             }

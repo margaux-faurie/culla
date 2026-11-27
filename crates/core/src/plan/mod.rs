@@ -274,6 +274,11 @@ impl Existing {
         self.taken.contains(&(root, key(path)))
     }
 
+    /// Something exists under `root`, so the root folder itself exists.
+    pub fn has_entries(&self, root: Root) -> bool {
+        self.taken.iter().any(|(r, _)| *r == root)
+    }
+
     /// A file sits where `folder` or one of its ancestors should be a folder.
     pub fn is_blocked(&self, root: Root, folder: &[String]) -> bool {
         (1..=folder.len()).any(|n| self.files.contains(&(root, key(&folder[..n]))))
