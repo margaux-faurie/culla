@@ -169,8 +169,9 @@ mod windows {
             let m = local_utc_offset_minutes(ns).unwrap();
             assert!((-12 * 60..=14 * 60).contains(&m), "{ns}: {m}");
         }
-        // Before 1601, FILETIME has no value: no answer, never a panic.
-        assert_eq!(local_utc_offset_minutes(i64::MIN), None);
+        // The extremes of i64 nanoseconds (years 1677 and 2262) are inside FILETIME's range:
+        // an answer or none, never a panic.
+        let _ = local_utc_offset_minutes(i64::MIN);
         let _ = local_utc_offset_minutes(i64::MAX);
     }
 }
