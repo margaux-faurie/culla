@@ -14,7 +14,7 @@ use crate::scan::{Identity, Report, Totals, exclusion_detail, group_files, is_fo
 /// paragraph separators (the set is [`needs_escape`]). File names and
 /// volume labels come from the card, so they are untrusted (threat model T6b).
 #[must_use]
-pub fn shown(s: &str) -> Cow<'_, str> {
+pub(crate) fn shown(s: &str) -> Cow<'_, str> {
     if !s.chars().any(needs_escape) {
         return Cow::Borrowed(s);
     }
@@ -31,7 +31,7 @@ pub fn shown(s: &str) -> Cow<'_, str> {
 
 /// `n` and the noun, plural unless `n` is 1 (`entry` becomes `entries`).
 #[must_use]
-pub fn count(n: u64, noun: &str) -> String {
+pub(crate) fn count(n: u64, noun: &str) -> String {
     match (n, noun.strip_suffix('y')) {
         (1, _) => format!("1 {noun}"),
         (_, Some(stem)) => format!("{n} {stem}ies"),
@@ -44,7 +44,7 @@ pub fn count(n: u64, noun: &str) -> String {
 /// controls and isolates, the line and paragraph separators, word joiners and invisible
 /// operators, the BOM, interlinear annotation controls and the tag characters.
 #[must_use]
-pub fn needs_escape(c: char) -> bool {
+pub(crate) fn needs_escape(c: char) -> bool {
     c.is_control()
         || matches!(
             c,
@@ -62,7 +62,7 @@ pub fn needs_escape(c: char) -> bool {
 
 /// The report as text, ending with a newline.
 #[must_use]
-pub fn render(report: &Report) -> String {
+pub(crate) fn render(report: &Report) -> String {
     let mut o = String::new();
     let line = |o: &mut String, s: &str| {
         o.push_str(s);

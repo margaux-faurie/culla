@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 /// What to run.
 #[derive(Debug, PartialEq, Eq)]
-pub enum Command {
+pub(crate) enum Command {
     /// Print help: the overview, or one command's.
     Help(Topic),
     /// Print the version.
@@ -18,7 +18,7 @@ pub enum Command {
 
 /// A help page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Topic {
+pub(crate) enum Topic {
     /// Every command.
     Overview,
     /// `culla scan`.
@@ -27,7 +27,7 @@ pub enum Topic {
 
 /// The arguments of `culla scan`.
 #[derive(Debug, PartialEq, Eq)]
-pub struct ScanArgs {
+pub(crate) struct ScanArgs {
     /// The folder to scan, as given.
     pub folder: PathBuf,
     /// Scan subfolders too (default on, off with `--no-subfolders`).
@@ -38,7 +38,7 @@ pub struct ScanArgs {
 
 /// The command line is not valid. The text says why; usage follows it on stderr.
 #[derive(Debug, PartialEq, Eq)]
-pub struct UsageError {
+pub(crate) struct UsageError {
     /// What is wrong.
     pub message: String,
     /// The help page to point to.
@@ -64,7 +64,7 @@ fn usage(topic: Topic, message: impl Into<String>) -> UsageError {
 ///
 /// [`UsageError`] for no command, an unknown command or option, an option given twice, a
 /// missing or extra folder.
-pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, UsageError> {
+pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, UsageError> {
     let mut args = args.into_iter();
     let Some(first) = args.next() else {
         return Err(usage(Topic::Overview, "no command given"));
@@ -159,7 +159,7 @@ fn quoted(arg: &OsString) -> String {
 
 /// Help text for a topic.
 #[must_use]
-pub fn help(topic: Topic) -> &'static str {
+pub(crate) fn help(topic: Topic) -> &'static str {
     match topic {
         Topic::Overview => OVERVIEW,
         Topic::Scan => SCAN,

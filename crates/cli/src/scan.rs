@@ -24,7 +24,7 @@ use crate::text::count;
 
 /// The folder's identity, or why there is none.
 #[derive(Debug)]
-pub enum Identity {
+pub(crate) enum Identity {
     /// Looked up on Windows.
     Resolved(ResolvedFolder),
     /// Not looked up (off Windows): the text says why.
@@ -33,7 +33,7 @@ pub enum Identity {
 
 /// Everything `culla scan` prints.
 #[derive(Debug)]
-pub struct Report {
+pub(crate) struct Report {
     /// The folder as given.
     pub folder: PathBuf,
     /// The path scanned: the canonical path when the volume was resolved, else as given.
@@ -54,7 +54,7 @@ pub struct Report {
 
 /// Why the scan did not run.
 #[derive(Debug, PartialEq, Eq)]
-pub enum Failure {
+pub(crate) enum Failure {
     /// The folder is refused: exit code 2.
     Refused(String),
     /// The folder cannot be read: exit code 3.
@@ -67,7 +67,7 @@ pub enum Failure {
 ///
 /// [`Failure::Refused`] when the folder or its volume is refused, [`Failure::Io`] when it
 /// cannot be read.
-pub fn run(args: &ScanArgs, progress: &mut Progress) -> Result<Report, Failure> {
+pub(crate) fn run(args: &ScanArgs, progress: &mut Progress) -> Result<Report, Failure> {
     let (scanned, identity) = match resolve_folder(&args.folder) {
         Ok(r) => (r.canonical.clone(), Identity::Resolved(r)),
         Err(VolumeError::Unsupported) => (
@@ -130,7 +130,7 @@ pub fn run(args: &ScanArgs, progress: &mut Progress) -> Result<Report, Failure> 
 
 /// Counts shown under "totals".
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Totals {
+pub(crate) struct Totals {
     /// Groups.
     pub groups: usize,
     /// JPEG + NEF.
@@ -156,7 +156,7 @@ pub struct Totals {
 impl Totals {
     /// The totals of `report`.
     #[must_use]
-    pub fn of(report: &Report) -> Self {
+    pub(crate) fn of(report: &Report) -> Self {
         let g = &report.grouping;
         let mut t = Self {
             groups: g.groups.len(),
@@ -194,7 +194,7 @@ impl Totals {
 
 /// What a group holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GroupKind {
+pub(crate) enum GroupKind {
     /// A JPEG and its NEF.
     Pair,
     /// A NEF without a JPEG.
@@ -205,7 +205,7 @@ pub enum GroupKind {
 
 /// The kind of `group`.
 #[must_use]
-pub fn group_kind(group: &Group) -> GroupKind {
+pub(crate) fn group_kind(group: &Group) -> GroupKind {
     match (group.primary.kind, &group.raw) {
         (PhotoKind::Nef, _) => GroupKind::LoneNef,
         (PhotoKind::Jpeg, Some(_)) => GroupKind::Pair,
@@ -216,7 +216,7 @@ pub fn group_kind(group: &Group) -> GroupKind {
 /// Every file of `group` with its role (`primary`, `raw`, `duplicate`, `sidecar`) and, for
 /// a sidecar, the file it follows.
 #[must_use]
-pub fn group_files(group: &Group) -> Vec<(String, &'static str, Option<&'static str>)> {
+pub(crate) fn group_files(group: &Group) -> Vec<(String, &'static str, Option<&'static str>)> {
     let mut out = vec![(group.primary.entry.rel_path(), "primary", None)];
     if let Some(raw) = &group.raw {
         out.push((raw.entry.rel_path(), "raw", None));
@@ -236,7 +236,7 @@ pub fn group_files(group: &Group) -> Vec<(String, &'static str, Option<&'static 
 
 /// The detail of an excluded entry that names a folder the scan could not list.
 #[must_use]
-pub fn exclusion_detail(kind: &EntryKind) -> Option<&str> {
+pub(crate) fn exclusion_detail(kind: &EntryKind) -> Option<&str> {
     match kind {
         EntryKind::Unlisted { detail, .. } | EntryKind::Unreadable(detail) => Some(detail),
         _ => None,
@@ -245,7 +245,7 @@ pub fn exclusion_detail(kind: &EntryKind) -> Option<&str> {
 
 /// The report as one JSON object (`--json`).
 #[must_use]
-pub fn to_json(report: &Report) -> Value {
+pub(crate) fn to_json(report: &Report) -> Value {
     let (volume, source, unavailable) = match &report.identity {
         Identity::Resolved(r) => {
             let v = &r.volume;
@@ -365,7 +365,7 @@ pub fn to_json(report: &Report) -> Value {
 
 /// True for an entry that names a folder.
 #[must_use]
-pub fn is_folder(kind: &EntryKind) -> bool {
+pub(crate) fn is_folder(kind: &EntryKind) -> bool {
     matches!(kind, EntryKind::Dir | EntryKind::Unlisted { .. })
 }
 
@@ -433,7 +433,7 @@ fn group_json(position: usize, group: &Group, meta: &Result<PhotoMeta, String>) 
 /// batch while scanning, every 100 groups while reading metadata). While scanning it counts
 /// entries only: batches do not map one to one to the folders of the summary (`NKSC_PARAM`
 /// folders share their parent's batch), so the folder count is given once the scan is done.
-pub struct Progress {
+pub(crate) struct Progress {
     tty: bool,
     err: io::Stderr,
 }
@@ -441,7 +441,7 @@ pub struct Progress {
 impl Progress {
     /// Progress to this process's stderr.
     #[must_use]
-    pub fn stderr() -> Self {
+    pub(crate) fn stderr() -> Self {
         let err = io::stderr();
         Self {
             tty: err.is_terminal(),
