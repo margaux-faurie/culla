@@ -36,31 +36,44 @@ jobs:
     env:
       BRANCH: ${{ inputs.branch }}
       CARGO_ARGS: ${{ inputs.cargo }}
+      DEFAULT: ${{ github.event.repository.default_branch }}
     steps:
       - name: Check the branch name
         run: |
-          case "$BRANCH" in
-            ""|main|*..*|-*|*" "*) echo "Refusing branch '$BRANCH'"; exit 1 ;;
+          lower=$(printf '%s' "$BRANCH" | tr '[:upper:]' '[:lower:]')
+          case "$lower" in
+            ""|main|refs/*|*..*|-*|*" "*) echo "Refusing branch '$BRANCH'"; exit 1 ;;
           esac
+          [ "$lower" != "$(printf '%s' "$DEFAULT" | tr '[:upper:]' '[:lower:]')" ] || { echo "Refusing the default branch"; exit 1; }
           echo "$BRANCH" | grep -Eq '^[A-Za-z0-9._/-]+$' || { echo "Refusing branch '$BRANCH'"; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.branch }}
+          # The write token is never stored in .git/config while branch code (.pnpmfile.cjs,
+          # .cargo/config.toml) can run; it is passed only to the final push.
+          persist-credentials: false
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
       - name: Cargo.lock
         run: |
+          set -f
+          case " $CARGO_ARGS " in
+            *--config*|*--manifest-path*|*" -Z"*|*--lockfile-path*) echo "Refusing cargo arguments"; exit 1 ;;
+          esac
           # shellcheck disable=SC2086
           if [ -n "$CARGO_ARGS" ]; then cargo update $CARGO_ARGS; else cargo metadata --format-version 1 > /dev/null; fi
       - name: pnpm-lock.yaml
-        run: pnpm install --lockfile-only --no-frozen-lockfile
+        run: pnpm install --lockfile-only --no-frozen-lockfile --ignore-pnpmfile
       - name: Commit and push
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Cargo.lock pnpm-lock.yaml
           if git diff --cached --quiet; then echo "Lockfiles unchanged."; exit 0; fi
           git commit -m "build: refresh lockfiles (generated in CI)"
-          git push origin "HEAD:refs/heads/$BRANCH"
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:refs/heads/$BRANCH"
