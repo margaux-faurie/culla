@@ -14,11 +14,11 @@ use std::path::Path;
 
 use crate::json::{self, Value};
 
-pub const DIR: &str = "testdata/event-log";
+pub(crate) const DIR: &str = "testdata/event-log";
 const LOG: &str = ".jsonl";
 const EXPECTED: &str = ".expected.json";
 
-pub fn check(root: &Path) -> Result<(), String> {
+pub(crate) fn check(root: &Path) -> Result<(), String> {
     let dir = root.join(DIR);
     let entries = fs::read_dir(&dir).map_err(|e| format!("cannot read {DIR}/: {e}"))?;
     let mut logs = BTreeSet::new();
@@ -61,7 +61,7 @@ fn read(dir: &Path, file: &str) -> Result<String, String> {
 }
 
 /// JSON Lines: every line is one JSON object; the file is empty or ends with a newline.
-pub fn check_log_text(text: &str) -> Result<usize, String> {
+pub(crate) fn check_log_text(text: &str) -> Result<usize, String> {
     if !text.is_empty() && !text.ends_with('\n') {
         return Err("does not end with a newline".into());
     }
@@ -77,7 +77,7 @@ pub fn check_log_text(text: &str) -> Result<usize, String> {
     Ok(events)
 }
 
-pub fn check_expected_text(text: &str) -> Result<(), String> {
+pub(crate) fn check_expected_text(text: &str) -> Result<(), String> {
     let v = json::parse(text)?;
     match (v.get("state"), v.get("done"), v.get("undone")) {
         (Some(Value::Object(_)), Some(Value::Array(_)), Some(Value::Array(_))) => Ok(()),

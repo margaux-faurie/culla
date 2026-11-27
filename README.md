@@ -166,6 +166,7 @@ What could go wrong and how each risk is handled is in the [threat model](docs/t
 | [File engine](docs/design/file-engine.md) | Data model, grouping, plan, apply, recovery, invariants |
 | [ADRs](docs/adr/README.md) | Decisions and their reasons |
 | [Threat model](docs/threat-model.md) | Threats and mitigations |
+| [Incident response](docs/incident-response.md) | What to do about a leaked key, a bad release or a vulnerability |
 | [Testing](docs/testing.md) | Test strategy and definition of done |
 | [Roadmap](docs/roadmap.md) | Milestones M0 to M6 |
 
@@ -174,10 +175,11 @@ What could go wrong and how each risk is handled is in the [threat model](docs/t
 Requirements: Windows 11 with WebView2 for the desktop app, the Rust toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (rustup installs it), Node.js 22.12 or later and pnpm. The web demo and the Rust tests also run on Linux (untested on macOS); there, install `libwebkit2gtk-4.1-dev` or run the tests with `--exclude culla-app`.
 
 ```sh
-pnpm install            # install UI dependencies
-pnpm dev:demo           # run the web demo in a browser
-cargo test --workspace  # run the Rust tests
-pnpm tauri dev          # run the desktop app (Windows)
+pnpm install                             # install UI dependencies
+pnpm dev:demo                            # run the web demo in a browser
+cargo test --workspace                   # run the Rust tests
+cargo run -p culla-cli -- scan <folder>  # list a folder's photos, read-only
+pnpm tauri dev                           # run the desktop app (Windows)
 ```
 
 The full list of commands is in [CLAUDE.md](CLAUDE.md).

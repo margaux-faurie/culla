@@ -64,7 +64,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
   - Own TIFF/IFD walker for NEF previews; fuzz targets running nightly.
   - Preview pipeline: turbojpeg scaled decode, resize, orientation, encode; reader threads separate from decode workers; prefetch; in-memory LRU; disk cache. No mmap on removable media.
   - Decode and scan I/O in `culla-adapters`; grouping, ordering and the IFD walker's parsing logic in `culla-core`, fed by positioned reads from `culla-adapters` (ADR 0025).
-  - Headless CLI `culla scan`, `culla preview` (`crates/cli`) and `culla-bench` (`crates/bench`), per [ADR 0020](adr/0020-headless-cli-and-bench-crates.md).
+  - Headless CLI `culla scan`, `culla preview` (`crates/cli`) and `culla-bench` (`crates/bench`), per [ADR 0020](adr/0020-headless-cli-and-bench-crates.md). `culla scan` is in (slice 6): read-only, text or `--json`; its exit codes, off-Windows behaviour, JSON fields (unstable until M2) and std-only parsing are provisional, open in [SPEC §10](SPEC.md#10-open-questions).
   - Scan and preview benchmark campaign (B-01 to B-11, B-15, B-16) per [benchmarks.md](benchmarks.md).
 - **Exit criteria:**
   - Stories US-01 to US-09 pass, except US-09's criterion that the session and the cache are found again under another letter: the key is in M1 (`culla_core::volume`), and the criterion closes with M2's session store (and the VHDX remount test).
@@ -150,7 +150,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
 - **Goal:** a first public release someone else can install and trust.
 - **Scope:**
   - NSIS per-user installer via `tauri-action` as a draft GitHub Release; `tauri-plugin-updater` with its signing key (backed up) and `latest.json`.
-  - README with GIF, SmartScreen note, Lightroom warning; CONTRIBUTING, CODE_OF_CONDUCT, SECURITY.md, PRIVACY.md, third-party licences file; `docs/releasing.md`.
+  - README with GIF, SmartScreen note, Lightroom warning; CONTRIBUTING, a code of conduct if adopted (SPEC §10), SECURITY.md, PRIVACY.md, third-party licences file; `docs/releasing.md`.
   - Third-party notices in the installer, crediting the Independent JPEG Group and carrying libjpeg-turbo's BSD and Zlib notices ([architecture.md](architecture.md) section 5.2, preview pipeline).
   - NASM in CI and release builds, so libjpeg-turbo is built with SIMD, with a check that fails the build when it is missing.
   - Code signing policy section in the README, then the SignPath Foundation application (it requires a released project).

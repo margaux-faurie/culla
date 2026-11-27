@@ -13,3 +13,9 @@ Thumbs.db
 test-results/
 playwright-report/
 blob-report/
+# Secrets (updater signing keys, certificates, local env)
+*.key
+*.key.pub
+*.pem
+.env
+.env.*

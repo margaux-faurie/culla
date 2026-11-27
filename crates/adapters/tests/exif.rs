@@ -208,7 +208,7 @@ fn a_maker_note_past_the_cap_is_skipped_and_the_rest_kept() {
 #[test]
 fn reads_stop_at_the_cap() {
     let path = fixture("exif/DSC_0105.NEF");
-    let len = std::fs::metadata(&path).unwrap().len();
+    let len = fs::metadata(&path).unwrap().len();
     assert!(len < EXIF_HEAD_BYTES);
     assert_eq!(read_head(&path, EXIF_HEAD_BYTES).unwrap().len() as u64, len);
     assert_eq!(read_head(&path, 100).unwrap().len(), 100);
@@ -224,7 +224,7 @@ fn truncated_and_broken_files_never_fail_the_read() {
         "exif/DSC_0105.NEF",
     ] {
         let path = fixture(rel);
-        let bytes = std::fs::read(&path).unwrap();
+        let bytes = fs::read(&path).unwrap();
         for cut in 0..bytes.len() {
             let m = meta_from_head(bytes[..cut].to_vec(), Some(FileTime::utc(MTIME_NS)));
             assert!(m.captured.is_some(), "{rel} cut at {cut}");

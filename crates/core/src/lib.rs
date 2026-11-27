@@ -10,7 +10,7 @@ pub mod names;
 pub mod preview;
 pub mod volume;
 
-/// Crate version, so the other crates have something to link against in M0.
+/// Crate version, shown by the CLI, the bench and the app.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg(test)]

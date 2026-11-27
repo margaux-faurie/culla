@@ -12,11 +12,3 @@ pub mod scan;
 pub mod winfs;
 
 pub use culla_core::VERSION;
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn links_core() {
-        assert_eq!(super::VERSION, culla_core::VERSION);
-    }
-}
