@@ -34,7 +34,7 @@ Top quality goals, in priority order. Measurable targets are in [nfr.md](nfr.md)
 |---|---|
 | Windows 11 only; Windows 10 dropped (decided by Margaux, 27 Nov 2026). Target machine ROG Zephyrus G14 2024 (2880×1800 OLED) | WebView2 (evergreen Chromium). Windows file semantics drive the file engine (`rename` overwrites, sharing violations, `\\?\` paths). |
 | Source folders often on SD cards or external drives | Storage is the bottleneck. No memory-mapping of removable media. Identity cannot depend on the drive letter. |
-| MIT licence for the app binary | Dependencies must be permissive. LGPL and GPL crates (rawler, exiv2, exiftool-rs, libraw) are out. See [ADR 0017](adr/0017-mit-licence-and-cargo-deny-licence-allowlist.md). |
+| GPL-3.0-only licence for the app | Dependencies must be GPL-3.0-compatible; `cargo-deny` keeps an explicit allowlist, with weak copyleft allowed per crate only. See [ADR 0017](adr/0017-mit-licence-and-cargo-deny-licence-allowlist.md) and [ADR 0026](adr/0026-gpl-3-0-only-licence-and-reserved-name.md). |
 | Solo maintainer, open source | Small doc set, small dependency set, automated checks over manual process. |
 | Offline by default | Fonts and assets self-hosted, nothing from a CDN. |
 | No Windows code signing for v1 | SmartScreen warning. The updater uses its own signing key. See [ADR 0016](adr/0016-per-user-nsis-and-signed-updater-code-signing-deferred.md). |
@@ -545,7 +545,7 @@ ADR 0000 records how decisions are written. Index with status: [adr/README.md](a
 | [0014](adr/0014-backend-interface-with-build-time-implementations.md) | `Backend` interface with build-time Tauri and Demo implementations |
 | [0015](adr/0015-motion-for-swipe-physics.md) | Motion for swipe physics; commit first, at most 3 cards mounted |
 | [0016](adr/0016-per-user-nsis-and-signed-updater-code-signing-deferred.md) | Per-user NSIS + signed updater; code signing deferred |
-| [0017](adr/0017-mit-licence-and-cargo-deny-licence-allowlist.md) | MIT licence + cargo-deny licence allowlist |
+| [0017](adr/0017-mit-licence-and-cargo-deny-licence-allowlist.md) | MIT licence + cargo-deny licence allowlist (licence superseded by 0026) |
 | [0018](adr/0018-conventional-commits-and-release-please.md) | Conventional Commits + release-please |
 | [0019](adr/0019-generate-typescript-bindings-with-tauri-specta.md) | TS bindings with tauri-specta pinned RC, ts-rs as fallback |
 | [0020](adr/0020-headless-cli-and-bench-crates.md) | Headless CLI and bench crates |

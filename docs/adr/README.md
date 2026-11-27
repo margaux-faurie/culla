@@ -21,7 +21,7 @@ One decision per file, in [MADR 4](https://adr.github.io/madr/) minimal format. 
 | [0014](0014-backend-interface-with-build-time-implementations.md) | A `Backend` interface with build-time Tauri and Demo implementations | accepted |
 | [0015](0015-motion-for-swipe-physics.md) | Motion for swipe physics; commit first, animation catches up, at most 3 cards mounted | accepted |
 | [0016](0016-per-user-nsis-and-signed-updater-code-signing-deferred.md) | Distribution: per-user NSIS + signed updater; Windows code signing deferred | accepted |
-| [0017](0017-mit-licence-and-cargo-deny-licence-allowlist.md) | MIT licence + cargo-deny licence allowlist | accepted |
+| [0017](0017-mit-licence-and-cargo-deny-licence-allowlist.md) | MIT licence + cargo-deny licence allowlist | accepted; licence superseded by 0026 |
 | [0018](0018-conventional-commits-and-release-please.md) | Conventional Commits + release-please for versioning | accepted |
 | [0019](0019-generate-typescript-bindings-with-tauri-specta.md) | Generate TypeScript bindings with tauri-specta, pinned RC, ts-rs as fallback | accepted |
 | [0020](0020-headless-cli-and-bench-crates.md) | Headless CLI and bench crates | accepted |
@@ -30,3 +30,4 @@ One decision per file, in [MADR 4](https://adr.github.io/madr/) minimal format. 
 | [0023](0023-bare-sidecars-follow-the-nef.md) | Bare `X.xmp` and `X.pp3` follow the NEF, and stay with it when "RAW follows JPEG" is off | accepted |
 | [0024](0024-reconcile-event-for-a-file-joining-a-decided-group.md) | A new file joining a decided group makes it undecided, through a reconcile event | accepted |
 | [0025](0025-lone-nef-preview-is-the-largest-valid-embedded-jpeg.md) | A lone NEF's preview is its largest valid embedded JPEG, chosen by pixel count (refines 0011) | accepted |
+| [0026](0026-gpl-3-0-only-licence-and-reserved-name.md) | GPL-3.0-only licence, reserved name and logo, no outside pull requests (supersedes the licence in 0017) | accepted |

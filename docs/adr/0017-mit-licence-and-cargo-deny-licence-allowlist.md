@@ -5,6 +5,8 @@ date: 2026-11-24
 
 # MIT licence + cargo-deny licence allowlist
 
+The licence choice is superseded by [ADR 0026](0026-gpl-3-0-only-licence-and-reserved-name.md) (GPL-3.0-only, 27 Nov 2026). The `cargo-deny` allowlist below still applies.
+
 Implementation note (M0, PR #12): Tauri's dependency tree brings five MPL-2.0 crates (cssparser, cssparser-macros, selectors, dtoa-short, option-ext). They are allowed one by one as `[licenses] exceptions` in `deny.toml`, never in the global allowlist, so any other copyleft crate still fails CI. The third-party licences file (M6) must cover them.
 
 ## Context and problem statement

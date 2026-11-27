@@ -21,7 +21,7 @@ On file-engine topics (journal states, how renames are issued, verification), `d
 
 ## 1. What Culla is
 
-A Windows desktop app that culls a folder of Nikon photos (JPEG + NEF) one photo at a time with a swipe interface. Every decision goes into a queue. Nothing touches the disk until the user reviews the queue and confirms. Open source (MIT), with a browser demo of the same UI.
+A Windows desktop app that culls a folder of Nikon photos (JPEG + NEF) one photo at a time with a swipe interface. Every decision goes into a queue. Nothing touches the disk until the user reviews the queue and confirms. Open source (GPL-3.0-only, ADR 0026), with a browser demo of the same UI.
 
 **What sets it apart from QuickRawPicker, FastRawViewer and Photo Mechanic:** a swipe-first interface, plus a file engine that is provably safe. It treats a JPEG, its RAW and its sidecars as one group, never overwrites, journals every operation and resumes an apply that was interrupted.
 
@@ -47,6 +47,7 @@ A Windows desktop app that culls a folder of Nikon photos (JPEG + NEF) one photo
 | File engine | ADR 0021 (unbuffered source re-read for hash 3) and ADR 0022 (rename through the checked handle) accepted. A same-volume rename stays `committed` until the plan ends, so recovery can redo a rename the file system reverted; one reverted after the plan closed is shown at the next launch and redone after the user confirms (decided 27 Nov 2026, §5.2) |
 | Update check | On by default, once a day; can be turned off in settings (decided 27 Nov 2026) |
 | Success criteria | The PRD §7 targets are confirmed: 1,000 pairs from SD with zero lost files, recovery after a card pull, 30 minutes or less of swiping for 1,000 pairs (decided 27 Nov 2026) |
+| Licence and name | GPL-3.0-only (not "or later"), copyright Margaux Faurie; the "Culla" name and logo are reserved and forks must rename; issues are welcome but outside pull requests are not merged, so the code keeps one author (decided 27 Nov 2026, ADR 0026) |
 | Subfolders | Included (recursive scan) |
 | Volume | Thousands of photos, often on SD card or external drive |
 | v1 extras | Zoom to 100%, EXIF overlay, resume a session later |
@@ -131,7 +132,7 @@ culla/
 The items below describe behaviour; the pure parts live in `culla-core` and the I/O in `culla-adapters`.
 - **Scan:** streamed and recursive. It yields groups in filename order right away, so the first photo appears in about a second. A background pass reads only the first ~128 KB of each file to get EXIF (DateTimeOriginal, orientation), then sorts by capture time. Once the user has started swiping, the list is never re-sorted.
 - **EXIF:** `kamadak-exif` (BSD-2) for JPEG and NEF. The lens comes from `LensModel`, falling back to `LensSpecification`.
-- **NEF preview:** our own TIFF/IFD walker (~200 lines). It reads the SubIFDs and the MakerNote PreviewIFD and picks the largest embedded JPEG. This works for HE/HE\* NEFs too, since they embed ordinary JPEG previews. `rawler` is LGPL, so it is avoided (licensing would be murky for an MIT binary).
+- **NEF preview:** our own TIFF/IFD walker (~200 lines). It reads the SubIFDs and the MakerNote PreviewIFD and picks the largest embedded JPEG. This works for HE/HE\* NEFs too, since they embed ordinary JPEG previews. `rawler` is avoided (LGPL and `memmap2`, ADR 0011).
 - **Decode/resize:** `turbojpeg` with scaled decode, scaling to just above screen size (1/2 or 3/8 for 45 MP), then `fast_image_resize`, then JPEG encoding. EXIF orientation is applied at this point. The 100% zoom view loads the full image on demand.
 - **I/O:** 1–2 sequential reader threads, kept separate from the decode workers. Prefetch 5 ahead and 2 behind. The in-memory LRU holds about 12 screen previews. Thumbnails are cached on the internal disk (`%LOCALAPPDATA%\Culla\cache`), keyed by volume serial + path + size + mtime, capped at 2 GB with least-recently-used eviction. Files on removable media are **never memory-mapped**.
 - **Sessions & journal:** SQLite (`rusqlite`), one database per source (volume serial + relative path), stored in `%LOCALAPPDATA%\Culla\sessions`, never on the card. Uninstalling leaves this data unless the user ticks "remove my Culla data".
@@ -201,7 +202,7 @@ Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsm
 - pnpm + Cargo workspaces; Biome (lint + format for TS); rustfmt + clippy `-D warnings`; cargo-deny.
 - Tests: `cargo test` on core with tempfile fixtures (the file engine gets the most tests, including interrupted-apply scenarios); Vitest on the reducer and the UI logic; Playwright on the web demo.
 - CI on PRs: lint, test, build. Release via release-please with Conventional Commits. Dependabot (grouped). Action SHAs pinned. OpenSSF Scorecard.
-- MIT license, README with GIF, CONTRIBUTING, SECURITY.md, third-party licences file.
+- GPL-3.0-only licence (ADR 0026), TRADEMARKS for the name and logo, README with GIF, CONTRIBUTING (issues only, no outside PRs), SECURITY.md, third-party licences file.
 - Decisions recorded as ADRs in `docs/adr/` (these also feed the blog enablement guide).
 - Agent practices, security and architecture conventions: see `docs/research/practices.md`. Key rules: removal lives only in `remove_verified` (§5.2 step 5); `std::fs::remove_*` is banned outside `remove_verified`; `std::fs::rename` is banned everywhere (the adapters rename only through the checked handle with no-replace semantics, ADR 0022), both via clippy `disallowed-methods`; copies open targets with `create_new`; Tauri commands restricted with `AppManifest::commands`; the webview gets no fs plugin permissions; cargo-deny (no cargo-audit), CodeQL (JS/TS + Rust), workflow lockfiles, pnpm supply-chain settings; tauri-specta pinned (still RC), `ts-rs` as fallback; cargo-fuzz targets on the EXIF/NEF parsers.
 
