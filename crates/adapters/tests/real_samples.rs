@@ -1,8 +1,10 @@
-//! NEF previews on the author's real samples, which are not in the repository (they hold GPS).
+//! NEF previews and the scan on the author's real samples, which are not in the repository
+//! (they hold GPS).
 //!
 //! Ignored by default. Run with the folder of samples (searched recursively for `*.NEF`):
 //! `CULLA_REAL_SAMPLES=/path/to/samples cargo test -p culla-adapters --test real_samples -- --ignored --nocapture`
-//! Read-only: the files are opened with `File::open` and never written.
+//! Read-only: the files are opened with `File::open` and never written; the scan only lists
+//! folders.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,6 +12,8 @@ use std::path::{Path, PathBuf};
 use culla_adapters::metadata::nef_preview::{
     FileSource, MAX_PREVIEW_BYTES, find_preview, read_preview_bytes,
 };
+use culla_adapters::scan::scan_and_group;
+use culla_core::grouping::{GroupStatus, PhotoKind, ScanPolicy};
 use culla_core::ifd::{self, Limits};
 
 /// Long edge of the G14 screen (SPEC): a preview below it would look soft.
@@ -104,4 +108,47 @@ fn real_nefs_yield_a_screen_sized_preview() {
         }
     }
     println!("{} NEF(s), {lone} lone", files.len());
+}
+
+#[test]
+#[ignore = "needs the author's samples: set CULLA_REAL_SAMPLES"]
+fn real_samples_scan_into_pairs_and_lone_nefs() {
+    let Ok(root) = std::env::var("CULLA_REAL_SAMPLES") else {
+        println!("skipped: CULLA_REAL_SAMPLES is not set");
+        return;
+    };
+    let policy = ScanPolicy::new(true);
+    let (g, summary) = scan_and_group(Path::new(&root), &policy).unwrap();
+    let mut files = Vec::new();
+    nefs(Path::new(&root), &mut files);
+    let (mut pairs, mut lone) = (0, 0);
+    for group in &g.groups {
+        assert_eq!(group.status, GroupStatus::Ok, "{}", group.stem);
+        match (&group.primary.kind, &group.raw) {
+            (PhotoKind::Jpeg, Some(_)) => pairs += 1,
+            (PhotoKind::Nef, None) => lone += 1,
+            _ => {}
+        }
+        println!(
+            "{}\\{}: {:?}, raw {}, {} sidecar(s)",
+            group.folder.join("\\"),
+            group.stem,
+            group.primary.kind,
+            group.raw.is_some(),
+            group.sidecars.len()
+        );
+    }
+    for u in &g.unknown {
+        println!("  unknown {} ({})", u.entry.rel_path(), u.kind.issue_kind());
+    }
+    for x in &g.excluded {
+        println!("  excluded {} ({})", x.entry.rel_path(), x.reason);
+    }
+    println!(
+        "{} group(s): {pairs} pair(s), {lone} lone NEF(s), {} folder(s)",
+        g.groups.len(),
+        summary.folders
+    );
+    // Every NEF is either a pair's raw or a lone NEF.
+    assert_eq!(pairs + lone, files.len());
 }

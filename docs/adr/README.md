@@ -31,3 +31,4 @@ One decision per file, in [MADR 4](https://adr.github.io/madr/) minimal format. 
 | [0024](0024-reconcile-event-for-a-file-joining-a-decided-group.md) | A new file joining a decided group makes it undecided, through a reconcile event | accepted |
 | [0025](0025-lone-nef-preview-is-the-largest-valid-embedded-jpeg.md) | A lone NEF's preview is its largest valid embedded JPEG, chosen by pixel count (refines 0011) | accepted |
 | [0026](0026-gpl-3-0-only-licence-and-reserved-name.md) | GPL-3.0-only licence, reserved name and logo, no outside pull requests (supersedes the licence in 0017) | accepted |
+| [0027](0027-scan-edge-cases-left-out-of-grouping.md) | Never split a shot: ambiguous groups, held-back folders, scan caps, walk placement (refines 0007) | accepted |
