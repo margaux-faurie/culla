@@ -273,7 +273,6 @@ These are the planned commands. M0 makes them real and keeps `CLAUDE.md` in sync
 | Coverage | `cargo llvm-cov -p culla-core -p culla-adapters --html` (setup in section 10) |
 | Fuzz one target | `cargo +nightly fuzz run tiff_ifd_walk -- -max_total_time=60` (setup in section 7) |
 
-`cargo xtask` needs the alias in `.cargo/config.toml`. Until it lands, run `cargo run -p xtask -- <task>` (same arguments).
 
 Agents run the fast check after each change, the relevant test file before saying a task is done, and paste the command and its output as evidence. Windows-only tests are left to CI when the agent runs on Linux; the agent says so in the PR.
 
