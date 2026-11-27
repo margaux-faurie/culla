@@ -18,7 +18,7 @@ Wrangler is not a dependency of the repository: Workers Builds runs it with `npx
 
 Set these in the Cloudflare dashboard, Workers & Pages, Worker `culla`, Settings.
 
-Order: Margaux sets the build command and the build variables before this PR is merged. Merged first, the push to `main` starts a build with the dashboard defaults, which fails once; it deploys nothing, and the next push after the settings are in builds normally.
+Order: Margaux sets the build command and the build variables before this PR is merged. Merged first, the push to `main` starts a build with the dashboard defaults, which should fail once and deploy nothing, and the next push after the settings are in builds normally.
 
 | Setting | Value |
 |---|---|
@@ -29,7 +29,7 @@ Order: Margaux sets the build command and the build variables before this PR is 
 | Deploy command | `npx wrangler deploy` |
 | Builds for non-production branches (preview builds) | Off (proposed, to confirm) |
 | Build variable `SKIP_DEPENDENCY_INSTALL` | `1`, so the frozen install in the build command is the only install |
-| Build variable `NODE_VERSION` | `24`, the major CI uses. Workers Builds already defaults to Node 24.x; the variable pins the major so a change of default cannot move the build |
+| Build variable `NODE_VERSION` | `24`, the major CI uses. The variable pins the major so a change of the Workers Builds default cannot move the build |
 | API token | The default build token works. Narrower, optional: a token for this account with Workers Scripts edit, adding only what a failed deploy log asks for |
 
 Domains & Routes (`wrangler.jsonc` declares no routes, so `wrangler deploy` leaves the custom domain set here as it is):
@@ -61,4 +61,4 @@ Workers Builds deploys the demo on every push to `main`, so a merged PR is live 
 ## Known limits
 
 - `npx wrangler deploy` fetches the latest Wrangler at deploy time, outside the lockfile and the pnpm release-age rule. Pinning a version in the deploy command (`npx wrangler@<version> deploy`) closes that; to decide.
-- The build runs repository code (the build scripts and every dependency installed from the lockfile) in Cloudflare's build environment, which holds the build token. Only `main` is built, so only merged code runs there; the token's scope bounds what a compromised build can do (threat model T18). The default build token is account-wide, not limited to this Worker.
+- The build runs repository code (the build scripts and every dependency installed from the lockfile) in Cloudflare's build environment, which holds the build token. If only `main` is built (proposed, to confirm), only merged code runs there; the token's scope bounds what a compromised build can do (threat model T18). The default build token is account-wide, not limited to this Worker.
