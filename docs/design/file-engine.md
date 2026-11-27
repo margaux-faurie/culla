@@ -804,4 +804,5 @@ Each invariant has at least one test in [testing.md](../testing.md): property te
 - Nested sources: refused only while the other has an open plan (§6.1), or always while it has applied groups.
 - Session after a completed apply (§9.6); auto-resume or confirm (§10.1); log copy in the destination (§2.2).
 - `FileRenameInfoEx` support on FAT32 and exFAT, and the path form it accepts, to check in adapter tests.
-- NX Studio `.nksc` naming and `NKSC_PARAM` attributes, to verify on real files.
+- NX Studio `.nksc` naming and `NKSC_PARAM` attributes, to verify on real files. If NX Studio also marks the `.nksc` files hidden, the hidden rule (§3.2) skips them and they no longer follow their photo; the code exempts only the folder, as written.
+- Scan edge cases not covered above (case-colliding folders, other content of `NKSC_PARAM`, a folder that cannot be listed completely, a link as the source, folders with invalid names): proposed in [ADR 0027](../adr/0027-scan-edge-cases-left-out-of-grouping.md).

@@ -30,3 +30,4 @@ One decision per file, in [MADR 4](https://adr.github.io/madr/) minimal format. 
 | [0023](0023-bare-sidecars-follow-the-nef.md) | Bare `X.xmp` and `X.pp3` follow the NEF, and stay with it when "RAW follows JPEG" is off | accepted |
 | [0024](0024-reconcile-event-for-a-file-joining-a-decided-group.md) | A new file joining a decided group makes it undecided, through a reconcile event | accepted |
 | [0025](0025-lone-nef-preview-is-the-largest-valid-embedded-jpeg.md) | A lone NEF's preview is its largest valid embedded JPEG, chosen by pixel count (refines 0011) | accepted |
+| [0027](0027-scan-edge-cases-left-out-of-grouping.md) | Scan edge cases: case-colliding folders, `NKSC_PARAM` contents, partial listings, a link as the source (refines 0007) | proposed |

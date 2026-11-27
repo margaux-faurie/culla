@@ -2,9 +2,10 @@
 //!
 //! The audited removal module `winfs::remove_verified` lands in M2
 //! (`docs/design/file-engine.md` §9.7). Until then this crate holds no file operations; it only
-//! reads files (`metadata`).
+//! lists folders (`scan`) and reads files (`metadata`).
 
 pub mod metadata;
+pub mod scan;
 
 pub use culla_core::VERSION;
 
