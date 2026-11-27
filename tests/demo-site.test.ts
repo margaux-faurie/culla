@@ -14,7 +14,19 @@ interface DemoOutput {
 }
 
 async function demoOutput(): Promise<DemoOutput> {
-  const result = await build({ root, mode: "demo", logLevel: "silent", build: { write: false } });
+  // Build as `pnpm build:demo` does: vitest sets NODE_ENV to "test", which would change the output.
+  const nodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "production";
+  let result: Awaited<ReturnType<typeof build>>;
+  try {
+    result = await build({ root, mode: "demo", logLevel: "silent", build: { write: false } });
+  } finally {
+    if (nodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = nodeEnv;
+    }
+  }
   const outputs = Array.isArray(result) ? result : [result];
   const out: DemoOutput = { html: "", css: [] };
   for (const output of outputs) {
@@ -79,17 +91,19 @@ describe("demo build stays inside its CSP", () => {
   it("has no inline script or style and no data: URLs", { timeout: 60_000 }, async () => {
     const { html, css } = await demoOutput();
     expect(html).toContain('<div id="root">');
-    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)];
+    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\b[^>]*>/gi)];
     expect(scripts.length).toBeGreaterThan(0);
+    // Every opening tag must be one the pattern matched, so none escapes the checks below.
+    expect(html.match(/<script\b/gi)?.length).toBe(scripts.length);
     for (const [, attributes, body] of scripts) {
       expect(attributes).toMatch(/\bsrc="\/assets\/[^"]+\.js"/);
       expect(body?.trim()).toBe("");
     }
-    expect(html).not.toMatch(/<style\b/);
-    expect(html).not.toMatch(/\sstyle=/);
-    expect(html).not.toMatch(/\son[a-z]+=/);
+    expect(html).not.toMatch(/<style\b/i);
+    expect(html).not.toMatch(/\sstyle\s*=/i);
+    expect(html).not.toMatch(/\son[a-z]+\s*=/i);
     for (const sheet of css) {
-      expect(sheet).not.toMatch(/url\(\s*["']?data:/);
+      expect(sheet).not.toMatch(/url\(\s*["']?data:/i);
     }
   });
 
