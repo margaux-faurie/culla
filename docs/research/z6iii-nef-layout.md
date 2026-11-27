@@ -27,6 +27,13 @@ Every file had the same layout. The EXIF IFD (35,368) and the MakerNote preview 
 
 The NEFCompression tag (MakerNote 0x0093) is absent, and Compression is the generic 34713 (Nikon NEF compressed), so the standard tags do not say which codec is used. The raw strip is exactly 15,311,360 bytes in all 9 files, about 5.0 bits per pixel, across different scenes. A lossless codec gives sizes that vary with content, so these are fixed-rate files, consistent with High Efficiency (HE or HE\*); which of the two cannot be told from these tags. Either way no open-source decoder exists (SPEC §9), so the embedded JPEG is the only image Culla can show for these files.
 
+## EXIF tags
+
+Measured on 27 Nov 2026 with a throwaway parser on the same 9 NEFs and their 8 JPEGs (GPS tags not read). Every file has DateTimeOriginal and DateTimeDigitized (equal), SubSecTimeOriginal (two digits), OffsetTimeOriginal (`+11:00`), Model `NIKON Z6_3`, LensModel `NIKKOR Z 24-200mm f/4-6.3 VR`, LensSpecification 24/200 mm f/4/6.3, ExposureTime, FNumber, PhotographicSensitivity and FocalLength. Orientation is 1 or 8 (5 of the 9 shots are portrait, 8), the same in the JPEG and its NEF. JPEGs have PixelX/YDimension 6048x4032; NEFs do not (their IFD0 size is the thumbnail's).
+
+- JPEG: APP1 Exif right after SOI, ~42 KB including the MakerNote.
+- NEF: every tag above ends before byte 36,200. The MakerNote runs from 36,144 to between 225,942 and 265,782, and the GPS IFD sits past it, so a 128 KiB (or 256 KiB) head cuts both. `culla_adapters::metadata::exif` parses with `continue_on_error` and skips them (ADR 0028).
+
 ## Consequences for Culla
 
 - The largest valid candidate is always SubIFD0's 6048x4032 JPEG. It is the only one above the G14's 2880 px long edge; the next one (1620x1080) is too small for a screen preview.

@@ -1,6 +1,6 @@
 # cargo-fuzz targets (docs/testing.md §7). Own workspace (excluded in the root Cargo.toml): it
 # needs a nightly toolchain and libFuzzer, so it stays off the stable PR path.
-# Run: cargo +nightly fuzz run tiff_ifd_walk -- -max_total_time=60
+# Run: cargo +nightly fuzz run tiff_ifd_walk -- -max_total_time=60 (or exif_fields)
 [package]
 name = "culla-fuzz"
 version = "0.0.0"
@@ -14,10 +14,18 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4.13"
 culla-core = { path = "../crates/core" }
+culla-adapters = { path = "../crates/adapters" }
 
 [[bin]]
 name = "tiff_ifd_walk"
 path = "fuzz_targets/tiff_ifd_walk.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "exif_fields"
+path = "fuzz_targets/exif_fields.rs"
 test = false
 doc = false
 bench = false

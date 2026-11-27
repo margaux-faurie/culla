@@ -29,6 +29,21 @@ fn pair_and_lone_nef_yield_the_full_size_subifd_jpeg() {
 }
 
 #[test]
+fn a_maker_note_stored_last_still_yields_its_preview() {
+    let path = fixture("exif/DSC_0105.NEF");
+    let best = find_preview(&path).unwrap();
+    assert_eq!(best.source, CandidateSource::SubIfd { index: 0 });
+    let mut src = FileSource::open(&path).unwrap();
+    let walk = ifd::walk(&mut src, &Limits::DEFAULT).unwrap();
+    assert!(walk.issues.is_empty(), "{:?}", walk.issues);
+    assert!(
+        walk.candidates
+            .iter()
+            .any(|c| c.source == CandidateSource::MakerNotePreview && c.check == JpegCheck::Valid)
+    );
+}
+
+#[test]
 fn every_candidate_is_found_with_both_byte_orders() {
     for rel in ["pair/DSC_0001.NEF", "lone/DSC_0002.NEF"] {
         let mut src = FileSource::open(&fixture(rel)).unwrap();

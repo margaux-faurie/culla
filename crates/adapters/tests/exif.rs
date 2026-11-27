@@ -1,0 +1,213 @@
+//! EXIF on the synthetic fixtures (testdata/synthetic, `cargo xtask fixtures`), through
+//! kamadak-exif. Read-only: the tests open the committed fixtures and never write.
+
+use std::path::{Path, PathBuf};
+
+use culla_adapters::metadata::exif::{
+    EXIF_HEAD_BYTES, meta_from_head, read_group_meta, read_head, read_photo_meta,
+    read_photo_meta_capped,
+};
+use culla_adapters::scan::scan_and_group;
+use culla_core::exif::{
+    CaptureTime, MetaIssue, Orientation, Rational, TimeSource, TimeTag, capture_order,
+    parse_date_time,
+};
+use culla_core::grouping::ScanPolicy;
+
+fn synthetic() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/synthetic")
+}
+
+fn fixture(rel: &str) -> PathBuf {
+    synthetic().join(rel)
+}
+
+fn local_ms(s: &str) -> i64 {
+    parse_date_time(s.as_bytes()).unwrap().unwrap() * 1000
+}
+
+const MTIME_NS: i64 = 1_700_000_000_000_000_000;
+
+#[test]
+fn full_jpeg_yields_every_field() {
+    let m = read_photo_meta(&fixture("exif/DSC_0101.JPG"), Some(MTIME_NS)).unwrap();
+    assert!(m.issues.is_empty(), "{:?}", m.issues);
+    assert_eq!(
+        m.captured,
+        Some(CaptureTime {
+            local_ms: local_ms("2025:02:15 03:59:50") + 550,
+            offset_minutes: Some(660),
+            source: TimeSource::DateTimeOriginal,
+        })
+    );
+    assert_eq!(m.orientation, Orientation::Rotate90);
+    assert_eq!(m.lens.as_deref(), Some("NIKKOR Z 24-200mm f/4-6.3 VR"));
+    assert_eq!(m.camera_model.as_deref(), Some("NIKON Z6_3"));
+    assert_eq!(m.shutter, Some(Rational::new(10, 1250)));
+    assert_eq!(m.aperture, Some(Rational::new(560, 100)));
+    assert_eq!(m.iso, Some(450));
+    assert_eq!(m.focal_length, Some(Rational::new(480, 10)));
+    assert_eq!((m.width, m.height), (Some(8), Some(8)));
+}
+
+#[test]
+fn big_endian_jpeg_falls_back_to_create_date_and_lens_specification() {
+    let m = read_photo_meta(&fixture("exif/DSC_0102.JPG"), Some(MTIME_NS)).unwrap();
+    assert!(m.issues.is_empty(), "{:?}", m.issues);
+    let t = m.captured.unwrap();
+    assert_eq!(t.source, TimeSource::CreateDate);
+    assert_eq!(t.local_ms, local_ms("2025:05:11 01:12:27") + 370);
+    assert_eq!(t.offset_minutes, Some(-210));
+    assert_eq!(m.orientation, Orientation::Rotate270);
+    assert_eq!(m.lens.as_deref(), Some("24-200mm f/4-6.3"));
+    assert_eq!((m.shutter, m.iso, m.width), (None, None, None));
+}
+
+#[test]
+fn jpeg_without_exif_uses_the_file_time() {
+    let m = read_photo_meta(&fixture("exif/DSC_0103.JPG"), Some(MTIME_NS)).unwrap();
+    assert_eq!(m.issues, [MetaIssue::NoExif]);
+    let t = m.captured.unwrap();
+    assert_eq!(t.source, TimeSource::FileModified);
+    assert_eq!(t.local_ms, MTIME_NS / 1_000_000);
+    assert_eq!(m.orientation, Orientation::Normal);
+    assert_eq!(m.lens, None);
+    let m = read_photo_meta(&fixture("exif/DSC_0103.JPG"), None).unwrap();
+    assert_eq!(m.captured, None);
+}
+
+#[test]
+fn bad_values_are_recorded_and_fall_back() {
+    let m = read_photo_meta(&fixture("exif/DSC_0104.JPG"), Some(MTIME_NS)).unwrap();
+    assert_eq!(m.orientation, Orientation::Normal);
+    assert_eq!(m.captured.unwrap().source, TimeSource::FileModified);
+    assert_eq!(
+        m.issues,
+        [
+            MetaIssue::BadDateTime(TimeTag::Digitized),
+            MetaIssue::BadOrientation(9)
+        ]
+    );
+}
+
+#[test]
+fn the_pair_jpeg_has_orientation_only() {
+    let m = read_photo_meta(&fixture("pair/DSC_0001.JPG"), Some(MTIME_NS)).unwrap();
+    assert!(m.issues.is_empty(), "{:?}", m.issues);
+    assert_eq!(m.orientation, Orientation::Normal);
+    assert_eq!(m.captured.unwrap().source, TimeSource::FileModified);
+    assert_eq!(m.lens, None);
+}
+
+#[test]
+fn nef_exif_is_read_from_its_tiff_ifd0_and_exif_ifd() {
+    let m = read_photo_meta(&fixture("exif/DSC_0105.NEF"), Some(MTIME_NS)).unwrap();
+    assert!(m.issues.is_empty(), "{:?}", m.issues);
+    let t = m.captured.unwrap();
+    assert_eq!(t.source, TimeSource::DateTimeOriginal);
+    assert_eq!(t.local_ms, local_ms("2025:02:15 03:59:50") + 550);
+    assert_eq!(t.offset_minutes, Some(660));
+    assert_eq!(m.orientation, Orientation::Rotate270);
+    assert_eq!(m.lens.as_deref(), Some("NIKKOR Z 24-200mm f/4-6.3 VR"));
+    assert_eq!(m.camera_model.as_deref(), Some("CULLA SYNTHETIC"));
+    // A NEF's IFD0 size is its thumbnail's: not reported as the image size.
+    assert_eq!((m.width, m.height), (None, None));
+    // Both byte orders of the plain NEFs parse (no EXIF times there).
+    for rel in ["pair/DSC_0001.NEF", "lone/DSC_0002.NEF"] {
+        let m = read_photo_meta(&fixture(rel), None).unwrap();
+        assert!(m.issues.is_empty(), "{rel}: {:?}", m.issues);
+        assert_eq!(m.camera_model.as_deref(), Some("CULLA SYNTHETIC"), "{rel}");
+        assert_eq!(m.captured, None, "{rel}");
+    }
+}
+
+#[test]
+fn a_maker_note_past_the_cap_is_skipped_and_the_rest_kept() {
+    // The IFDs and their values sit below byte 1024; the MakerNote is stored at the end.
+    let path = fixture("exif/DSC_0105.NEF");
+    let m = read_photo_meta_capped(&path, None, 1024).unwrap();
+    assert_eq!(m.issues, [MetaIssue::SkippedFields(1)]);
+    assert_eq!(m.captured.unwrap().source, TimeSource::DateTimeOriginal);
+    assert_eq!(m.orientation, Orientation::Rotate270);
+    assert_eq!(m.lens.as_deref(), Some("NIKKOR Z 24-200mm f/4-6.3 VR"));
+}
+
+#[test]
+fn reads_stop_at_the_cap() {
+    let path = fixture("exif/DSC_0105.NEF");
+    let len = std::fs::metadata(&path).unwrap().len();
+    assert!(len < EXIF_HEAD_BYTES);
+    assert_eq!(read_head(&path, EXIF_HEAD_BYTES).unwrap().len() as u64, len);
+    assert_eq!(read_head(&path, 100).unwrap().len(), 100);
+    assert!(read_head(&path, 0).unwrap().is_empty());
+}
+
+#[test]
+fn truncated_and_broken_files_never_fail_the_read() {
+    for rel in [
+        "broken/truncated.NEF",
+        "broken/ifd-loop.NEF",
+        "exif/DSC_0101.JPG",
+        "exif/DSC_0105.NEF",
+    ] {
+        let path = fixture(rel);
+        let bytes = std::fs::read(&path).unwrap();
+        for cut in 0..bytes.len() {
+            let m = meta_from_head(bytes[..cut].to_vec(), Some(MTIME_NS));
+            assert!(m.captured.is_some(), "{rel} cut at {cut}");
+        }
+        // Every byte flipped in turn.
+        for i in 0..bytes.len() {
+            let mut b = bytes.clone();
+            b[i] ^= 0xFF;
+            let _ = meta_from_head(b, None);
+        }
+    }
+}
+
+#[test]
+fn a_missing_file_is_an_io_error() {
+    assert!(read_photo_meta(&fixture("exif/missing.JPG"), None).is_err());
+}
+
+#[test]
+fn groups_read_their_primary_and_sort_by_capture_time() {
+    let root = synthetic();
+    let (g, _) = scan_and_group(&root, &ScanPolicy::new(true)).unwrap();
+    let metas: Vec<_> = g
+        .groups
+        .iter()
+        .map(|group| read_group_meta(&root, group).unwrap())
+        .collect();
+    let times: Vec<_> = metas.iter().map(|m| m.captured).collect();
+    let order = capture_order(&g.groups, &times);
+    let names: Vec<_> = order
+        .iter()
+        .map(|&i| g.groups[i].primary.entry.rel_path())
+        .collect();
+    // DSC_0101 and DSC_0105 share a time: by path. DSC_0102 is later. Every other file falls
+    // back to its listing time, which is the checkout's, after 2025.
+    assert_eq!(
+        names[..3],
+        [
+            "exif\\DSC_0101.JPG",
+            "exif\\DSC_0105.NEF",
+            "exif\\DSC_0102.JPG"
+        ]
+    );
+    assert_eq!(names.len(), g.groups.len());
+    let lone = g.groups.iter().position(|x| x.stem == "DSC_0105").unwrap();
+    assert!(g.groups[lone].is_lone_nef());
+    assert_eq!(metas[lone].orientation, Orientation::Rotate270);
+}
+
+#[test]
+fn group_paths_are_built_under_the_root() {
+    let root = synthetic();
+    let (g, _) = scan_and_group(&root, &ScanPolicy::new(true)).unwrap();
+    let pair = g.groups.iter().find(|x| x.stem == "DSC_0001").unwrap();
+    // The pair's primary is its JPEG: orientation 1, no lens.
+    let m = read_group_meta(&root, pair).unwrap();
+    assert_eq!(m.orientation, Orientation::Normal);
+    assert!(read_group_meta(Path::new("/nonexistent-culla-root"), pair).is_err());
+}

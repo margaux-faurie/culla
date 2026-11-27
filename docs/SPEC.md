@@ -131,7 +131,7 @@ culla/
 ### 5.1 Rust core and adapters (`crates/core`, `crates/adapters`)
 The items below describe behaviour; the pure parts live in `culla-core` and the I/O in `culla-adapters`.
 - **Scan:** streamed and recursive. It yields groups in filename order right away, so the first photo appears in about a second. A background pass reads only the first ~128 KB of each file to get EXIF (DateTimeOriginal, orientation), then sorts by capture time. Once the user has started swiping, the list is never re-sorted.
-- **EXIF:** `kamadak-exif` (BSD-2) for JPEG and NEF. The lens comes from `LensModel`, falling back to `LensSpecification`.
+- **EXIF:** `kamadak-exif` (BSD-2) for JPEG and NEF. The lens comes from `LensModel`, falling back to `LensSpecification`. Capture time falls back from `DateTimeOriginal` to `CreateDate` to the file time, and the order's tie-breaks are proposed in ADR 0028.
 - **NEF preview:** our own TIFF/IFD walker (~200 lines). It reads the SubIFDs and the MakerNote PreviewIFD and picks the largest embedded JPEG. This works for HE/HE\* NEFs too, since they embed ordinary JPEG previews. `rawler` is avoided (LGPL and `memmap2`, ADR 0011).
 - **Decode/resize:** `turbojpeg` with scaled decode, scaling to just above screen size (1/2 or 3/8 for 45 MP), then `fast_image_resize`, then JPEG encoding. EXIF orientation is applied at this point. The 100% zoom view loads the full image on demand.
 - **I/O:** 1–2 sequential reader threads, kept separate from the decode workers. Prefetch 5 ahead and 2 behind. The in-memory LRU holds about 12 screen previews. Thumbnails are cached on the internal disk (`%LOCALAPPDATA%\Culla\cache`), keyed by volume serial + path + size + mtime, capped at 2 GB with least-recently-used eviction. Files on removable media are **never memory-mapped**.
@@ -232,3 +232,4 @@ Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsm
 - Minimum WebView2 version and installer mode (the bootstrapper downloads WebView2 at install time if missing).
 - Demo subdomain and which photos to publish.
 - The author's real sample files (Nikon Z series, see §2): 9 Z6III NEFs (8 pairs, 1 lone) used locally since 27 Nov 2026, outside the repo; the stripped Git LFS set is pending.
+- Preview cache when the source drive is encrypted and the system drive is not: keep previews in memory only (default) or warn before caching to disk; to decide (raised 27 Nov 2026).

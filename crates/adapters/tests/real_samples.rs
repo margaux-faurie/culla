@@ -1,5 +1,5 @@
-//! NEF previews and the scan on the author's real samples, which are not in the repository
-//! (they hold GPS).
+//! NEF previews, EXIF and the scan on the author's real samples, which are not in the
+//! repository (they hold GPS). The EXIF test never reads or prints GPS tags.
 //!
 //! Ignored by default. Run with the folder of samples (searched recursively for `*.NEF`):
 //! `CULLA_REAL_SAMPLES=/path/to/samples cargo test -p culla-adapters --test real_samples -- --ignored --nocapture`
@@ -9,10 +9,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use culla_adapters::metadata::exif::{read_group_meta, read_photo_meta};
 use culla_adapters::metadata::nef_preview::{
     FileSource, MAX_PREVIEW_BYTES, find_preview, read_preview_bytes,
 };
 use culla_adapters::scan::scan_and_group;
+use culla_core::exif::{MetaIssue, Orientation, TimeSource, capture_order};
 use culla_core::grouping::{GroupStatus, PhotoKind, ScanPolicy};
 use culla_core::ifd::{self, Limits};
 
@@ -151,4 +153,77 @@ fn real_samples_scan_into_pairs_and_lone_nefs() {
     );
     // Every NEF is either a pair's raw or a lone NEF.
     assert_eq!(pairs + lone, files.len());
+}
+
+#[test]
+#[ignore = "needs the author's samples: set CULLA_REAL_SAMPLES"]
+fn real_samples_have_capture_time_orientation_and_lens() {
+    let Ok(root) = std::env::var("CULLA_REAL_SAMPLES") else {
+        println!("skipped: CULLA_REAL_SAMPLES is not set");
+        return;
+    };
+    let root = Path::new(&root);
+    let (g, _) = scan_and_group(root, &ScanPolicy::new(true)).unwrap();
+    assert!(!g.groups.is_empty(), "no photo under {}", root.display());
+    let mut times = Vec::new();
+    for group in &g.groups {
+        let name = group.primary.entry.rel_path();
+        let m = read_group_meta(root, group).unwrap();
+        let t = m
+            .captured
+            .unwrap_or_else(|| panic!("{name}: no capture time"));
+        println!(
+            "{name}: {:?} local_ms {} offset {:?}, orientation {}, lens {:?}, model {:?}, \
+             {:?} s f/{:?} ISO {:?} {:?} mm, {:?}x{:?}, issues {:?}",
+            t.source,
+            t.local_ms,
+            t.offset_minutes,
+            m.orientation.exif_value(),
+            m.lens,
+            m.camera_model,
+            m.shutter,
+            m.aperture,
+            m.iso,
+            m.focal_length,
+            m.width,
+            m.height,
+            m.issues
+        );
+        assert_eq!(t.source, TimeSource::DateTimeOriginal, "{name}");
+        assert!(
+            matches!(
+                m.orientation,
+                Orientation::Normal | Orientation::Rotate90 | Orientation::Rotate270
+            ),
+            "{name}: orientation {:?}",
+            m.orientation
+        );
+        assert!(m.lens.is_some(), "{name}: no lens");
+        assert!(m.camera_model.is_some(), "{name}: no model");
+        assert!(
+            m.issues
+                .iter()
+                .all(|i| matches!(i, MetaIssue::SkippedFields(_))),
+            "{name}: {:?}",
+            m.issues
+        );
+        // The pair's NEF carries the same time and orientation as its JPEG.
+        if let Some(raw) = &group.raw {
+            let mut path = root.to_path_buf();
+            for c in raw.entry.components() {
+                path.push(c);
+            }
+            let n = read_photo_meta(&path, None).unwrap();
+            assert_eq!(n.captured, m.captured, "{name}: NEF time");
+            assert_eq!(n.orientation, m.orientation, "{name}: NEF orientation");
+            assert_eq!(n.lens, m.lens, "{name}: NEF lens");
+        }
+        times.push(m.captured);
+    }
+    let order = capture_order(&g.groups, &times);
+    let sorted: Vec<_> = order.iter().map(|&i| times[i].unwrap().local_ms).collect();
+    assert!(sorted.windows(2).all(|w| w[0] <= w[1]));
+    for &i in &order {
+        println!("  {}", g.groups[i].primary.entry.rel_path());
+    }
 }

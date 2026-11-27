@@ -15,6 +15,16 @@
 //!   at a 32x24 JPEG inside the MakerNote. Not decodable as RAW.
 //! - `broken/`: `ifd-loop.NEF` (IFD0 and a SubIFD point back at themselves and each other),
 //!   `truncated.NEF` (the pair NEF cut in the middle of its full-size JPEG).
+//! - `exif/`: EXIF variants for the EXIF slice (US-06, US-07). `DSC_0101.JPG` (little-endian)
+//!   has IFD0 Orientation 6 and Model, and an Exif IFD with DateTimeOriginal, SubSecTimeOriginal,
+//!   OffsetTimeOriginal, DateTimeDigitized, LensModel, LensSpecification, ExposureTime, FNumber,
+//!   PhotographicSensitivity, FocalLength and PixelX/YDimension. `DSC_0102.JPG` (big-endian)
+//!   has Orientation 8, no DateTimeOriginal (DateTimeDigitized with its sub-seconds and offset
+//!   instead) and no LensModel (LensSpecification only). `DSC_0103.JPG` has no APP1.
+//!   `DSC_0104.JPG` has Orientation 9, an all-zero DateTimeOriginal and an unreadable
+//!   DateTimeDigitized. `DSC_0105.NEF` is a lone little-endian NEF like `lone/` with
+//!   Orientation 8 and an Exif IFD holding the times and lens, whose MakerNote is stored at the
+//!   end of the file (as if past the EXIF read cap). Values are those of a Z6III.
 //! - The pair shares a basename in one folder (ADR 0007), so it doubles as a pairing case.
 //!
 //! Writing: the target files must not exist. xtask follows the workspace rule (no truncate, no
@@ -39,6 +49,11 @@ pub fn all() -> Vec<(&'static str, Vec<u8>)> {
         ("lone/DSC_0002.NEF", nef(false)),
         ("broken/ifd-loop.NEF", nef_ifd_loop()),
         ("broken/truncated.NEF", nef_truncated()),
+        ("exif/DSC_0101.JPG", jpeg_exif_full()),
+        ("exif/DSC_0102.JPG", jpeg_exif_create_date()),
+        ("exif/DSC_0103.JPG", jpeg(8, 8, None)),
+        ("exif/DSC_0104.JPG", jpeg_exif_bad()),
+        ("exif/DSC_0105.NEF", nef_with_exif()),
     ]
 }
 
@@ -193,6 +208,85 @@ fn jpeg_with_exif() -> Vec<u8> {
     jpeg(8, 8, Some(&app1))
 }
 
+/// A JPEG whose APP1 Exif holds a TIFF in byte order `big` with `ifd0` entries plus, when
+/// `exif` is not empty, an Exif IFD (0x8769) with those entries.
+fn jpeg_exif(big: bool, ifd0: Vec<(u16, Val)>, exif: Vec<(u16, Val)>) -> Vec<u8> {
+    let mut t = Tiff::new(big);
+    let mut ifd0 = ifd0;
+    if !exif.is_empty() {
+        let exif_at = t.ifd(exif, 0);
+        ifd0.push((0x8769, Val::Long(exif_at)));
+    }
+    let at = t.ifd(ifd0, 0);
+    t.set_ifd0(at);
+    let mut app1 = b"Exif\0\0".to_vec();
+    app1.extend_from_slice(&t.out);
+    jpeg(8, 8, Some(&app1))
+}
+
+/// The Exif IFD entries of a Z6III shot (values from the author's samples).
+fn z6iii_exif() -> Vec<(u16, Val)> {
+    vec![
+        (0x829A, Val::Rationals(vec![(10, 1250)])), // ExposureTime
+        (0x829D, Val::Rationals(vec![(560, 100)])), // FNumber
+        (0x8827, Val::Short(450)),                  // PhotographicSensitivity
+        (0x9003, Val::Ascii(b"2025:02:15 03:59:50\0")), // DateTimeOriginal
+        (0x9004, Val::Ascii(b"2025:02:15 03:59:50\0")), // DateTimeDigitized
+        (0x9011, Val::Ascii(b"+11:00\0")),          // OffsetTimeOriginal
+        (0x920A, Val::Rationals(vec![(480, 10)])),  // FocalLength
+        (0x9291, Val::Ascii(b"55\0")),              // SubSecTimeOriginal
+        (
+            0xA432,
+            Val::Rationals(vec![(240, 10), (2000, 10), (400, 100), (630, 100)]),
+        ), // LensSpecification
+        (0xA434, Val::Ascii(b"NIKKOR Z 24-200mm f/4-6.3 VR\0")), // LensModel
+    ]
+}
+
+fn jpeg_exif_full() -> Vec<u8> {
+    let mut exif = z6iii_exif();
+    exif.push((0xA002, Val::Short(8))); // PixelXDimension
+    exif.push((0xA003, Val::Short(8))); // PixelYDimension
+    jpeg_exif(
+        false,
+        vec![
+            (0x0110, Val::Ascii(b"NIKON Z6_3\0")),
+            (0x0112, Val::Short(6)),
+        ],
+        exif,
+    )
+}
+
+fn jpeg_exif_create_date() -> Vec<u8> {
+    jpeg_exif(
+        true,
+        vec![
+            (0x0110, Val::Ascii(b"NIKON Z6_3\0")),
+            (0x0112, Val::Short(8)),
+        ],
+        vec![
+            (0x9004, Val::Ascii(b"2025:05:11 01:12:27\0")), // DateTimeDigitized
+            (0x9012, Val::Ascii(b"-03:30\0")),              // OffsetTimeDigitized
+            (0x9292, Val::Ascii(b"37\0")),                  // SubSecTimeDigitized
+            (
+                0xA432,
+                Val::Rationals(vec![(240, 10), (2000, 10), (400, 100), (630, 100)]),
+            ), // LensSpecification
+        ],
+    )
+}
+
+fn jpeg_exif_bad() -> Vec<u8> {
+    jpeg_exif(
+        false,
+        vec![(0x0112, Val::Short(9))],
+        vec![
+            (0x9003, Val::Ascii(b"0000:00:00 00:00:00\0")), // DateTimeOriginal, unset clock
+            (0x9004, Val::Ascii(b"2025:02:30 25:00:00\0")), // DateTimeDigitized, invalid
+        ],
+    )
+}
+
 // ---------------------------------------------------------------------------------------------
 // TIFF writer
 // ---------------------------------------------------------------------------------------------
@@ -200,14 +294,17 @@ fn jpeg_with_exif() -> Vec<u8> {
 const ASCII: u16 = 2;
 const SHORT: u16 = 3;
 const LONG: u16 = 4;
+const RATIONAL: u16 = 5;
 const UNDEFINED: u16 = 7;
 
 /// A value of an IFD entry. Values over 4 bytes are written before the IFD.
+#[derive(Clone)]
 enum Val {
     Short(u16),
     Long(u32),
     Longs(Vec<u32>),
     Ascii(&'static [u8]),
+    Rationals(Vec<(u32, u32)>),
     Undefined(Vec<u8>),
     /// `count` values of type `kind` already written at `offset`.
     At(u16, u32, u32),
@@ -272,6 +369,14 @@ impl Tiff {
                     vs.iter().flat_map(|v| self.u32(*v)).collect(),
                 ),
                 Val::Ascii(s) => (ASCII, s.len(), s.to_vec()),
+                Val::Rationals(rs) => (
+                    RATIONAL,
+                    rs.len(),
+                    rs.iter()
+                        .flat_map(|&(n, d)| [self.u32(n), self.u32(d)])
+                        .flatten()
+                        .collect(),
+                ),
                 Val::Undefined(b) => (UNDEFINED, b.len(), b.clone()),
                 Val::At(kind, count, offset) => {
                     fields.push((*tag, *kind, *count, self.u32(*offset).to_vec()));
@@ -388,6 +493,34 @@ fn nikon_maker_note(big: bool, preview: &[u8]) -> Vec<u8> {
 /// the strip JPEG, the full-size JPEG and the raw data, in that order (as on a Z6III, the
 /// raw data comes last).
 fn nef(big: bool) -> Vec<u8> {
+    nef_with(big, &NefExtras::default())
+}
+
+/// Extra tags for a NEF variant; the default gives the `pair/` and `lone/` NEFs.
+#[derive(Default)]
+struct NefExtras {
+    /// More IFD0 entries.
+    ifd0: Vec<(u16, Val)>,
+    /// More Exif IFD entries.
+    exif: Vec<(u16, Val)>,
+    /// Store the MakerNote at the end of the file, after the raw data, instead of before the
+    /// IFDs. Its offsets are relative to its own TIFF header, so it can sit anywhere.
+    maker_note_last: bool,
+}
+
+/// The lone NEF with EXIF times and lens, its MakerNote last (see the module docs).
+fn nef_with_exif() -> Vec<u8> {
+    nef_with(
+        false,
+        &NefExtras {
+            ifd0: vec![(0x0112, Val::Short(8))],
+            exif: z6iii_exif(),
+            maker_note_last: true,
+        },
+    )
+}
+
+fn nef_with(big: bool, extras: &NefExtras) -> Vec<u8> {
     let img = nef_images();
     let mut t = Tiff::new(big);
 
@@ -404,14 +537,17 @@ fn nef(big: bool) -> Vec<u8> {
     let raw_at = place(&img.raw);
 
     let mn = nikon_maker_note(!big, &img.preview);
-    let mn_at = t.push(&mn);
-    let exif = t.ifd(
-        vec![
-            (0x9000, Val::Undefined(b"0230".to_vec())), // ExifVersion
-            (0x927C, Val::At(UNDEFINED, len32(&mn), mn_at)), // MakerNote
-        ],
-        0,
-    );
+    let mn_at = if extras.maker_note_last {
+        place(&mn)
+    } else {
+        t.push(&mn)
+    };
+    let mut exif_entries = vec![
+        (0x9000, Val::Undefined(b"0230".to_vec())), // ExifVersion
+        (0x927C, Val::At(UNDEFINED, len32(&mn), mn_at)), // MakerNote
+    ];
+    exif_entries.extend(extras.exif.iter().map(|(tag, v)| (*tag, v.clone())));
+    let exif = t.ifd(exif_entries, 0);
 
     let sub0 = t.ifd(
         vec![
@@ -450,35 +586,38 @@ fn nef(big: bool) -> Vec<u8> {
         ],
         0,
     );
-    let ifd0 = t.ifd(
-        vec![
-            (0x00FE, Val::Long(1)),
-            // Baseline tags for strict readers; the image is the 8x8 thumbnail.
-            (0x0100, Val::Long(8)),
-            (0x0101, Val::Long(8)),
-            (0x0102, Val::Short(8)),
-            (0x0103, Val::Short(6)), // old-style JPEG
-            (0x0106, Val::Short(1)), // BlackIsZero
-            (0x010F, Val::Ascii(b"NIKON CORPORATION\0")),
-            (0x0110, Val::Ascii(b"CULLA SYNTHETIC\0")),
-            (0x0115, Val::Short(1)),
-            (0x014A, Val::Longs(vec![sub0, sub1, sub2])),
-            (0x0201, Val::Long(thumb_at)),
-            (0x0202, Val::Long(len32(&img.thumb))),
-            (0x8769, Val::Long(exif)),
-        ],
-        0,
-    );
+    let mut ifd0_entries = vec![
+        (0x00FE, Val::Long(1)),
+        // Baseline tags for strict readers; the image is the 8x8 thumbnail.
+        (0x0100, Val::Long(8)),
+        (0x0101, Val::Long(8)),
+        (0x0102, Val::Short(8)),
+        (0x0103, Val::Short(6)), // old-style JPEG
+        (0x0106, Val::Short(1)), // BlackIsZero
+        (0x010F, Val::Ascii(b"NIKON CORPORATION\0")),
+        (0x0110, Val::Ascii(b"CULLA SYNTHETIC\0")),
+        (0x0115, Val::Short(1)),
+        (0x014A, Val::Longs(vec![sub0, sub1, sub2])),
+        (0x0201, Val::Long(thumb_at)),
+        (0x0202, Val::Long(len32(&img.thumb))),
+        (0x8769, Val::Long(exif)),
+    ];
+    ifd0_entries.extend(extras.ifd0.iter().map(|(tag, v)| (*tag, v.clone())));
+    let ifd0 = t.ifd(ifd0_entries, 0);
     t.set_ifd0(ifd0);
 
     assert!(len32(&t.out) <= NEF_DATA_START, "NEF structures overflow");
     t.out.resize(NEF_DATA_START as usize, 0);
-    for (data, offset) in [
+    let mut data = vec![
         (&img.thumb, thumb_at),
         (&img.strip, strip_at),
         (&img.full, full_at),
         (&img.raw, raw_at),
-    ] {
+    ];
+    if extras.maker_note_last {
+        data.push((&mn, mn_at));
+    }
+    for (data, offset) in data {
         t.out.resize(offset as usize, 0);
         t.out.extend_from_slice(data);
     }
@@ -649,6 +788,55 @@ mod tests {
             .map(|e| base + le32(e + 8) as usize)
             .unwrap();
         assert_eq!(&n[jpeg..jpeg + img.preview.len()], &img.preview[..]);
+    }
+
+    #[test]
+    fn nef_with_exif_keeps_the_structures_and_puts_the_maker_note_last() {
+        let n = nef_with_exif();
+        let plain = nef(false);
+        assert_eq!(&n[..4], b"II*\0");
+        // Same image data at the same offsets, then the MakerNote appended.
+        let start = NEF_DATA_START as usize;
+        assert_eq!(&n[start..plain.len()], &plain[start..]);
+        let mn = nikon_maker_note(true, &nef_images().preview);
+        assert!(n.len() >= plain.len() + mn.len());
+        assert_eq!(&n[n.len() - mn.len()..], &mn[..]);
+    }
+
+    #[test]
+    fn exif_jpegs_carry_an_exif_ifd() {
+        for j in [jpeg_exif_full(), jpeg_exif_create_date(), jpeg_exif_bad()] {
+            assert_eq!(&j[..4], &[0xFF, 0xD8, 0xFF, 0xE1]);
+            let app1_len = usize::from(be16(&j, 4));
+            assert_eq!(&j[6..12], b"Exif\0\0");
+            let tiff = &j[12..4 + app1_len];
+            let big = &tiff[..2] == b"MM";
+            let rd16 = |at: usize| {
+                let b = [tiff[at], tiff[at + 1]];
+                if big {
+                    u16::from_be_bytes(b)
+                } else {
+                    u16::from_le_bytes(b)
+                }
+            };
+            let rd32 = |at: usize| {
+                let b = [tiff[at], tiff[at + 1], tiff[at + 2], tiff[at + 3]];
+                if big {
+                    u32::from_be_bytes(b)
+                } else {
+                    u32::from_le_bytes(b)
+                }
+            };
+            let ifd0 = rd32(4) as usize;
+            let tags: Vec<u16> = (0..usize::from(rd16(ifd0)))
+                .map(|i| rd16(ifd0 + 2 + 12 * i))
+                .collect();
+            assert!(
+                tags.contains(&0x0112) && tags.contains(&0x8769),
+                "{tags:x?}"
+            );
+        }
+        assert_eq!(jpeg(8, 8, None)[2..4], [0xFF, 0xDB]);
     }
 
     #[test]
