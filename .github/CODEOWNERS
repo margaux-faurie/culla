@@ -12,5 +12,5 @@ clippy.toml                     @margaux-faurie
 /src-tauri/capabilities/        @margaux-faurie
 /src-tauri/tauri.conf.json      @margaux-faurie
 /.claude/                       @margaux-faurie
-.claude/settings*.json          @margaux-faurie
+**/.claude/settings*.json          @margaux-faurie
 /pnpm-workspace.yaml            @margaux-faurie
