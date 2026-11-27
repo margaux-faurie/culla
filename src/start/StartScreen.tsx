@@ -210,8 +210,8 @@ export function StartScreen({ onStarted }: StartScreenProps) {
       <main className="start-main">
         {notReady && (
           <output className="notice">
-            Not ready yet. Sorting in the app arrives with its next versions; the web demo shows
-            how it will work.
+            Not ready yet. Sorting in the app arrives with its next versions; the web demo shows how
+            it will work.
           </output>
         )}
         <section className="start-pick" aria-labelledby="start-title">
