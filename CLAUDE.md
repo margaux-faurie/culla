@@ -6,7 +6,7 @@ Culla is a Windows desktop app (Tauri 2 + Rust + React/TS) that culls Nikon JPEG
 M0 (repo and tooling) is done; M1 (core engine headless) is in progress, starting with the NEF preview reader. Author decisions recorded 27 Nov; what is still open is in SPEC §10 and file-engine §13.
 
 ## Commands
-Work now (M0):
+Work now:
 - `cargo test --workspace` · `cargo test -p culla-core <name>` · `cargo test -p culla-adapters [--features windows-it]` (Windows integration tests from M2) · `CULLA_REAL_SAMPLES=<dir> cargo test -p culla-adapters --test real_samples -- --ignored` (the author's NEFs stay outside the repo: they hold GPS)
 - `cargo clippy --workspace --all-targets -- -D warnings` · `cargo fmt --all` · `cargo deny check` (`culla-app` needs WebView2 on Windows or libwebkit2gtk-4.1-dev on Linux)
 - `scripts/ci/check-conflict-markers.sh` · `scripts/ci/check_lint_allows.py` · `pwsh scripts/ci/vhdx.ps1 -Action mount|attach|detach|readonly|unmount` (Windows, admin; see `scripts/ci/README.md`)

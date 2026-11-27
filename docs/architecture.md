@@ -553,7 +553,7 @@ ADR 0000 records how decisions are written. Index with status: [adr/README.md](a
 | [0022](adr/0022-rename-through-the-checked-handle.md) | Rename through the checked handle, with no-replace semantics |
 | [0023](adr/0023-bare-sidecars-follow-the-nef.md) | Bare `X.xmp` and `X.pp3` follow the NEF |
 | [0024](adr/0024-reconcile-event-for-a-file-joining-a-decided-group.md) | A new file joining a decided group makes it undecided (reconcile event) |
-| [0025](adr/0025-lone-nef-preview-is-the-largest-valid-embedded-jpeg.md) | A lone NEF's preview is its largest valid embedded JPEG, by pixel count (proposed) |
+| [0025](adr/0025-lone-nef-preview-is-the-largest-valid-embedded-jpeg.md) | A lone NEF's preview is its largest valid embedded JPEG, by pixel count |
 
 Candidates not yet written: Tauri isolation pattern (8.5), Biome instead of ESLint + Prettier.
 

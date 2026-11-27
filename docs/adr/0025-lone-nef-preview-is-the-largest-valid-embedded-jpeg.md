@@ -1,6 +1,7 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-27
+decision-makers: Margaux Faurie (accepted 27 Nov 2026)
 ---
 
 # A lone NEF's preview is its largest valid embedded JPEG, chosen by pixel count
