@@ -3,6 +3,8 @@ dist/
 dist-demo/
 *.tsbuildinfo
 target/
+# culla-bench results redirected from stdout (docs/benchmarks.md §7)
+bench-results/
 .claude/settings.local.json
 CLAUDE.local.md
 .worktrees/

@@ -92,23 +92,42 @@ The sequence includes 10 % back-steps (Shift+←) to exercise the "2 behind" win
 
 ### 4.5 Tooling
 
-- **criterion** in `crates/adapters/benches/` (parsers and decode live in `culla-adapters`) for CPU-bound pieces. Runs in CI on PRs that touch the pipeline, as a smoke run only (CI timings are not compared to targets).
-- **`culla-bench`**: `crates/bench`, package `culla-bench` ([ADR 0020](adr/0020-headless-cli-and-bench-crates.md)), built on `culla-core` with `culla-adapters`. It takes a folder path, runs one scenario, and writes a JSON result (machine info, medium info, parameters, raw timings) to `bench-results/` (gitignored). A summary command turns the JSON into the result table below.
+- **criterion** in `crates/adapters/benches/` (parsers and decode live in `culla-adapters`) for CPU-bound pieces. Not added yet: criterion would be a new dependency, so it is a proposal (SPEC §10). Until then, `culla-bench preview` reports the decode, resize, orient and encode steps per photo (B-06, B-07), measured from the medium rather than in isolation.
+- **`culla-bench`**: `crates/bench`, package `culla-bench` ([ADR 0020](adr/0020-headless-cli-and-bench-crates.md)), built on `culla-core` with `culla-adapters`, std only. It takes a folder, runs one scenario, and prints the result to stdout: text by default, or with `--json` one JSON object (`"schema": "unstable"`: build profile, machine, medium, parameters, metrics, per-item samples, notes). It is read-only on the folder and writes nothing else: no file, no cache, no `bench-results/` folder. A result is kept by redirecting stdout to a file outside the card (section 7); `bench-results/` is gitignored for that use. `culla-bench report` turns saved results into the medians and pooled quantiles of the result table below.
+
+In M1 (`culla-bench help` lists every option):
 
 ```
-culla-bench scan    <folder> [--exif]
-culla-bench preview <folder> [--source jpeg|nef] [--cache cold|hit]
-culla-bench swipe   <folder> --cadence steady|fast|burst|ramp [--preview-source jpeg|nef] [--readers N] [--workers N] [--ahead N] [--behind N] [--lru N]
-culla-bench apply   <src> <dst> --mode move|copy [--hash xxh3|blake3|none]
-culla-bench io-baseline <folder>
-culla-bench report  bench-results/*.json
+culla-bench scan        <folder> [--exif] [--no-first-preview]
+culla-bench preview     <folder> [--source jpeg|nef] [--limit N]
+culla-bench swipe       <folder> [--cadence steady|fast|burst|ramp|max] [--preview-source jpeg|nef]
+                        [--readers N] [--workers N] [--ahead N] [--behind N] [--lru N] [--lru-mb N]
+                        [--steps N] [--back-percent P] [--seed N] [--budget-ms N]
+culla-bench io-baseline <folder> [--mb N]
+culla-bench report      <result.json>...
 ```
 
-`culla-bench apply` first copies the dataset into a temporary directory (`tempfile::TempDir`) on the source medium, and applies from there into another temporary directory on the destination medium. It never runs on the original card contents. The bench is outside the clippy removal rule (it cleans up its own temp dirs); that rule is enforced on `culla-core`, `culla-adapters`, `culla-cli` and `src-tauri` only ([ADR 0020](adr/0020-headless-cli-and-bench-crates.md)).
+Every folder benchmark also takes `--no-subfolders`, `--label TEXT` (kept in the result: medium, run number, cold or warm) and `--json`. Exit codes as `culla`: 0 done, 1 usage error, 2 folder refused, 3 folder or file unreadable.
+
+What each one measures:
+
+| Command | Benchmarks | Metrics (JSON key) |
+|---|---|---|
+| `scan` | B-01, B-02, B-03 with `--exif`; NFR-PERF-01, NFR-PERF-08 | `first_group_ms` (walk start to the first group), `first_photo_ms` (plus that group's preview, made inside the walk, upright, from the camera JPEG), `listing_ms` (walk and grouping, the first preview left out), `exif_ms`, `sort_ms`, `scan_total_ms`, the first photo's steps, counts |
+| `preview` | B-05, B-08 (miss), B-06 and B-07 per photo; NFR-PERF-05 | per photo, in walk order, outside the pipeline: `exif_ms` (read just before, for the orientation), `nef_walk_ms` and `nef_walk_read_kb` (NEF sources), `read_ms`, `check_ms`, `decode_ms`, `resize_ms`, `orient_ms`, `encode_ms`, `miss_total_ms`; `read_mb_per_s` |
+| `swipe` | B-09, B-10 (`ramp`, and `max` for NFR-PERF-04), B-11 (`--preview-source`), B-15 | `next_photo_ms` per advance, `prefetched` (share of advances already in the cache), `advances_per_s`, `sustained_rate_per_s` (ramp), `first_photo_ms`, the pipeline's peaks and counters, `advance_late_ms` (how late the bench made each advance: the timer's error, should stay near 0) |
+| `io-baseline` | B-16 | `read_mb_per_s`: buffered 1 MiB reads of the photo files already on the medium (primaries and NEFs, scan order) until `--mb` MB; no test file is written |
+| every command | B-15 | `peak_memory_bytes`: the process's peak working set (Windows, from `Get-Process` at the end of the run) or peak resident set (Linux) |
+
+`swipe` runs the scan and the EXIF pass first, then replays the sequence in capture-time order against the real pipeline (`culla_adapters::pipeline`). Latency is from the advance to the preview being in the in-memory cache. The next advance comes the cadence's gap after the previous one but never before the current photo is ready, since a user cannot decide on a photo they have not seen. The first photo is reported apart (`first_photo_ms`), not as a next-photo latency. `--steps` caps the advances; by default the sequence runs once to the last photo, so a ramp on a small folder can end before its p95 goes over budget (the result says so).
+
+Not in M1: `--cache hit` for B-08 (the disk cache does not exist yet), `apply` (B-12 to B-14, M2), and B-04 (criterion).
+
+`culla-bench apply` (M2) will first copy the dataset into a temporary directory on the source medium, and apply from there into another temporary directory on the destination medium. It never runs on the original card contents. The bench is outside the clippy removal rule so it can clean up its own temp dirs ([ADR 0020](adr/0020-headless-cli-and-bench-crates.md)); in M1 it writes nothing, so the lint stays on in the crate.
 
 ## 5. Result table template
 
-One file per session: `docs/benchmarks/results/YYYY-MM-DD-<hardware>-<medium>.md`, with the raw JSON attached to the PR (not committed).
+One file per session: `docs/benchmarks/results/YYYY-MM-DD-<hardware>-<medium>.md`, with the raw JSON attached to the PR (not committed). The JSON holds no folder path or file name, only the medium's mount point, label and file system; check the labels you typed before attaching it.
 
 ```markdown
 # Benchmark results — <date> — <H-x> — <medium>
@@ -144,3 +163,94 @@ Findings and decisions: <one line each, with ADR link if a decision was made>
 - Decisions taken from B-11 (preview source), B-14 (hash) and the tuning sweep (thread counts, prefetch, LRU size) are recorded as ADRs, and SPEC section 5.1 values are updated through them.
 - B-13 results calibrate the time and size estimate on the review screen ([SPEC.md](SPEC.md) section 4.2).
 - Re-run the suite on H-2 before v1.0 and after any change to the scan, preview or apply pipeline.
+
+## 7. Running the campaign on Windows
+
+For Margaux, on the G14. All defaults below (runs per metric, which cadences, the folders) are proposals (SPEC §10).
+
+### 7.1 Build once per commit
+
+In PowerShell 7 (`pwsh`), at the repository root:
+
+```powershell
+winget install Kitware.CMake NASM.NASM     # once; open a new terminal afterwards
+nasm -v                                    # must print a version: without NASM, libjpeg-turbo builds as plain C, several times slower
+git switch main; git pull
+cargo build --release -p culla-bench       # if NASM was installed after an earlier build: cargo clean -p turbojpeg-sys first
+$bench = "$PWD\target\release\culla-bench.exe"
+& $bench --version
+git rev-parse --short HEAD                 # the commit, for the result file
+```
+
+A debug build (`cargo run` without `--release`) prints a warning and its timings mean nothing; `report` flags it.
+
+### 7.2 Set up the session
+
+```powershell
+$card = "E:\DCIM"                                    # the card's photo folder (read only)
+$out  = "$HOME\culla-bench-results\2026-12-01-H2-sd"  # anywhere off the card; one folder per session
+New-Item -ItemType Directory -Path $out | Out-Null
+
+function Run-Cold([string]$name, [string[]]$benchArgs, [int]$runs = 5) {
+  for ($i = 1; $i -le $runs; $i++) {
+    Read-Host "Safely eject the card, reinsert it, then press Enter ($name, cold run $i of $runs)"
+    & $bench @benchArgs --json --label "H-2 $name cold $i" |
+      Out-File -Encoding utf8 -NoClobber "$out\$name-cold-$i.json"
+  }
+}
+
+function Run-Warm([string]$name, [string[]]$benchArgs) {
+  & $bench @benchArgs --json --label "H-2 $name warm" |
+    Out-File -Encoding utf8 -NoClobber "$out\$name-warm.json"
+}
+```
+
+`-NoClobber` refuses to replace an existing result. Write results with `Out-File -Encoding utf8` (or `>` in PowerShell 7 only): `>` in Windows PowerShell 5.1 writes UTF-16, which `report` refuses. Progress goes to stderr and stays on screen.
+
+Before the first run: plugged in, ASUS power mode fixed (for example Performance), Defender left on, nothing else heavy running. Note the card (brand, size, speed class), the reader (model, USB port) and the Windows build (`winver`) for the result file.
+
+### 7.3 Runs on the SD card (H-2)
+
+Each cold run needs the card ejected and reinserted first (section 4.2), so `Run-Cold` asks for it every time. A warm run follows a cold one without ejecting.
+
+```powershell
+Run-Cold io-baseline @('io-baseline', $card)                              # B-16, first: the medium's reference
+Run-Cold scan        @('scan', $card, '--exif')                           # B-01, B-02, B-03
+Run-Warm scan        @('scan', $card, '--exif')
+Run-Cold preview-jpeg @('preview', $card, '--source', 'jpeg', '--limit', '300') 3   # B-05, B-08 miss
+Run-Cold preview-nef  @('preview', $card, '--source', 'nef', '--limit', '300') 3    # B-05 (NEF), B-11 input
+Run-Cold swipe-steady @('swipe', $card, '--cadence', 'steady', '--steps', '500')    # B-09, B-15
+Run-Cold swipe-fast   @('swipe', $card, '--cadence', 'fast', '--steps', '500')      # B-09
+Run-Cold swipe-burst  @('swipe', $card, '--cadence', 'burst', '--steps', '500') 3   # B-09
+Run-Cold swipe-ramp   @('swipe', $card, '--cadence', 'ramp') 3                      # B-10
+Run-Cold swipe-max    @('swipe', $card, '--cadence', 'max', '--back-percent', '0', '--steps', '300') 3   # NFR-PERF-04
+Run-Cold swipe-nef    @('swipe', $card, '--cadence', 'fast', '--preview-source', 'nef', '--steps', '500') 3   # B-11
+```
+
+For B-05 per NEF variant (lossless, HE, HE\*), run `preview --source nef` on a folder holding one variant only, with the variant in the label.
+
+Tuning sweep (section 2), on the cadence that failed or came closest, one knob at a time, 3 cold runs each:
+
+```powershell
+Run-Cold swipe-fast-r2  @('swipe', $card, '--cadence', 'fast', '--steps', '500', '--readers', '2') 3
+Run-Cold swipe-fast-w2  @('swipe', $card, '--cadence', 'fast', '--steps', '500', '--workers', '2') 3
+Run-Cold swipe-fast-a3  @('swipe', $card, '--cadence', 'fast', '--steps', '500', '--ahead', '3') 3
+Run-Cold swipe-fast-a6  @('swipe', $card, '--cadence', 'fast', '--steps', '500', '--ahead', '6') 3
+Run-Cold swipe-fast-l24 @('swipe', $card, '--cadence', 'fast', '--steps', '500', '--lru', '24', '--lru-mb', '96') 3
+Run-Cold swipe-fast-l50 @('swipe', $card, '--cadence', 'fast', '--steps', '500', '--lru', '50', '--lru-mb', '192') 3
+```
+
+### 7.4 Runs on the NVMe (H-1)
+
+Copy the card's folder to the internal drive first (for example `C:\bench\D-2`), then set `$card = "C:\bench\D-2"` and a new `$out`. For cold runs, empty the standby list before each run instead of ejecting: in an admin terminal, `RAMMap.exe -Et` (Sysinternals). Run the same list as 7.3, answering the prompt once RAMMap is done.
+
+### 7.5 Summarise
+
+```powershell
+& $bench report (Get-ChildItem "$out\*-cold-*.json").FullName | Out-File -Encoding utf8 -NoClobber "$out\report-cold.txt"
+& $bench report (Get-ChildItem "$out\*-warm.json").FullName   | Out-File -Encoding utf8 -NoClobber "$out\report-warm.txt"
+```
+
+`report` groups runs with the same benchmark and parameters, and prints for each metric the median, min and max across runs (a result passes on the median of the cold runs, section 4.4) and for each per-item sample the p50, p95 and p99 pooled over the runs. Cold and warm runs are summarised apart, since `report` groups by parameters and not by label. Copy the numbers into `docs/benchmarks/results/<date>-<hardware>-<medium>.md` (section 5) and attach the JSON files to the PR.
+
+Cross-check B-15 once with Task Manager (Details, "Peak working set" column) during a swipe run.

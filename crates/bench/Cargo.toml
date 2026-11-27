@@ -1,6 +1,6 @@
 [package]
 name = "culla-bench"
-description = "Culla benchmarks (docs/benchmarks.md). Outside the removal rule; works in temp dirs only (ADR 0020)."
+description = "Culla benchmarks (docs/benchmarks.md). Read-only on the photo folder; writes nothing but stdout and stderr (ADR 0020)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 culla-adapters = { path = "../adapters" }
+culla-core = { path = "../core" }
 
 [lints]
 workspace = true

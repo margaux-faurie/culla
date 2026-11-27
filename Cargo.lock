@@ -549,6 +549,7 @@ name = "culla-bench"
 version = "0.0.0"
 dependencies = [
  "culla-adapters",
+ "culla-core",
 ]
 
 [[package]]
