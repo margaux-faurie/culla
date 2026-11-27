@@ -276,6 +276,7 @@ These are the commands; the ones marked with a milestone land with it. `CLAUDE.m
 | One TS test file | `pnpm test <file>` |
 | End to end | `pnpm build:demo` then `pnpm e2e` (Playwright, includes axe; serves `dist-demo/` with `pnpm preview:demo` on port 4173). First time: `pnpm exec playwright install chromium` |
 | Headless scan of a folder | `cargo run -p culla-cli -- scan <folder> [--no-subfolders] [--json]` (read-only; exit codes in `culla help`) |
+| Benchmarks (M1) | `cargo build --release -p culla-bench`, then `culla-bench scan\|preview\|swipe\|io-baseline <folder> [--json]` and `culla-bench report <result.json>...` (read-only, writes nothing but stdout; the campaign is in [benchmarks.md](benchmarks.md) §7). `cargo test -p culla-bench` runs the measurement logic and every benchmark on the synthetic fixtures (timings not checked) |
 | Golden fixtures | `cargo xtask golden --check` |
 | Synthetic fixtures up to date | `cargo xtask fixtures --check` |
 | Regenerate fixtures | delete `testdata/synthetic/` by hand, then `cargo xtask fixtures` (it never overwrites) |
