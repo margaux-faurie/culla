@@ -2,7 +2,8 @@
  * Sample photos for the web demo. The author's photos (about 25 at 1600 px, SPEC §5.5) are not
  * chosen yet (SPEC §10), so the demo draws simple scenes as inline SVG: no network, no file.
  */
-import type { PhotoSummary, Sidecar } from "./types";
+import { type DemoGroup, kindOf, type Sidecar } from "./demo-routes";
+import type { PhotoSummary } from "./types";
 
 interface Scene {
   readonly sky: string;
@@ -96,19 +97,30 @@ export interface DemoPhotoSpec {
   readonly cameraProtected?: boolean;
 }
 
-export function demoPhoto(id: string, spec: DemoPhotoSpec, n: number): PhotoSummary {
-  const scene = SCENES[n % SCENES.length] ?? (SCENES[0] as Scene);
+/** The file facts of a spec, which only the backend sees. */
+export function demoGroup(spec: DemoPhotoSpec): DemoGroup {
   const lone = spec.lone === true;
   return {
-    id,
     name: spec.name,
     folder: spec.folder,
     primary: lone ? ".NEF" : ".JPG",
     raw: lone || spec.jpegOnly === true ? null : ".NEF",
     sidecars: spec.sidecars ?? [],
     cameraProtected: spec.cameraProtected === true,
+  };
+}
+
+/** What the UI gets for a spec: display data and an opaque id. */
+export function demoPhoto(id: string, spec: DemoPhotoSpec, n: number): PhotoSummary {
+  const scene = SCENES[n % SCENES.length] ?? (SCENES[0] as Scene);
+  const group = demoGroup(spec);
+  return {
+    id,
+    name: group.name,
+    kind: kindOf(group),
+    cameraProtected: group.cameraProtected,
     previewUrl: svg(scene, n),
-    alt: lone ? `${scene.alt}, from the NEF's embedded preview` : scene.alt,
+    alt: spec.lone === true ? `${scene.alt}, from the NEF's embedded preview` : scene.alt,
   };
 }
 

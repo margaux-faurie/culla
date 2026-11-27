@@ -16,8 +16,8 @@ export interface ReviewPlaceholderProps {
 export function ReviewPlaceholder({ session, state, onBack }: ReviewPlaceholderProps) {
   const ref = useRef<HTMLElement>(null);
   const tally = counts(state);
-  const withSidecar = session.photos.find((p) => p.raw !== null && p.sidecars.length > 0);
-  const example = withSidecar ?? session.photos[0] ?? null;
+  const photo = session.photos.find((p) => p.id === session.exampleId);
+  const example = photo === undefined ? null : { photo, route: photo.route };
 
   useEffect(() => {
     const root = ref.current;
@@ -45,17 +45,18 @@ export function ReviewPlaceholder({ session, state, onBack }: ReviewPlaceholderP
         moved yet.
       </p>
       <p className="small">The full plan and Apply come in a later version of this screen.</p>
-      <section className="panel" aria-label="Where your photos will go">
+      {/* The route list carries the name "Where your photos will go"; the panel adds none. */}
+      <div className="panel">
         <RouteView
           source={session.source}
           photoSummary={`${tally.total} photos`}
           example={example}
+          rejectedFolder={session.rejectedFolder}
           rejectedFolderExists={session.rejectedFolderExists}
           destination={session.destination}
           keepMode={session.options.keepMode}
-          rawFollows={session.options.rawFollows}
         />
-      </section>
+      </div>
       <div>
         <button type="button" className="button button-outline" onClick={onBack}>
           Back to sorting

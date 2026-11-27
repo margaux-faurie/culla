@@ -23,7 +23,8 @@ export function proposedDestinationId(
   memory: DestinationMemory,
   sourceId: string,
 ): { id: string; reason: "thisSource" | "lastUsed" } | null {
-  const own = memory.bySource[sourceId];
+  // Own keys only: an id such as `constructor` or `__proto__` must not find an inherited value.
+  const own = Object.hasOwn(memory.bySource, sourceId) ? memory.bySource[sourceId] : undefined;
   if (own !== undefined) {
     return { id: own, reason: "thisSource" };
   }

@@ -1,8 +1,7 @@
 import { type Dispatch, useEffect, useMemo, useRef, useState } from "react";
-import type { PhotoSummary, SessionInfo } from "../backend/types";
+import type { SessionInfo, SessionPhoto } from "../backend/types";
 import type { GroupState, Verdict } from "../decisions/events";
 import { CheckIcon, CrossIcon } from "../route/RouteView";
-import { keepVerb, keptFolder, photoFolder, rejectedFolder, rejectVerb } from "../route/route";
 import { HelpDialog } from "./HelpDialog";
 import { type Command, commandFor } from "./keys";
 import {
@@ -87,6 +86,17 @@ export function SwipeScreen(props: SwipeScreenProps) {
     }
     root.focus();
     const onKeyDown = (event: KeyboardEvent) => {
+      // A held Enter on a focused Keep, Reject or Undo button would press it again and again.
+      const enter = event.code === "Enter" || event.code === "NumpadEnter";
+      if (
+        event.repeat &&
+        enter &&
+        event.target instanceof HTMLButtonElement &&
+        root.contains(event.target)
+      ) {
+        event.preventDefault();
+        return;
+      }
       const command = commandFor(event);
       if (command === null) {
         return;
@@ -102,6 +112,20 @@ export function SwipeScreen(props: SwipeScreenProps) {
     return () => root.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  // A focused button can unmount with the state (Undo once the photo is undecided, Jump to
+  // undecided once the end card goes, Keep or Reject once the end card comes). Focus would fall to
+  // the body, where the shortcuts do not listen, so it goes back to the swipe view. Runs after
+  // every render.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (helpOpen || root === null) {
+      return;
+    }
+    if (!root.contains(document.activeElement)) {
+      root.focus();
+    }
+  });
+
   // The toast hides itself after a while; a newer one restarts the clock.
   const { feedback, nonce } = state;
   useEffect(() => {
@@ -113,8 +137,7 @@ export function SwipeScreen(props: SwipeScreenProps) {
   }, [feedback, dispatch]);
 
   const exit = useExit(state, byId);
-  const sourcePath = session.source.folder.path;
-  const folderPath = photo === undefined ? sourcePath : photoFolder(sourcePath, photo);
+  const folderPath = photo === undefined ? session.source.folder.path : photo.route.folder;
   const position = Math.min(state.index + 1, tally.total);
   const progress = tally.total === 0 ? 0 : ((tally.kept + tally.rejected) / tally.total) * 100;
 
@@ -134,6 +157,7 @@ export function SwipeScreen(props: SwipeScreenProps) {
           <div className="swipe-where">
             <h1 className="brand">Culla</h1>
             <span className="muted">{folderPath}</span>
+            <span className="visually-hidden">. </span>
             <span className="pill pill-quiet">No files have moved yet</span>
           </div>
           <div className="swipe-tally">
@@ -177,7 +201,7 @@ export function SwipeScreen(props: SwipeScreenProps) {
         <div className="toast-slot">
           {feedback !== null && (
             <p className="toast" key={nonce}>
-              {toastText(feedback, session, byId)}
+              {toastText(feedback, byId)}
             </p>
           )}
         </div>
@@ -215,9 +239,7 @@ export function SwipeScreen(props: SwipeScreenProps) {
           )}
         </div>
 
-        {photo !== undefined && (
-          <Actions session={session} photo={photo} decision={decision} onCommand={run} />
-        )}
+        {photo !== undefined && <Actions photo={photo} decision={decision} onCommand={run} />}
 
         <p className="hints">
           <span>
@@ -237,7 +259,12 @@ export function SwipeScreen(props: SwipeScreenProps) {
           </span>
         </p>
 
-        <output className="visually-hidden">{state.announcement}</output>
+        {/* A repeated refusal has the same words; the alternating no-break space makes it a
+            change, so it is announced again (NFR-A11Y-09). The nonce moves with every refusal. */}
+        <output className="visually-hidden">
+          {state.announcement}
+          {state.nonce % 2 === 1 ? "\u00a0" : ""}
+        </output>
       </main>
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
     </>
@@ -258,8 +285,8 @@ function cardClass(
 }
 
 /** The card that just got a decision, kept mounted for its exit animation only. */
-function useExit(state: SwipeState, byId: ReadonlyMap<string, PhotoSummary>) {
-  const [exit, setExit] = useState<{ photo: PhotoSummary; verdict: Verdict; nonce: number } | null>(
+function useExit(state: SwipeState, byId: ReadonlyMap<string, SessionPhoto>) {
+  const [exit, setExit] = useState<{ photo: SessionPhoto; verdict: Verdict; nonce: number } | null>(
     null,
   );
   const { exit: leaving, nonce } = state;
@@ -277,7 +304,7 @@ function useExit(state: SwipeState, byId: ReadonlyMap<string, PhotoSummary>) {
 }
 
 interface CardProps {
-  readonly photo: PhotoSummary;
+  readonly photo: SessionPhoto;
   readonly state: GroupState;
   readonly className: string;
   /** Hidden cards (the next one, the one leaving) are decoration for assistive tech. */
@@ -297,16 +324,13 @@ function Card({ photo, state, className, hidden = false }: CardProps) {
         <figcaption className="card-caption">
           <Badge state={state} />
           <span className="pill pill-photo">
-            {photo.name} · {kinds(photo)}
+            {photo.name} · {photo.kind}
           </span>
         </figcaption>
       )}
     </figure>
   );
 }
-
-const kinds = (photo: PhotoSummary): string =>
-  photo.raw !== null ? "JPEG + NEF" : photo.primary.toUpperCase() === ".NEF" ? "NEF" : "JPEG";
 
 /** Label and shape as well as colour (NFR-A11Y-08): filled for kept, outline for rejected. */
 function Badge({ state }: { state: GroupState }) {
@@ -331,8 +355,7 @@ function Badge({ state }: { state: GroupState }) {
 }
 
 interface ActionsProps {
-  readonly session: SessionInfo;
-  readonly photo: PhotoSummary;
+  readonly photo: SessionPhoto;
   readonly decision: GroupState;
   readonly onCommand: (command: Command) => void;
 }
@@ -342,12 +365,11 @@ interface ActionsProps {
  * decided photo they stay clickable but only explain (ADR 0006), and the route says where the photo
  * will go instead of what the buttons would do.
  */
-function Actions({ session, photo, decision, onCommand }: ActionsProps) {
+function Actions({ photo, decision, onCommand }: ActionsProps) {
   const decided = decision !== "undecided";
-  const source = session.source.folder.path;
-  const keepTo = keepRoute(session, photo);
-  const rejectTo = rejectRoute(session, photo);
-  const rawStays = !session.options.rawFollows && photo.raw !== null;
+  const keepTo = keepRoute(photo);
+  const rejectTo = photo.route.rejectedTo;
+  const { staying } = photo.route;
   return (
     <div className={decided ? "actions actions-decided" : "actions"}>
       <div className="action-row">
@@ -391,18 +413,17 @@ function Actions({ session, photo, decision, onCommand }: ActionsProps) {
           </button>
         )}
       </div>
-      {decided ? (
+      {decided && (
         <p className="action-note">
           {decision === "kept" ? `Kept: will be ${keepTo}.` : `Rejected: will be ${rejectTo}.`}{" "}
           Arrows never change a decision. Undo first, then decide again.
         </p>
-      ) : (
-        rawStays && (
-          <p className="action-note">
-            RAW and edit files do not follow: {photo.name}
-            {photo.raw} stays in {photoFolder(source, photo)}.
-          </p>
-        )
+      )}
+      {staying !== null && (
+        <p className="action-note">
+          RAW and edit files do not follow: {staying.name} {staying.extensions} stay in{" "}
+          {photo.route.folder}.
+        </p>
       )}
     </div>
   );
@@ -438,19 +459,14 @@ function EndCard(props: {
   );
 }
 
-function toastText(
-  feedback: Feedback,
-  session: SessionInfo,
-  byId: ReadonlyMap<string, PhotoSummary>,
-): string {
+function toastText(feedback: Feedback, byId: ReadonlyMap<string, SessionPhoto>): string {
   switch (feedback.kind) {
     case "already-decided": {
       const photo = byId.get(feedback.photoId);
       if (photo === undefined || feedback.state === "undecided") {
         return "Press U to undo.";
       }
-      const where =
-        feedback.state === "kept" ? keepRoute(session, photo) : rejectRoute(session, photo);
+      const where = feedback.state === "kept" ? keepRoute(photo) : photo.route.rejectedTo;
       return `Already ${feedback.state}. Will be ${where}. Press U to undo.`;
     }
     case "already-undecided":
@@ -464,10 +480,5 @@ function toastText(
   }
 }
 
-function keepRoute(session: SessionInfo, photo: PhotoSummary): string {
-  const folder = keptFolder(session.destination.folder.path, photo);
-  return `${keepVerb(session.options.keepMode, photo)} to ${folder}`;
-}
-
-const rejectRoute = (session: SessionInfo, photo: PhotoSummary): string =>
-  `${rejectVerb(photo)} to ${rejectedFolder(session.source.folder.path, photo)}`;
+/** The session's destination is available, so `keptTo` is set; the fallback is defensive. */
+const keepRoute = (photo: SessionPhoto): string => photo.route.keptTo ?? "kept";

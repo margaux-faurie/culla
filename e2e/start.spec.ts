@@ -67,10 +67,13 @@ test.describe("start screen (US-21, US-44)", () => {
     await page.goto("/");
     await page.getByRole("button", { name: /^Alps/ }).click();
     await expect(page.getByText("not available")).toBeVisible();
+    const kept = page.locator(".route-example").first();
+    await expect(kept).toContainText("→ the destination you choose");
     await page.getByRole("radio", { name: "Moved" }).check();
     await expect(page.getByRole("button", { name: "Start sorting" })).toBeDisabled();
     await page.getByRole("button", { name: "Change" }).click();
     await expect(page.getByText("D:\\Photos\\Selects 2026", { exact: true })).toBeVisible();
+    await expect(kept).toContainText("→ moved to D:\\Photos\\Selects 2026");
     await expect(page.getByRole("button", { name: "Start sorting" })).toBeEnabled();
   });
 

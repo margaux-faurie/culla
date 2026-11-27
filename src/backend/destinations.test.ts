@@ -17,6 +17,14 @@ describe("destination memory (SPEC §2, US-21)", () => {
     expect(proposedDestinationId(memory, "s3")).toEqual({ id: "d2", reason: "lastUsed" });
   });
 
+  it("never finds a destination on an inherited key", () => {
+    expect(proposedDestinationId(EMPTY_MEMORY, "constructor")).toBeNull();
+    expect(proposedDestinationId(EMPTY_MEMORY, "__proto__")).toBeNull();
+    const memory = remember(EMPTY_MEMORY, "__proto__", "d1");
+    expect(proposedDestinationId(memory, "__proto__")).toEqual({ id: "d1", reason: "thisSource" });
+    expect(proposedDestinationId(memory, "toString")).toEqual({ id: "d1", reason: "lastUsed" });
+  });
+
   it("reads back what it stored and treats anything else as a first run", () => {
     const memory = remember(EMPTY_MEMORY, "s1", "d1");
     expect(parseMemory(JSON.stringify(memory))).toEqual(memory);

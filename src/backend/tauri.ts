@@ -1,9 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
+import { NotReadyError } from "./errors";
 import type { Backend } from "./types";
 
-/** The Rust commands behind these calls arrive one slice at a time (CLAUDE.md, "How to add a feature"). */
-const notYet = (name: string) => (): Promise<never> =>
-  Promise.reject(new Error(`${name} is not available in the app yet`));
+/**
+ * The Rust commands behind these calls arrive one slice at a time (CLAUDE.md, "How to add a
+ * feature"); until then the UI shows "Not ready yet" for them.
+ */
+const notYet = (name: string) => (): Promise<never> => Promise.reject(new NotReadyError(name));
 
 /**
  * Backend for the desktop app. Commands are typed by hand until tauri-specta generates
@@ -17,6 +20,7 @@ export function createBackend(): Backend {
     recentSources: notYet("recentSources"),
     chooseSource: notYet("chooseSource"),
     describeSource: notYet("describeSource"),
+    exampleRoute: notYet("exampleRoute"),
     proposeDestination: notYet("proposeDestination"),
     chooseDestination: notYet("chooseDestination"),
     startSession: notYet("startSession"),

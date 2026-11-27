@@ -123,6 +123,53 @@ test.describe("swipe screen (US-22 to US-32, US-42)", () => {
     await expect(page.getByRole("heading", { name: "End of the list" })).toBeVisible();
     await page.getByRole("button", { name: "Jump to undecided (23)" }).click();
     await expect(page.locator(".swipe-tally .strong")).toHaveText("2 / 24");
+    // The clicked button is gone with the end card; the shortcuts still work.
+    await expect(page.getByRole("main", { name: "Sort photos" })).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    await expect(tally(page, "kept")).toHaveText("2 kept");
+  });
+
+  test("the shortcuts still work after clicking Undo, which then goes away", async ({ page }) => {
+    await startSorting(page);
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Shift+ArrowLeft");
+    await page.getByRole("button", { name: /^Undo/ }).click();
+    await expect(tally(page, "kept")).toHaveText("0 kept");
+    await expect(page.getByRole("button", { name: /^Undo/ })).toHaveCount(0);
+    await page.keyboard.press("ArrowRight");
+    await expect(tally(page, "kept")).toHaveText("1 kept");
+  });
+
+  test("a held Enter on the focused Keep button keeps one photo", async ({ page }) => {
+    await startSorting(page);
+    const keep = page.getByRole("button", { name: "Keep", exact: true });
+    await keep.focus();
+    // Repeated keyboard.down calls without keyboard.up are sent with repeat set (auto-repeat).
+    await page.keyboard.down("Enter");
+    for (let i = 0; i < 5; i += 1) {
+      await page.keyboard.down("Enter");
+    }
+    await page.keyboard.up("Enter");
+    await expect(tally(page, "kept")).toHaveText("1 kept");
+    await expect(page.locator(".swipe-tally .strong")).toHaveText("2 / 24");
+  });
+
+  test("with RAW not following, the note says what stays, before and after deciding", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Choose a folder" }).click();
+    await page.getByRole("checkbox", { name: "RAW and edit files follow their JPEG" }).uncheck();
+    await page.getByRole("radio", { name: "Moved" }).check();
+    await page.getByRole("button", { name: "Start sorting" }).click();
+    const note = page.getByText(
+      "RAW and edit files do not follow: MGF_7001 .NEF stay in E:\\2026.",
+    );
+    await expect(note).toBeVisible();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Shift+ArrowLeft");
+    await expect(page.getByText("Kept: will be moved to D:\\Photos\\Selects 2026.")).toBeVisible();
+    await expect(note).toBeVisible();
   });
 
   test("decides 10 photos with clicks only (US-42, WCAG 2.5.7)", async ({ page }) => {

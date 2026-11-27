@@ -1,5 +1,13 @@
 import type { DecisionEvent } from "../decisions/events";
-import { type DemoPhotoSpec, demoPhoto, source2026, sourceAlps, sourceCard } from "./demo-photos";
+import {
+  type DemoPhotoSpec,
+  demoGroup,
+  demoPhoto,
+  source2026,
+  sourceAlps,
+  sourceCard,
+} from "./demo-photos";
+import { type DemoGroup, type RouteOptions, rejectedRoot, routeOf } from "./demo-routes";
 import {
   type DestinationMemory,
   parseMemory,
@@ -10,6 +18,7 @@ import type {
   Backend,
   DestinationSummary,
   PhotoSummary,
+  RouteExample,
   SessionInfo,
   SessionOptions,
   SourceDetails,
@@ -106,10 +115,44 @@ export interface DemoOptions {
   readonly storage?: DemoStorage | null;
 }
 
+/** Reads the stored memory; a storage that throws (private mode, quota, policy) counts as none. */
+function readStored(storage: DemoStorage | null): string | null {
+  try {
+    return storage?.getItem(MEMORY_KEY) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Writes the memory; when the storage refuses it, the memory lasts this backend only. */
+function writeStored(storage: DemoStorage | null, memory: DestinationMemory): void {
+  try {
+    storage?.setItem(MEMORY_KEY, JSON.stringify(memory));
+  } catch {
+    // Kept in this backend's memory only, as with no storage at all.
+  }
+}
+
+interface DemoEntry {
+  readonly photo: PhotoSummary;
+  readonly group: DemoGroup;
+}
+
+/** The route view's example: a photo in a subfolder with a NEF and a sidecar, if there is one. */
+function exampleOf(entries: readonly DemoEntry[]): DemoEntry | null {
+  const rich = (e: DemoEntry) => e.group.raw !== null && e.group.sidecars.length > 0;
+  return (
+    entries.find((e) => e.group.folder.length > 0 && rich(e)) ??
+    entries.find(rich) ??
+    entries[0] ??
+    null
+  );
+}
+
 /** Simulated backend for the web demo and for tests. There is no Rust side in the browser. */
 export function createBackend(options: DemoOptions = {}): Backend {
   const storage = options.storage === undefined ? defaultStorage() : options.storage;
-  const stored = storage?.getItem(MEMORY_KEY) ?? null;
+  const stored = readStored(storage);
   let memory = stored === null ? (options.seed ?? SEED) : parseMemory(stored);
   const known = new Map<string, DemoSource>(SOURCES.map((s) => [s.summary.id, s]));
   const events = new Map<string, DecisionEvent[]>();
@@ -123,11 +166,17 @@ export function createBackend(options: DemoOptions = {}): Backend {
     return source;
   };
 
-  const photosOf = (source: DemoSource, includeSubfolders: boolean): PhotoSummary[] =>
+  const entriesOf = (source: DemoSource, includeSubfolders: boolean): DemoEntry[] =>
     source.specs
       .map((spec, n) => ({ spec, n }))
       .filter(({ spec }) => includeSubfolders || spec.folder.length === 0)
-      .map(({ spec, n }) => demoPhoto(`${source.summary.id}-${n + 1}`, spec, n));
+      .map(({ spec, n }) => ({
+        photo: demoPhoto(`${source.summary.id}-${n + 1}`, spec, n),
+        group: demoGroup(spec),
+      }));
+
+  const destinationOf = (id: string | null): DestinationSummary | undefined =>
+    DESTINATIONS.find((d) => d.id === id);
 
   return {
     version: () => Promise.resolve("demo"),
@@ -141,25 +190,42 @@ export function createBackend(options: DemoOptions = {}): Backend {
 
     describeSource: async (sourceId, includeSubfolders): Promise<SourceDetails> => {
       const source = sourceOf(sourceId);
-      const photos = source.summary.connected ? photosOf(source, includeSubfolders) : [];
-      const subfolders = [...new Set(photos.flatMap((p) => p.folder.slice(0, 1)))];
+      const entries = source.summary.connected ? entriesOf(source, includeSubfolders) : [];
+      const subfolders = [...new Set(entries.flatMap((e) => e.group.folder.slice(0, 1)))];
       return {
         sourceId,
         includeSubfolders,
-        photoCount: source.summary.connected ? photos.length : source.summary.photoCount,
+        photoCount: source.summary.connected ? entries.length : source.summary.photoCount,
         subfolders,
+        rejectedFolder: rejectedRoot(source.summary.folder.path),
         rejectedFolderExists: source.rejectedFolderExists,
-        example:
-          photos.find((p) => p.folder.length > 0 && p.raw !== null && p.sidecars.length > 0) ??
-          photos.find((p) => p.raw !== null && p.sidecars.length > 0) ??
-          photos[0] ??
-          null,
+      };
+    },
+
+    exampleRoute: async (query): Promise<RouteExample | null> => {
+      const source = sourceOf(query.sourceId);
+      if (!source.summary.connected) {
+        return null;
+      }
+      const example = exampleOf(entriesOf(source, query.includeSubfolders));
+      if (example === null) {
+        return null;
+      }
+      const destination = destinationOf(query.destinationId);
+      return {
+        photo: example.photo,
+        route: routeOf(example.group, {
+          sourcePath: source.summary.folder.path,
+          rawFollows: query.rawFollows,
+          keepMode: query.keepMode,
+          destinationPath: destination?.available === true ? destination.folder.path : null,
+        }),
       };
     },
 
     proposeDestination: async (sourceId) => {
       const proposal = proposedDestinationId(memory, sourceId);
-      const destination = DESTINATIONS.find((d) => d.id === proposal?.id);
+      const destination = destinationOf(proposal?.id ?? null);
       return proposal === null || destination === undefined
         ? null
         : { destination, reason: proposal.reason };
@@ -169,25 +235,37 @@ export function createBackend(options: DemoOptions = {}): Backend {
 
     startSession: async (options: SessionOptions): Promise<SessionInfo> => {
       const source = sourceOf(options.sourceId);
-      const destination = DESTINATIONS.find((d) => d.id === options.destinationId);
+      const destination = destinationOf(options.destinationId);
       if (!source.summary.connected) {
         throw new Error("source not connected");
       }
       if (destination === undefined || !destination.available) {
         throw new Error("destination not available");
       }
-      memory = remember(memory, options.sourceId, options.destinationId);
-      storage?.setItem(MEMORY_KEY, JSON.stringify(memory));
+      // Memory is replaced whole once the write was tried: a storage that refuses it leaves this
+      // backend's memory updated and the stored one as it was, never half of each.
+      const next = remember(memory, options.sourceId, options.destinationId);
+      writeStored(storage, next);
+      memory = next;
       sessions += 1;
       const id = `demo-session-${sessions}`;
       events.set(id, []);
+      const routeOptions: RouteOptions = {
+        sourcePath: source.summary.folder.path,
+        rawFollows: options.rawFollows,
+        keepMode: options.keepMode,
+        destinationPath: destination.folder.path,
+      };
+      const entries = entriesOf(source, options.includeSubfolders);
       return {
         id,
         source: source.summary,
         destination,
         options,
+        rejectedFolder: rejectedRoot(source.summary.folder.path),
         rejectedFolderExists: source.rejectedFolderExists,
-        photos: photosOf(source, options.includeSubfolders),
+        photos: entries.map((e) => ({ ...e.photo, route: routeOf(e.group, routeOptions) })),
+        exampleId: exampleOf(entries)?.photo.id ?? null,
       };
     },
 

@@ -1,8 +1,10 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useBackend } from "../backend/context";
+import { isNotReady } from "../backend/errors";
 import type {
   DestinationSummary,
   KeepMode,
+  RouteExample,
   SessionInfo,
   SourceDetails,
   SourceStatus,
@@ -19,17 +21,25 @@ type Recents =
   | { readonly kind: "ready"; readonly sources: readonly SourceSummary[] }
   | { readonly kind: "error" };
 
+type Details =
+  | { readonly kind: "none" }
+  | { readonly kind: "loading" }
+  | { readonly kind: "ready"; readonly value: SourceDetails }
+  | { readonly kind: "failed" };
+
 /**
  * Start (SPEC §4.2, US-21, US-44): pick the folder, the options and the destination on one screen,
  * with the route view showing where kept and rejected photos go as the options are set. Move or
  * copy is chosen fresh each session: nothing is preselected and Start stays disabled until then.
+ * Resuming or starting fresh on a folder with a session (SPEC §4.2) is not built yet (SPEC §10).
  */
 export function StartScreen({ onStarted }: StartScreenProps) {
   const backend = useBackend();
   const hintId = useId();
   const [recents, setRecents] = useState<Recents>({ kind: "loading" });
   const [source, setSource] = useState<SourceSummary | null>(null);
-  const [details, setDetails] = useState<SourceDetails | null>(null);
+  const [details, setDetails] = useState<Details>({ kind: "none" });
+  const [example, setExample] = useState<RouteExample | null>(null);
   const [includeSubfolders, setIncludeSubfolders] = useState(true);
   const [rawFollows, setRawFollows] = useState(true);
   const [keepMode, setKeepMode] = useState<KeepMode | null>(null);
@@ -37,12 +47,33 @@ export function StartScreen({ onStarted }: StartScreenProps) {
   const [sameAsLastTime, setSameAsLastTime] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Desktop mode until the Tauri commands land: a notice instead of error messages.
+  const [notReady, setNotReady] = useState(false);
+  // Set once the user picks a destination for this folder, so a late proposal never replaces it.
+  const destinationChosen = useRef(false);
+
+  const fail = (cause: unknown, message: string) => {
+    if (isNotReady(cause)) {
+      setNotReady(true);
+    } else {
+      setError(message);
+    }
+  };
+  const failRef = useRef(fail);
+  failRef.current = fail;
 
   useEffect(() => {
     let active = true;
     backend.recentSources().then(
       (sources) => active && setRecents({ kind: "ready", sources }),
-      () => active && setRecents({ kind: "error" }),
+      (cause: unknown) => {
+        if (active) {
+          setRecents(isNotReady(cause) ? { kind: "ready", sources: [] } : { kind: "error" });
+          if (isNotReady(cause)) {
+            setNotReady(true);
+          }
+        }
+      },
     );
     return () => {
       active = false;
@@ -50,22 +81,25 @@ export function StartScreen({ onStarted }: StartScreenProps) {
   }, [backend]);
 
   const sourceId = source?.id ?? null;
+  const destinationId = destination?.id ?? null;
 
   useEffect(() => {
     if (sourceId === null) {
       return;
     }
     let active = true;
+    destinationChosen.current = false;
     setDestination(null);
     setSameAsLastTime(false);
+    setExample(null);
     backend.proposeDestination(sourceId).then(
       (proposal) => {
-        if (active && proposal !== null) {
+        if (active && proposal !== null && !destinationChosen.current) {
           setDestination(proposal.destination);
           setSameAsLastTime(true);
         }
       },
-      () => undefined,
+      (cause: unknown) => active && isNotReady(cause) && setNotReady(true),
     );
     return () => {
       active = false;
@@ -77,15 +111,43 @@ export function StartScreen({ onStarted }: StartScreenProps) {
       return;
     }
     let active = true;
-    setDetails(null);
+    setDetails({ kind: "loading" });
     backend.describeSource(sourceId, includeSubfolders).then(
-      (value) => active && setDetails(value),
-      () => active && setError("Could not read this folder."),
+      (value) => active && setDetails({ kind: "ready", value }),
+      (cause: unknown) => {
+        if (active) {
+          setDetails({ kind: "failed" });
+          failRef.current(cause, "Could not read this folder.");
+        }
+      },
     );
     return () => {
       active = false;
     };
   }, [backend, sourceId, includeSubfolders]);
+
+  // The example keeps showing while a new one loads, so the route does not flash as options change.
+  useEffect(() => {
+    if (sourceId === null) {
+      return;
+    }
+    let active = true;
+    const query = { sourceId, includeSubfolders, rawFollows, keepMode, destinationId };
+    backend.exampleRoute(query).then(
+      (value) => active && setExample(value),
+      (cause: unknown) => {
+        if (active) {
+          setExample(null);
+          if (isNotReady(cause)) {
+            setNotReady(true);
+          }
+        }
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [backend, sourceId, includeSubfolders, rawFollows, keepMode, destinationId]);
 
   const chooseFolder = async () => {
     setError(null);
@@ -94,8 +156,8 @@ export function StartScreen({ onStarted }: StartScreenProps) {
       if (picked !== null) {
         setSource(picked);
       }
-    } catch {
-      setError("Could not open the folder dialog.");
+    } catch (cause) {
+      fail(cause, "Could not open the folder dialog.");
     }
   };
 
@@ -104,11 +166,12 @@ export function StartScreen({ onStarted }: StartScreenProps) {
     try {
       const picked = await backend.chooseDestination();
       if (picked !== null) {
+        destinationChosen.current = true;
         setDestination(picked);
         setSameAsLastTime(false);
       }
-    } catch {
-      setError("Could not open the folder dialog.");
+    } catch (cause) {
+      fail(cause, "Could not open the folder dialog.");
     }
   };
 
@@ -131,11 +194,13 @@ export function StartScreen({ onStarted }: StartScreenProps) {
           destinationId: destination.id,
         }),
       );
-    } catch {
-      setError("Could not start the session.");
+    } catch (cause) {
+      fail(cause, "Could not start the session.");
       setStarting(false);
     }
   };
+
+  const ready = details.kind === "ready" ? details.value : null;
 
   return (
     <div className="start">
@@ -143,6 +208,12 @@ export function StartScreen({ onStarted }: StartScreenProps) {
         <span className="brand">Culla</span>
       </header>
       <main className="start-main">
+        {notReady && (
+          <output className="notice">
+            Not ready yet. Sorting in the app arrives with its next versions; the web demo shows
+            how it will work.
+          </output>
+        )}
         <section className="start-pick" aria-labelledby="start-title">
           <h1 id="start-title" className="title">
             What do you want to sort?
@@ -168,11 +239,11 @@ export function StartScreen({ onStarted }: StartScreenProps) {
             <RouteView
               source={source}
               photoSummary={photoSummary(source, details)}
-              example={details?.example ?? null}
-              rejectedFolderExists={details?.rejectedFolderExists ?? false}
+              example={example}
+              rejectedFolder={ready?.rejectedFolder ?? null}
+              rejectedFolderExists={ready?.rejectedFolderExists ?? null}
               destination={destination}
               keepMode={keepMode}
-              rawFollows={rawFollows}
               originControls={
                 <label className="check">
                   <input
@@ -205,11 +276,9 @@ export function StartScreen({ onStarted }: StartScreenProps) {
               RAW and edit files follow their JPEG
             </label>
             <span className="start-go">
-              {hint !== null && (
-                <span id={hintId} className="small">
-                  {hint}
-                </span>
-              )}
+              <output id={hintId} className="small">
+                {hint ?? ""}
+              </output>
               <button
                 type="button"
                 className="button button-primary button-large"
@@ -234,7 +303,7 @@ export function StartScreen({ onStarted }: StartScreenProps) {
 
 function startHint(
   source: SourceSummary | null,
-  details: SourceDetails | null,
+  details: Details,
   keepMode: KeepMode | null,
   destination: DestinationSummary | null,
 ): string | null {
@@ -244,10 +313,13 @@ function startHint(
   if (!source.connected) {
     return "Connect this folder's drive to sort it";
   }
-  if (details === null) {
+  if (details.kind === "failed") {
+    return "Could not read this folder";
+  }
+  if (details.kind !== "ready") {
     return "Reading the folder";
   }
-  if (details.photoCount === 0) {
+  if (details.value.photoCount === 0) {
     return "This folder has no photos";
   }
   if (keepMode === null) {
@@ -262,20 +334,24 @@ function startHint(
   return null;
 }
 
-function photoSummary(source: SourceSummary, details: SourceDetails | null): string {
+function photoSummary(source: SourceSummary, details: Details): string {
   if (!source.connected) {
     return `${source.photoCount} photos · not connected`;
   }
-  if (details === null) {
+  if (details.kind === "failed") {
+    return "could not count the photos";
+  }
+  if (details.kind !== "ready") {
     return "Counting photos";
   }
-  const photos = `${details.photoCount} ${details.photoCount === 1 ? "photo" : "photos"}`;
-  if (!details.includeSubfolders) {
+  const { value } = details;
+  const photos = `${value.photoCount} ${value.photoCount === 1 ? "photo" : "photos"}`;
+  if (!value.includeSubfolders) {
     return `${photos} · subfolders left out`;
   }
-  return details.subfolders.length === 0
+  return value.subfolders.length === 0
     ? photos
-    : `${photos}, also in ${details.subfolders.join(" and ")}`;
+    : `${photos}, also in ${value.subfolders.join(" and ")}`;
 }
 
 interface KeepControlsProps {

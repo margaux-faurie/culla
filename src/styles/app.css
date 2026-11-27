@@ -200,6 +200,15 @@ kbd {
   align-items: flex-start;
 }
 
+/* "Not ready yet" in the app until its commands land: a full row above the two columns. */
+.notice {
+  display: block;
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
 .start-pick {
   display: flex;
   flex: 1 1 320px;

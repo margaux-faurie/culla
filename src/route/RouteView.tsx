@@ -1,24 +1,17 @@
 import type { ReactNode } from "react";
-import type { DestinationSummary, KeepMode, PhotoSummary, SourceSummary } from "../backend/types";
-import {
-  filesOf,
-  joinPath,
-  keepVerb,
-  keptFolder,
-  photoFolder,
-  rejectedFolder,
-  rejectVerb,
-  suffixes,
-} from "./route";
+import type { DestinationSummary, KeepMode, RouteExample, SourceSummary } from "../backend/types";
 
 export interface RouteViewProps {
   readonly source: SourceSummary;
   readonly photoSummary: string;
-  readonly example: PhotoSummary | null;
-  readonly rejectedFolderExists: boolean;
+  /** One real photo and its route, computed by the backend. Null while loading or when none. */
+  readonly example: RouteExample | null;
+  /** `E:\2026\_rejected` from the backend, or null while it loads. */
+  readonly rejectedFolder: string | null;
+  /** Null while the folder's details load: the "new folder" mark waits for them. */
+  readonly rejectedFolderExists: boolean | null;
   readonly destination: DestinationSummary | null;
   readonly keepMode: KeepMode | null;
-  readonly rawFollows: boolean;
   /** Controls placed in the From branch (change folder, subfolders). */
   readonly originControls?: ReactNode;
   /** Controls placed in the Kept branch (moved or copied, destination). */
@@ -28,11 +21,10 @@ export interface RouteViewProps {
 /**
  * "Where photos go" (SPEC §2): the origin, a Kept branch, a Rejected branch and the photos left in
  * place, with one real example path per branch. The same view heads the start, review and apply
- * screens.
+ * screens. Every path is a display string from the backend, printed as it is.
  */
 export function RouteView(props: RouteViewProps) {
-  const { source, example, destination, keepMode, rawFollows } = props;
-  const rejectedRoot = joinPath(source.folder.path, ["_rejected"]);
+  const { source, example, destination, keepMode } = props;
 
   return (
     <ol className="route" aria-label="Where your photos will go">
@@ -55,18 +47,11 @@ export function RouteView(props: RouteViewProps) {
         <div className="route-body">
           <span className="route-label route-label-keep">Kept photos →</span>
           {props.keepControls ?? (
-            <span className="route-place">
-              {keepMode === "copy" ? "Copied" : "Moved"} to {destination?.folder.path ?? "—"}
-            </span>
+            <span className="route-place">{keptPlace(destination, keepMode)}</span>
           )}
           <span className="route-note">Subfolders are kept as they are.</span>
           {example !== null && (
-            <Example
-              sourcePath={source.folder.path}
-              photo={example}
-              rawFollows={rawFollows}
-              to={keptTarget(example, destination, keepMode)}
-            />
+            <Example example={example} to={example.route.keptTo ?? "the destination you choose"} />
           )}
         </div>
       </li>
@@ -78,20 +63,18 @@ export function RouteView(props: RouteViewProps) {
         <div className="route-body">
           <span className="route-label">← Rejected photos</span>
           <span className="route-place">
-            Moved to {rejectedRoot}
-            {!props.rejectedFolderExists && <span className="pill pill-outline">new folder</span>}
+            Moved to {props.rejectedFolder ?? "_rejected"}
+            {props.rejectedFolderExists === false && (
+              <>
+                <span className="visually-hidden">, </span>
+                <span className="pill pill-outline">new folder</span>
+              </>
+            )}
           </span>
           <span className="route-note">
             One folder, inside the folder you sort. Nothing is deleted.
           </span>
-          {example !== null && (
-            <Example
-              sourcePath={source.folder.path}
-              photo={example}
-              rawFollows={rawFollows}
-              to={`${rejectVerb(example)} to ${rejectedFolder(source.folder.path, example)}`}
-            />
-          )}
+          {example !== null && <Example example={example} to={example.route.rejectedTo} />}
         </div>
       </li>
 
@@ -106,39 +89,36 @@ export function RouteView(props: RouteViewProps) {
   );
 }
 
-function keptTarget(
-  photo: PhotoSummary,
-  destination: DestinationSummary | null,
-  keepMode: KeepMode | null,
-): string {
-  if (destination === null) {
-    return "the destination you choose";
+/** The Kept branch's place when no controls replace it: no verb until moved or copied is chosen. */
+function keptPlace(destination: DestinationSummary | null, keepMode: KeepMode | null): string {
+  const where =
+    destination === null || !destination.available
+      ? "the destination you choose"
+      : destination.folder.path;
+  if (keepMode === null) {
+    return `To ${where}`;
   }
-  const folder = keptFolder(destination.folder.path, photo);
-  return keepMode === null ? folder : `${keepVerb(keepMode, photo)} to ${folder}`;
+  return `${keepMode === "copy" ? "Copied" : "Moved"} to ${where}`;
 }
 
 interface ExampleProps {
-  readonly sourcePath: string;
-  readonly photo: PhotoSummary;
-  readonly rawFollows: boolean;
+  readonly example: RouteExample;
   readonly to: string;
 }
 
 /** One real example path: the files that go, where they go, and the files that stay. */
-function Example({ sourcePath, photo, rawFollows, to }: ExampleProps) {
-  const files = filesOf(photo, rawFollows);
-  const from = photoFolder(sourcePath, photo);
+function Example({ example, to }: ExampleProps) {
+  const { photo, route } = example;
   return (
     <span className="route-example">
       <span>
         <span className="visually-hidden">Example: </span>
-        {joinPath(from, [photo.name])} <b>{suffixes(photo, files.going)}</b> → {to}
+        {route.origin} <b>{route.going.extensions}</b> → {to}
         {photo.cameraProtected && " (camera-protected: copied, original kept)"}
       </span>
-      {files.staying.length > 0 && (
+      {route.staying !== null && (
         <span>
-          {photo.name} <b>{suffixes(photo, files.staying)}</b> stay in {from}
+          {route.staying.name} <b>{route.staying.extensions}</b> stay in {route.folder}
         </span>
       )}
     </span>

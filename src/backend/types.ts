@@ -4,9 +4,10 @@ import type { DecisionEvent } from "../decisions/events";
  * Everything the UI asks of the outside world goes through this interface (ADR 0014).
  * `backend/tauri.ts` talks to the Rust side; `backend/demo.ts` simulates it in the browser.
  *
- * The UI only ever holds opaque ids. Folder strings in `DisplayFolder` are display data: they are
- * shown, never sent back, and the backend re-derives every real path from the ids
- * (design/file-engine.md §4, threat model T7).
+ * The UI only ever holds opaque ids. Folder strings in `DisplayFolder`, `SourceDetails` and
+ * `PhotoRoute` are display strings computed by the backend: the UI prints them as they are, never
+ * builds, parses or sends back a path, and the backend re-derives every real path from the ids
+ * (design/file-engine.md §4, threat model T7; the shape is proposed in SPEC §10).
  */
 export interface Backend {
   /** Version of the Rust side, or of the demo build. */
@@ -17,6 +18,8 @@ export interface Backend {
   chooseSource(): Promise<SourceSummary | null>;
   /** What the route view needs to know about a source with these options. */
   describeSource(sourceId: string, includeSubfolders: boolean): Promise<SourceDetails>;
+  /** One real photo of the source and where it would go with these options. Null when none. */
+  exampleRoute(query: RouteQuery): Promise<RouteExample | null>;
   /** The destination remembered for this source, else the last one used anywhere, else null. */
   proposeDestination(sourceId: string): Promise<DestinationProposal | null>;
   /** Opens the native folder dialog for the destination. Null when the user cancels. */
@@ -57,37 +60,75 @@ export interface SourceDetails {
   readonly photoCount: number;
   /** Names of the subfolders that hold photos, when subfolders are included. */
   readonly subfolders: readonly string[];
+  /** `E:\2026\_rejected`, as Windows shows it. Display only. */
+  readonly rejectedFolder: string;
   /** `_rejected\` is marked as a new folder only while it does not exist yet (SPEC §2). */
   readonly rejectedFolderExists: boolean;
-  /** One real photo of the source, for the route's example paths. Null when there is none. */
-  readonly example: PhotoSummary | null;
 }
 
-export interface Sidecar {
-  /** Everything after the stem, as on disk: `.xmp`, `.NEF.xmp`, `.pp3`. */
-  readonly suffix: string;
-  /** `raw` stays with the NEF when "RAW follows JPEG" is off (SPEC §3.1, ADR 0023). */
-  readonly follows: "primary" | "raw";
+/** The options the start screen shows an example route for. Null fields are not chosen yet. */
+export interface RouteQuery {
+  readonly sourceId: string;
+  readonly includeSubfolders: boolean;
+  readonly rawFollows: boolean;
+  readonly keepMode: KeepMode | null;
+  readonly destinationId: string | null;
+}
+
+/** One real photo of the source with its route under the queried options. */
+export interface RouteExample {
+  readonly photo: PhotoSummary;
+  readonly route: PhotoRoute;
+}
+
+/** Files in the compact form `MGF_7273 .JPG .NEF .xmp`, split only for emphasis. Display only. */
+export interface FilesLabel {
+  /** `MGF_7273` */
+  readonly name: string;
+  /** `.JPG .NEF .xmp` */
+  readonly extensions: string;
+}
+
+/**
+ * Where one photo's files go, as display strings computed by the backend (the demo now, the core's
+ * plan in the app later). The UI prints them; it never parses, joins or sends them back.
+ */
+export interface PhotoRoute {
+  /** The folder the photo is in now, e.g. `E:\2026\Barcelona`. */
+  readonly folder: string;
+  /** The group in that folder, without extensions: `E:\2026\Barcelona\MGF_7273`. */
+  readonly origin: string;
+  /** The files that go with a decision. */
+  readonly going: FilesLabel;
+  /** The files that stay in `folder` (the NEF and its sidecars when RAW does not follow). */
+  readonly staying: FilesLabel | null;
+  /**
+   * `moved to D:\Selects\Barcelona` or `copied to …`; the folder alone while moved or copied is not
+   * chosen; null while no available destination is chosen.
+   */
+  readonly keptTo: string | null;
+  /** `moved to E:\2026\_rejected\Barcelona`, or `copied to …` for a camera-protected photo. */
+  readonly rejectedTo: string;
 }
 
 /** One group, the unit of decision (SPEC §3.1). Display data only, apart from the opaque `id`. */
 export interface PhotoSummary {
   /** Opaque group id. */
   readonly id: string;
-  /** The group's stem, e.g. `MGF_7273`. */
+  /** The group's display name, e.g. `MGF_7273`. */
   readonly name: string;
-  /** Subfolders from the source root, e.g. `["Barcelona"]`. */
-  readonly folder: readonly string[];
-  /** Extension of the primary as on disk: `.JPG`, or `.NEF` for a lone NEF. */
-  readonly primary: string;
-  /** Extension of the NEF beside a JPEG primary, or null. */
-  readonly raw: string | null;
-  readonly sidecars: readonly Sidecar[];
+  /** What the group holds, for the caption: `JPEG + NEF`, `JPEG` or `NEF`. */
+  readonly kind: string;
   /** Read-only attribute set by the camera: the group is copied, never moved (SPEC §2). */
   readonly cameraProtected: boolean;
   /** `culla://preview/<id>` in the app; a bundled image in the demo. */
   readonly previewUrl: string;
   readonly alt: string;
+}
+
+/** A photo of a session, with its route under the session's options. */
+export interface SessionPhoto extends PhotoSummary {
+  readonly route: PhotoRoute;
 }
 
 export interface DestinationSummary {
@@ -120,7 +161,11 @@ export interface SessionInfo {
   readonly source: SourceSummary;
   readonly destination: DestinationSummary;
   readonly options: SessionOptions;
+  /** `E:\2026\_rejected`, as Windows shows it. Display only. */
+  readonly rejectedFolder: string;
   readonly rejectedFolderExists: boolean;
-  /** Groups in display order. */
-  readonly photos: readonly PhotoSummary[];
+  /** Groups in display order, each with its route under the session's options. */
+  readonly photos: readonly SessionPhoto[];
+  /** The photo the review's route view shows as its example, or null when there is none. */
+  readonly exampleId: string | null;
 }
