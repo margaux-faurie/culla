@@ -3,12 +3,13 @@
  * is, the filter and the feedback to show. Pure: `now` comes in with each action, and the events to
  * mirror to the backend are read off `log` by the caller (commit first, then autosave, ADR 0005).
  */
-import type { DecisionEvent, GroupState, Verdict } from "../decisions/events";
+import type { DecisionEvent, GroupId, GroupState, Verdict } from "../decisions/events";
 import {
   EMPTY,
   type Folded,
   groupOf,
   type Intent,
+  nextSeq,
   propose,
   type Refusal,
   stateOf,
@@ -26,7 +27,10 @@ export type Feedback =
   | { readonly kind: "no-undecided" };
 
 export interface SwipeState {
-  /** Opaque photo (group) ids in display order. */
+  /**
+   * Opaque photo (group) ids in display order. The photo at index `i` is decision group `i + 1`
+   * (`groupAt`), until the backend lists groups with their own ids (proposed, SPEC §10).
+   */
   readonly photos: readonly string[];
   readonly log: readonly DecisionEvent[];
   readonly folded: Folded;
@@ -69,6 +73,17 @@ export function initialState(photos: readonly string[]): SwipeState {
 
 export const currentPhoto = (s: SwipeState): string | undefined => s.photos[s.index];
 
+/** The decision group of the photo at `index`. */
+export const groupAt = (index: number): GroupId => index + 1;
+
+/** The photo index of a decision group, or -1 if it is not on screen. */
+const indexOfGroup = (s: SwipeState, group: GroupId): number =>
+  Number.isSafeInteger(group) && group >= 1 && group <= s.photos.length ? group - 1 : -1;
+
+/** A photo's decision state by its index in `photos`. */
+export const stateAt = (s: SwipeState, index: number): GroupState =>
+  stateOf(s.folded, groupAt(index));
+
 export const atEnd = (s: SwipeState): boolean => s.index >= s.photos.length;
 
 export interface Counts {
@@ -81,8 +96,8 @@ export interface Counts {
 export function counts(s: SwipeState): Counts {
   let kept = 0;
   let rejected = 0;
-  for (const id of s.photos) {
-    const state = stateOf(s.folded, id);
+  for (let i = 0; i < s.photos.length; i += 1) {
+    const state = stateAt(s, i);
     if (state === "kept") kept += 1;
     else if (state === "rejected") rejected += 1;
   }
@@ -100,13 +115,13 @@ export function swipeReducer(s: SwipeState, action: SwipeAction): SwipeState {
       if (photoId === undefined) {
         return s;
       }
-      const intent: Intent = { type: "decide", groupId: photoId, verdict: action.verdict };
+      const intent: Intent = { type: "decide", group: groupAt(s.index), verdict: action.verdict };
       const result = commit(s, intent, action.now);
       if (!result.ok) {
         return feedback(s, {
           kind: "already-decided",
           photoId,
-          state: stateOf(s.folded, photoId),
+          state: stateAt(s, s.index),
         });
       }
       const index = nextIndex(result.state, s.index);
@@ -124,7 +139,7 @@ export function swipeReducer(s: SwipeState, action: SwipeAction): SwipeState {
       if (photoId === undefined) {
         return s;
       }
-      const result = commit(s, { type: "clear", groupId: photoId }, action.now);
+      const result = commit(s, { type: "clear", group: groupAt(s.index) }, action.now);
       if (!result.ok) {
         return feedback(s, { kind: result.refusal as Exclude<Refusal, "already-decided"> });
       }
@@ -141,10 +156,10 @@ export function swipeReducer(s: SwipeState, action: SwipeAction): SwipeState {
       if (!result.ok) {
         return feedback(s, { kind: result.refusal as Exclude<Refusal, "already-decided"> });
       }
-      const groupId = result.groupId;
-      const index = groupId === undefined ? s.index : s.photos.indexOf(groupId);
+      const group = result.group;
+      const index = group === undefined ? -1 : indexOfGroup(s, group);
       const target = index < 0 ? s.index : index;
-      const state = groupId === undefined ? "undecided" : stateOf(result.state.folded, groupId);
+      const state = group === undefined ? "undecided" : stateOf(result.state.folded, group);
       return {
         ...result.state,
         index: target,
@@ -175,7 +190,7 @@ export function swipeReducer(s: SwipeState, action: SwipeAction): SwipeState {
 }
 
 type Committed =
-  | { ok: true; state: SwipeState; groupId: string | undefined }
+  | { ok: true; state: SwipeState; group: GroupId | undefined }
   | { ok: false; refusal: Refusal };
 
 function commit(s: SwipeState, intent: Intent, now: number): Committed {
@@ -183,8 +198,7 @@ function commit(s: SwipeState, intent: Intent, now: number): Committed {
   if (!proposal.ok) {
     return { ok: false, refusal: proposal.refusal };
   }
-  const seq = s.folded.lastSeq + 1;
-  const event: DecisionEvent = { seq, ts: now, cause: "user", body: proposal.body };
+  const event: DecisionEvent = { seq: nextSeq(s.folded), ts: now, cause: "user", ...proposal.body };
   const result = step(s.folded, event);
   if (!result.ok) {
     // `propose` checked the same preconditions, so this would be a bug in the reducer.
@@ -193,7 +207,7 @@ function commit(s: SwipeState, intent: Intent, now: number): Committed {
   return {
     ok: true,
     state: { ...s, log: [...s.log, event], folded: result.folded },
-    groupId: groupOf(s.folded, proposal.body),
+    group: groupOf(s.folded, proposal.body),
   };
 }
 
@@ -217,8 +231,7 @@ function moved(s: SwipeState, index: number): SwipeState {
 /** The next photo after `from` that matches the filter, or the end card. */
 function nextIndex(s: SwipeState, from: number): number {
   for (let i = from + 1; i < s.photos.length; i += 1) {
-    const id = s.photos[i];
-    if (id !== undefined && matches(s.filter, stateOf(s.folded, id))) {
+    if (matches(s.filter, stateAt(s, i))) {
       return i;
     }
   }
@@ -228,8 +241,7 @@ function nextIndex(s: SwipeState, from: number): number {
 /** The previous photo before `from` that matches the filter, or `from` if there is none. */
 function prevIndex(s: SwipeState, from: number): number {
   for (let i = Math.min(from, s.photos.length) - 1; i >= 0; i -= 1) {
-    const id = s.photos[i];
-    if (id !== undefined && matches(s.filter, stateOf(s.folded, id))) {
+    if (matches(s.filter, stateAt(s, i))) {
       return i;
     }
   }
@@ -241,8 +253,7 @@ function nextUndecided(s: SwipeState): number | null {
   const n = s.photos.length;
   for (let k = 1; k <= n; k += 1) {
     const i = (Math.min(s.index, n - 1) + k) % n;
-    const id = s.photos[i];
-    if (id !== undefined && stateOf(s.folded, id) === "undecided" && (i !== s.index || atEnd(s))) {
+    if (stateAt(s, i) === "undecided" && (i !== s.index || atEnd(s))) {
       return i;
     }
   }

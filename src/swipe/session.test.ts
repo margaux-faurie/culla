@@ -22,8 +22,8 @@ const reject: SwipeAction = { type: "decide", verdict: "reject", now: 1 };
 describe("swipe session", () => {
   it("keeps or rejects the current photo, then shows the next one (US-22)", () => {
     const s = run([keep, reject]);
-    expect(stateOf(s.folded, "p1")).toBe("kept");
-    expect(stateOf(s.folded, "p2")).toBe("rejected");
+    expect(stateOf(s.folded, 1)).toBe("kept");
+    expect(stateOf(s.folded, 2)).toBe("rejected");
     expect(currentPhoto(s)).toBe("p3");
     expect(s.log.map((e) => e.seq)).toEqual([1, 2]);
     expect(s.exit).toEqual({ photoId: "p2", verdict: "reject" });
@@ -32,7 +32,7 @@ describe("swipe session", () => {
 
   it("records five fast decisions in order (US-24)", () => {
     const s = run([keep, keep, reject, keep, reject]);
-    expect(s.log.map((e) => (e.body.type === "decided" ? e.body.groupId : ""))).toEqual(photos);
+    expect(s.log.map((e) => (e.type === "decided" ? e.group_id : 0))).toEqual([1, 2, 3, 4, 5]);
     expect(atEnd(s)).toBe(true);
     expect(counts(s)).toEqual({ total: 5, kept: 3, rejected: 2, undecided: 0 });
   });
@@ -40,7 +40,7 @@ describe("swipe session", () => {
   it("does nothing on a decided photo but explains it (ADR 0006, US-26)", () => {
     const s = run([keep, { type: "prev" }, reject]);
     expect(currentPhoto(s)).toBe("p1");
-    expect(stateOf(s.folded, "p1")).toBe("kept");
+    expect(stateOf(s.folded, 1)).toBe("kept");
     expect(s.log).toHaveLength(1);
     expect(s.feedback).toEqual({ kind: "already-decided", photoId: "p1", state: "kept" });
     const again = swipeReducer(s, keep);
@@ -49,8 +49,8 @@ describe("swipe session", () => {
 
   it("U makes the current photo undecided; then the arrows work again (US-27)", () => {
     const s = run([keep, { type: "prev" }, { type: "clear", now: 2 }, reject]);
-    expect(stateOf(s.folded, "p1")).toBe("rejected");
-    expect(s.log.map((e) => e.body.type)).toEqual(["decided", "cleared", "decided"]);
+    expect(stateOf(s.folded, 1)).toBe("rejected");
+    expect(s.log.map((e) => e.type)).toEqual(["decided", "cleared", "decided"]);
   });
 
   it("U on an undecided photo appends nothing", () => {
@@ -64,13 +64,13 @@ describe("swipe session", () => {
     expect(currentPhoto(decided)).toBe("p4");
     const undone = swipeReducer(decided, { type: "undo", now: 2 });
     expect(currentPhoto(undone)).toBe("p3");
-    expect(stateOf(undone.folded, "p3")).toBe("undecided");
+    expect(stateOf(undone.folded, 3)).toBe("undecided");
     const further = swipeReducer(undone, { type: "undo", now: 3 });
     expect(currentPhoto(further)).toBe("p2");
     const redone = swipeReducer(further, { type: "redo", now: 4 });
     expect(currentPhoto(redone)).toBe("p2");
-    expect(stateOf(redone.folded, "p2")).toBe("kept");
-    expect(redone.log.map((e) => e.body.type)).toEqual([
+    expect(stateOf(redone.folded, 2)).toBe("kept");
+    expect(redone.log.map((e) => e.type)).toEqual([
       "decided",
       "decided",
       "decided",

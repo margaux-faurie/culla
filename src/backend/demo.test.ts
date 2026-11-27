@@ -88,7 +88,8 @@ describe("demo backend", () => {
       seq: 1,
       ts: 0,
       cause: "user",
-      body: { type: "cleared", groupId: "g" },
+      type: "cleared",
+      group_id: 1,
     } as const;
     await expect(backend.recordEvent("nope", event)).rejects.toThrow();
   });

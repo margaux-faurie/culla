@@ -1,134 +1,131 @@
 import { describe, expect, it } from "vitest";
-import { type DecisionEvent, type EventBody, parseEvent } from "./events";
-import { EMPTY, type Folded, fold, propose, stateOf, step, toExpected } from "./log";
+import { parseLog, renderEvent, renderFold, tryParseEvent } from "./codec";
+import { bodyOf, type Cause, type DecisionEvent, type EventBody } from "./events";
+import { EMPTY, type Folded, fold, nextSeq, propose, stateOf, step, toExpected } from "./log";
 
-const user = (seq: number, body: EventBody): DecisionEvent => ({
+const ev = (seq: number, body: EventBody, cause: Cause = "user"): DecisionEvent => ({
   seq,
   ts: seq,
-  cause: "user",
-  body,
+  cause,
+  ...body,
 });
-const keep = (seq: number, groupId: string) =>
-  user(seq, { type: "decided", groupId, verdict: "keep" });
-const reject = (seq: number, groupId: string) =>
-  user(seq, { type: "decided", groupId, verdict: "reject" });
-const clear = (seq: number, groupId: string) => user(seq, { type: "cleared", groupId });
-const undo = (seq: number, targetSeq: number) => user(seq, { type: "undo", targetSeq });
-const redo = (seq: number, targetSeq: number) => user(seq, { type: "redo", targetSeq });
+const keep = (seq: number, group_id: number) =>
+  ev(seq, { type: "decided", group_id, verdict: "keep" });
+const reject = (seq: number, group_id: number) =>
+  ev(seq, { type: "decided", group_id, verdict: "reject" });
+const clear = (seq: number, group_id: number) => ev(seq, { type: "cleared", group_id });
+const reconcile = (seq: number, group_id: number) =>
+  ev(seq, { type: "cleared", group_id }, "reconcile");
+const undo = (seq: number, target_seq: number) => ev(seq, { type: "undo", target_seq });
+const redo = (seq: number, target_seq: number) => ev(seq, { type: "redo", target_seq });
 
 function folded(events: DecisionEvent[]): Folded {
   const result = fold(events);
   expect(result.corrupt).toBeUndefined();
   return result.folded;
 }
+const expected = (events: DecisionEvent[]) => toExpected(fold(events));
 
 describe("fold", () => {
   it("gives an empty state and empty stacks for an empty log", () => {
-    expect(toExpected(folded([]))).toEqual({ state: {}, done: [], undone: [] });
+    expect(expected([])).toEqual({ state: {}, done: [], undone: [] });
+    expect(EMPTY.lastSeq).toBeUndefined();
   });
 
   it("records decisions and pushes them on done", () => {
-    const f = folded([keep(1, "a"), reject(2, "b")]);
-    expect(toExpected(f)).toEqual({
-      state: { a: "kept", b: "rejected" },
+    expect(expected([keep(1, 1), reject(2, 2)])).toEqual({
+      state: { "1": "kept", "2": "rejected" },
       done: [1, 2],
       undone: [],
     });
   });
 
   it("undo reverts the top of done and moves it to undone; redo replays it", () => {
-    const undone = folded([keep(1, "a"), reject(2, "b"), undo(3, 2)]);
-    expect(toExpected(undone)).toEqual({ state: { a: "kept" }, done: [1], undone: [2] });
-    const redone = folded([keep(1, "a"), reject(2, "b"), undo(3, 2), redo(4, 2)]);
-    expect(toExpected(redone)).toEqual({
-      state: { a: "kept", b: "rejected" },
+    expect(expected([keep(1, 1), reject(2, 2), undo(3, 2)])).toEqual({
+      state: { "1": "kept" },
+      done: [1],
+      undone: [2],
+    });
+    expect(expected([keep(1, 1), reject(2, 2), undo(3, 2), redo(4, 2)])).toEqual({
+      state: { "1": "kept", "2": "rejected" },
       done: [1, 2],
       undone: [],
     });
   });
 
-  it("undo and redo walk the stacks in order", () => {
-    const f = folded([keep(1, "a"), keep(2, "b"), undo(3, 2), undo(4, 1), redo(5, 1)]);
-    expect(toExpected(f)).toEqual({ state: { a: "kept" }, done: [1], undone: [2] });
-  });
-
   it("U (cleared) is undoable and undo restores the earlier verdict", () => {
-    const cleared = folded([reject(1, "a"), clear(2, "a")]);
-    expect(stateOf(cleared, "a")).toBe("undecided");
+    const cleared = folded([reject(1, 1), clear(2, 1)]);
+    expect(stateOf(cleared, 1)).toBe("undecided");
+    expect(cleared.state.has(1)).toBe(false);
     expect(cleared.done).toEqual([1, 2]);
-    const restored = folded([reject(1, "a"), clear(2, "a"), undo(3, 2)]);
-    expect(stateOf(restored, "a")).toBe("rejected");
+    const restored = folded([reject(1, 1), clear(2, 1), undo(3, 2)]);
+    expect(stateOf(restored, 1)).toBe("rejected");
     expect(restored.undone).toEqual([2]);
   });
 
-  it("a new decision or cleared empties the redo stack", () => {
-    expect(folded([keep(1, "a"), undo(2, 1), keep(3, "b")]).undone).toEqual([]);
-    expect(folded([keep(1, "a"), keep(2, "b"), undo(3, 2), clear(4, "a")]).undone).toEqual([]);
+  it("a new decision or user cleared empties the redo stack", () => {
+    expect(folded([keep(1, 1), undo(2, 1), keep(3, 2)]).undone).toEqual([]);
+    expect(folded([keep(1, 1), keep(2, 2), undo(3, 2), clear(4, 1)]).undone).toEqual([]);
   });
 
   it("a reconcile cleared leaves both stacks and cannot be undone (ADR 0024)", () => {
-    const reconcile = (seq: number, groupId: string): DecisionEvent => ({
-      seq,
-      ts: seq,
-      cause: "reconcile",
-      body: { type: "cleared", groupId },
-    });
-    const after = folded([keep(1, "a"), keep(2, "b"), keep(3, "c"), reconcile(4, "a")]);
-    expect(toExpected(after)).toEqual({
-      state: { b: "kept", c: "kept" },
+    expect(expected([keep(1, 1), keep(2, 2), keep(3, 3), reconcile(4, 1)])).toEqual({
+      state: { "2": "kept", "3": "kept" },
       done: [2, 3],
       undone: [],
     });
-
-    const both = folded([keep(1, "a"), clear(2, "a"), undo(3, 2)]);
-    expect([both.done, both.undone]).toEqual([[1], [2]]);
-    const dropped = folded([keep(1, "a"), clear(2, "a"), undo(3, 2), reconcile(4, "a")]);
-    expect(toExpected(dropped)).toEqual({ state: {}, done: [], undone: [] });
+    const dropped = folded([keep(1, 1), clear(2, 1), undo(3, 2), reconcile(4, 1)]);
+    expect(toExpected({ folded: dropped })).toEqual({ state: {}, done: [], undone: [] });
+    expect(dropped.steps.size).toBe(0);
     expect(propose(dropped, { type: "undo" })).toEqual({ ok: false, refusal: "nothing-to-undo" });
   });
 
-  it("stops at an event that breaks a precondition and reports it", () => {
-    const cases: DecisionEvent[][] = [
-      [keep(1, "a"), keep(2, "a")],
-      [clear(1, "a")],
-      [keep(1, "a"), undo(2, 7)],
-      [keep(1, "a"), redo(2, 1)],
-      [keep(2, "a"), keep(1, "b")],
-      [keep(1, "a"), { ...keep(2, "b"), cause: "reconcile" }],
+  it("allows seq gaps and any first seq, and ignores ts", () => {
+    expect(expected([{ ...keep(-5, 1), ts: 99 }, { ...undo(40, -5), ts: 0 }])).toEqual({
+      state: {},
+      done: [],
+      undone: [-5],
+    });
+  });
+
+  it("stops at the first bad event with the core's reason, keeping the fold before it", () => {
+    const cases: [DecisionEvent[], string][] = [
+      [[keep(1, 1), keep(2, 1)], "decided_on_decided"],
+      [[clear(1, 1)], "cleared_on_undecided"],
+      [[reconcile(1, 1)], "cleared_on_undecided"],
+      [[keep(1, 1), undo(2, 7)], "undo_not_top"],
+      [[undo(1, 1)], "undo_not_top"],
+      [[keep(1, 1), redo(2, 1)], "redo_not_top"],
+      [[keep(2, 1), keep(1, 2)], "seq_not_increasing"],
+      [[keep(1, 1), keep(1, 2)], "seq_not_increasing"],
+      [[keep(1, 1), { ...keep(2, 2), cause: "reconcile" }], "reconcile_not_cleared"],
+      [[keep(1, 1), { ...undo(2, 1), cause: "reconcile" }], "reconcile_not_cleared"],
     ];
-    for (const events of cases) {
+    for (const [events, reason] of cases) {
       const result = fold(events);
-      expect(result.corrupt?.seq).toBe(events.at(-1)?.seq);
-      expect(result.folded.lastSeq).toBe(events.length === 1 ? 0 : (events[0]?.seq ?? 0));
+      expect(result.corrupt).toEqual({ seq: events.at(-1)?.seq, reason });
+      expect(result.folded.lastSeq).toBe(events.length === 1 ? undefined : events[0]?.seq);
     }
   });
 
-  it("any prefix of a valid log folds without error", () => {
-    const events = [
-      keep(1, "a"),
-      reject(2, "b"),
-      undo(3, 2),
-      clear(4, "a"),
-      undo(5, 4),
-      redo(6, 4),
-    ];
-    for (let n = 0; n <= events.length; n += 1) {
-      expect(fold(events.slice(0, n)).corrupt).toBeUndefined();
-    }
+  it("checks the seq first, then the cause, then the body", () => {
+    // A repeated seq that is also decided-on-decided and reconcile-not-cleared.
+    const both = ev(1, { type: "decided", group_id: 1, verdict: "keep" }, "reconcile");
+    expect(fold([keep(1, 1), both]).corrupt?.reason).toBe("seq_not_increasing");
+    expect(fold([keep(1, 1), { ...both, seq: 2 }]).corrupt?.reason).toBe("reconcile_not_cleared");
   });
 });
 
 describe("propose", () => {
   it("refuses to decide a decided group (undo first, ADR 0006)", () => {
-    const f = folded([keep(1, "a")]);
-    expect(propose(f, { type: "decide", groupId: "a", verdict: "reject" })).toEqual({
+    expect(propose(folded([keep(1, 1)]), { type: "decide", group: 1, verdict: "reject" })).toEqual({
       ok: false,
       refusal: "already-decided",
     });
   });
 
   it("refuses U on an undecided group, and undo or redo on an empty stack", () => {
-    expect(propose(EMPTY, { type: "clear", groupId: "a" })).toEqual({
+    expect(propose(EMPTY, { type: "clear", group: 1 })).toEqual({
       ok: false,
       refusal: "already-undecided",
     });
@@ -137,56 +134,114 @@ describe("propose", () => {
   });
 
   it("proposes undo of the top of done and redo of the top of undone", () => {
-    const f = folded([keep(1, "a"), keep(2, "b"), undo(3, 2)]);
-    expect(propose(f, { type: "undo" })).toEqual({ ok: true, body: undo(9, 1).body });
-    expect(propose(f, { type: "redo" })).toEqual({ ok: true, body: redo(9, 2).body });
+    const f = folded([keep(1, 1), keep(2, 2), undo(3, 2)]);
+    expect(propose(f, { type: "undo" })).toEqual({ ok: true, body: bodyOf(undo(9, 1)) });
+    expect(propose(f, { type: "redo" })).toEqual({ ok: true, body: bodyOf(redo(9, 2)) });
   });
 
   it("every accepted proposal steps cleanly", () => {
     let f = EMPTY;
     const intents = [
-      { type: "decide", groupId: "a", verdict: "keep" },
-      { type: "clear", groupId: "a" },
+      { type: "decide", group: 1, verdict: "keep" },
+      { type: "clear", group: 1 },
       { type: "undo" },
       { type: "redo" },
-      { type: "decide", groupId: "a", verdict: "reject" },
+      { type: "decide", group: 1, verdict: "reject" },
     ] as const;
     for (const intent of intents) {
       const proposal = propose(f, intent);
       expect(proposal.ok).toBe(true);
       if (proposal.ok) {
-        const result = step(f, user(f.lastSeq + 1, proposal.body));
+        const result = step(f, ev(nextSeq(f), proposal.body));
         expect(result.ok).toBe(true);
         if (result.ok) {
           f = result.folded;
         }
       }
     }
-    expect(toExpected(f)).toEqual({ state: { a: "rejected" }, done: [1, 2, 5], undone: [] });
+    expect(toExpected({ folded: f })).toEqual({
+      state: { "1": "rejected" },
+      done: [1, 2, 5],
+      undone: [],
+    });
   });
 });
 
-describe("parseEvent", () => {
-  it("reads every event type", () => {
-    for (const event of [keep(3, "g"), reject(4, "g"), clear(5, "g"), undo(6, 5), redo(7, 5)]) {
-      const raw: unknown = JSON.parse(JSON.stringify(event));
-      expect(parseEvent(raw)).toEqual(event);
+describe("codec", () => {
+  it("renders and parses every event type in the core's form", () => {
+    expect(renderEvent(keep(1, 7))).toBe(
+      '{"seq":1,"ts":1,"cause":"user","type":"decided","group_id":7,"verdict":"keep"}',
+    );
+    expect(renderEvent(reconcile(4, 7))).toBe(
+      '{"seq":4,"ts":4,"cause":"reconcile","type":"cleared","group_id":7}',
+    );
+    expect(renderEvent(undo(3, 2))).toBe(
+      '{"seq":3,"ts":3,"cause":"user","type":"undo","target_seq":2}',
+    );
+    for (const e of [keep(3, 9), reject(4, 9), clear(5, 9), undo(6, 5), redo(7, 5)]) {
+      expect(tryParseEvent(renderEvent(e))).toEqual({ ok: true, event: e });
     }
   });
 
-  it("rejects other shapes", () => {
-    const bad: unknown[] = [
-      null,
-      [],
-      { seq: 0, ts: 1, cause: "user", body: { type: "cleared", groupId: "g" } },
-      { seq: 1, ts: "1", cause: "user", body: { type: "cleared", groupId: "g" } },
-      { seq: 1, ts: 1, cause: "agent", body: { type: "cleared", groupId: "g" } },
-      { seq: 1, ts: 1, cause: "user", body: { type: "decided", groupId: "g", verdict: "maybe" } },
-      { seq: 1, ts: 1, cause: "user", body: { type: "undo", targetSeq: -1 } },
-      { seq: 1, ts: 1, cause: "user", body: { type: "rename" } },
+  it("accepts any key order and JSON whitespace", () => {
+    const line =
+      '{ "verdict" : "reject","group_id":-3,"type":"decided","cause":"user",\t"seq":2 ,"ts":0 }';
+    expect(tryParseEvent(line)).toEqual({ ok: true, event: { ...reject(2, -3), ts: 0 } });
+  });
+
+  it("refuses what the core refuses, with the same error", () => {
+    const head = '"seq":1,"ts":1,"cause":"user"';
+    const cleared = (rest: string) => `{${head},"type":"cleared"${rest}}`;
+    const syntax = (at: number, expected: string) => ({ kind: "syntax", at, expected });
+    const unknown = (key: string) => ({ kind: "unknown_key", key });
+    const bad = (key: string) => ({ kind: "bad_value", key });
+    const cases: [string, unknown][] = [
+      ["", syntax(0, "'{'")],
+      [cleared(',"group_id":1,"extra":1'), unknown("extra")],
+      [`{${head},"seq":2,"type":"cleared","group_id":1}`, { kind: "duplicate_key", key: "seq" }],
+      [cleared(""), { kind: "missing_key", key: "group_id" }],
+      [cleared(',"group_id":"1"'), bad("group_id")],
+      [cleared(',"group_id":9007199254740992'), bad("group_id")],
+      [cleared(',"group_id":-9007199254740991'), null],
+      [cleared(',"group_id":1.0'), syntax(60, "an integer")],
+      [cleared(',"group_id":01'), syntax(59, "an integer")],
+      [cleared(',"group_id":99999999999999999999'), syntax(59, "an integer in range")],
+      [`{${head},"type":"cle\\u0061red","group_id":1}`, syntax(42, "a string without escapes")],
+      [cleared(',"group_id":1,"verdict":"keep"'), unknown("verdict")],
+      [`{${head},"type":"undo","group_id":1,"target_seq":1}`, unknown("group_id")],
+      [`{${head},"type":"decided","group_id":1,"verdict":"maybe"}`, bad("verdict")],
+      ['{"seq":1,"ts":1,"cause":"agent","type":"cleared","group_id":1}', bad("cause")],
+      [`{${head},"type":"rename"}`, bad("type")],
+      [`${cleared(',"group_id":1')}x`, syntax(61, "the end of the line")],
     ];
-    for (const value of bad) {
-      expect(() => parseEvent(value)).toThrow();
+    for (const [line, error] of cases) {
+      const result = tryParseEvent(line);
+      expect(result.ok ? null : result.error).toEqual(error);
     }
+  });
+
+  it("needs a final newline and refuses an empty line", () => {
+    expect(parseLog("")).toEqual([]);
+    expect(() => parseLog(renderEvent(keep(1, 1)))).toThrow();
+    expect(() => parseLog(`${renderEvent(keep(1, 1))}\n\n`)).toThrow();
+  });
+
+  it("renders a fold like the core", () => {
+    const result = fold([keep(1, 9), reject(2, 10), keep(3, 2), undo(4, 3), keep(5, 9)]);
+    expect(renderFold({ ...result.folded, corrupt: result.corrupt })).toBe(
+      [
+        "{",
+        '  "state": {',
+        '    "9": "kept",',
+        '    "10": "rejected"',
+        "  },",
+        '  "done": [1, 2],',
+        '  "undone": [3],',
+        '  "corrupt": {"seq": 5, "reason": "decided_on_decided"}',
+        "}",
+        "",
+      ].join("\n"),
+    );
+    expect(renderFold(EMPTY)).toBe('{\n  "state": {},\n  "done": [],\n  "undone": []\n}\n');
   });
 });

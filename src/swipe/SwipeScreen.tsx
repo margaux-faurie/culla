@@ -1,12 +1,18 @@
 import { type Dispatch, useEffect, useMemo, useRef, useState } from "react";
 import type { PhotoSummary, SessionInfo } from "../backend/types";
 import type { GroupState, Verdict } from "../decisions/events";
-import { stateOf } from "../decisions/log";
 import { CheckIcon, CrossIcon } from "../route/RouteView";
 import { keepVerb, keptFolder, photoFolder, rejectedFolder, rejectVerb } from "../route/route";
 import { HelpDialog } from "./HelpDialog";
 import { type Command, commandFor } from "./keys";
-import { counts, currentPhoto, type Feedback, type SwipeAction, type SwipeState } from "./session";
+import {
+  counts,
+  currentPhoto,
+  type Feedback,
+  type SwipeAction,
+  type SwipeState,
+  stateAt,
+} from "./session";
 
 export interface SwipeScreenProps {
   readonly session: SessionInfo;
@@ -36,7 +42,7 @@ export function SwipeScreen(props: SwipeScreenProps) {
   const byId = useMemo(() => new Map(session.photos.map((p) => [p.id, p])), [session.photos]);
   const photo = byId.get(currentPhoto(state) ?? "");
   const next = byId.get(state.photos[state.index + 1] ?? "");
-  const decision: GroupState = photo === undefined ? "undecided" : stateOf(state.folded, photo.id);
+  const decision: GroupState = photo === undefined ? "undecided" : stateAt(state, state.index);
   const tally = counts(state);
 
   const run = (command: Command) => {
