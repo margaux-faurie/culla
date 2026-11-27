@@ -3,6 +3,8 @@
 
 use std::fmt::Write;
 
+use crate::text;
+
 /// A JSON value.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -88,9 +90,12 @@ fn indent(out: &mut String, depth: usize) {
     }
 }
 
-/// Writes `s` as a JSON string: quotes, backslashes and every control character escaped
-/// (U+0000 to U+001F, U+007F to U+009F), and U+2028 and U+2029, which some JSON readers
-/// (JavaScript before ES2019) take as line ends. Everything else is written as UTF-8.
+/// Writes `s` as a JSON string: quotes, backslashes and every character that
+/// [`text::needs_escape`] lists escaped as `\uXXXX` (UTF-16 surrogate pairs above U+FFFF):
+/// control characters, bidi controls, zero-width and other invisible characters, the BOM and
+/// U+2028 and U+2029 (line ends for JavaScript before ES2019). File names and EXIF text come
+/// from the card, so a raw `--json` printed to a terminal shows no hidden or reordered text
+/// (threat model T6b). Everything else is written as UTF-8.
 fn escape_into(s: &str, out: &mut String) {
     out.push('"');
     for c in s.chars() {
@@ -102,8 +107,11 @@ fn escape_into(s: &str, out: &mut String) {
             '\t' => out.push_str("\\t"),
             '\u{8}' => out.push_str("\\b"),
             '\u{c}' => out.push_str("\\f"),
-            c if c.is_control() || c == '\u{2028}' || c == '\u{2029}' => {
-                let _ = write!(out, "\\u{:04x}", u32::from(c));
+            c if text::needs_escape(c) => {
+                let mut units = [0u16; 2];
+                for u in c.encode_utf16(&mut units) {
+                    let _ = write!(out, "\\u{u:04x}");
+                }
             }
             c => out.push(c),
         }
@@ -123,6 +131,15 @@ mod tests {
             "\"a\\\"b\\\\c\\nd\\re\\tf\\b\\f\\u0000\\u001f\\u007f\\u009b\\u2028\\u2029é📷\""
         );
         assert_eq!(Value::str("").to_pretty(), "\"\"");
+    }
+
+    #[test]
+    fn invisible_and_bidi_characters_are_escaped() {
+        let v = Value::str("a\u{202E}b\u{200B}\u{FEFF}\u{2066}\u{AD}\u{61C}\u{180E}\u{E0041}c");
+        assert_eq!(
+            v.to_pretty(),
+            "\"a\\u202eb\\u200b\\ufeff\\u2066\\u00ad\\u061c\\u180e\\udb40\\udc41c\""
+        );
     }
 
     #[test]

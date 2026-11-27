@@ -370,7 +370,9 @@ fn help_lists_commands_and_exit_codes() {
     for args in [&["help", "scan"][..], &["scan", "--help"]] {
         let o = run(args);
         assert_eq!(code(&o), 0);
-        assert!(stdout(&o).starts_with("Usage: culla scan <folder>"));
+        let out = stdout(&o);
+        assert!(out.starts_with("Usage: culla scan <folder>"));
+        assert!(out.contains("unstable until M2"), "{out}");
     }
 }
 
@@ -458,6 +460,7 @@ fn synthetic_tree_as_json() {
     let o = scan(&synthetic(), &["--json"]);
     assert_eq!(code(&o), 0, "{}", stderr(&o));
     let j = parse_json(&stdout(&o));
+    assert_eq!(j.get("schema").str(), "unstable");
     assert_eq!(j.get("culla_version").str(), env!("CARGO_PKG_VERSION"));
     assert_eq!(j.get("include_subfolders"), &J::Bool(true));
     if cfg!(windows) {
@@ -727,8 +730,12 @@ fn untrusted_names_are_escaped_in_text_and_json() {
 
     let o = scan(t.path(), &["--json"]);
     let raw = stdout(&o);
-    assert!(!raw.contains('\u{1b}'), "{raw:?}");
+    assert!(
+        !raw.contains('\u{1b}') && !raw.contains('\u{202E}'),
+        "{raw:?}"
+    );
     assert!(raw.contains("DSC\\u001b[2J.JPG"), "{raw}");
+    assert!(raw.contains("DSC\\u202e1.JPG"), "{raw}");
     let j = parse_json(&raw);
     assert_eq!(primaries(&j), ["DSC\u{202E}1.JPG"]);
     assert_eq!(

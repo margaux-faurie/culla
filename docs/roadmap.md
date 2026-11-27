@@ -64,7 +64,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
   - Own TIFF/IFD walker for NEF previews; fuzz targets running nightly.
   - Preview pipeline: turbojpeg scaled decode, resize, orientation, encode; reader threads separate from decode workers; prefetch; in-memory LRU; disk cache. No mmap on removable media.
   - Decode and scan I/O in `culla-adapters`; grouping, ordering and the IFD walker's parsing logic in `culla-core`, fed by positioned reads from `culla-adapters` (ADR 0025).
-  - Headless CLI `culla scan`, `culla preview` (`crates/cli`) and `culla-bench` (`crates/bench`), per [ADR 0020](adr/0020-headless-cli-and-bench-crates.md). `culla scan` is in (slice 6): read-only, text or `--json`, exit codes 0 to 3.
+  - Headless CLI `culla scan`, `culla preview` (`crates/cli`) and `culla-bench` (`crates/bench`), per [ADR 0020](adr/0020-headless-cli-and-bench-crates.md). `culla scan` is in (slice 6): read-only, text or `--json`; its exit codes, off-Windows behaviour, JSON fields (unstable until M2) and std-only parsing are provisional, open in [SPEC §10](SPEC.md#10-open-questions).
   - Scan and preview benchmark campaign (B-01 to B-11, B-15, B-16) per [benchmarks.md](benchmarks.md).
 - **Exit criteria:**
   - Stories US-01 to US-09 pass, except US-09's criterion that the session and the cache are found again under another letter: the key is in M1 (`culla_core::volume`), and the criterion closes with M2's session store (and the VHDX remount test).

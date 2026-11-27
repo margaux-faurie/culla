@@ -2,7 +2,8 @@
 //! `culla-adapters`, every rule is in `culla-core`. Nothing is written anywhere but stdout and
 //! stderr; `plan`, `apply` and `resume` come with M2, `preview` later in M1.
 //!
-//! Exit codes: 0 done, 1 usage error, 2 the folder is refused, 3 the folder cannot be read.
+//! Exit codes (provisional, SPEC §10): 0 done, 1 usage error, 2 the folder is refused, 3 the
+//! folder cannot be read.
 
 mod args;
 mod json;
@@ -34,8 +35,7 @@ fn run() -> u8 {
     let command = match parse(std::env::args_os().skip(1)) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("culla: {e}\n");
-            eprint!("{}", help(e.topic));
+            let _ = writeln!(io::stderr(), "culla: {e}\n\n{}", help(e.topic).trim_end());
             return EXIT_USAGE;
         }
     };
@@ -55,11 +55,11 @@ fn run() -> u8 {
                     }
                 }
                 Err(Failure::Refused(why)) => {
-                    eprintln!("culla: {shown}: {why}");
+                    let _ = writeln!(io::stderr(), "culla: {shown}: {why}");
                     EXIT_REFUSED
                 }
                 Err(Failure::Io(why)) => {
-                    eprintln!("culla: {shown}: {why}");
+                    let _ = writeln!(io::stderr(), "culla: {shown}: {why}");
                     EXIT_IO
                 }
             }
@@ -74,7 +74,7 @@ fn out(s: &str) -> u8 {
         Ok(()) => EXIT_OK,
         Err(e) if e.kind() == io::ErrorKind::BrokenPipe => EXIT_OK,
         Err(e) => {
-            eprintln!("culla: cannot write the output: {e}");
+            let _ = writeln!(io::stderr(), "culla: cannot write the output: {e}");
             EXIT_IO
         }
     }

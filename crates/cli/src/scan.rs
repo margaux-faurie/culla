@@ -82,11 +82,10 @@ pub fn run(args: &ScanArgs, progress: &mut Progress) -> Result<Report, Failure> 
 
     let policy = ScanPolicy::new(args.include_subfolders);
     let mut parts = Vec::new();
-    let (mut batches, mut entries) = (0u64, 0u64);
+    let mut entries = 0u64;
     let summary = scan(&scanned, &policy, |batch| {
-        batches += 1;
         entries += batch.entries.len() as u64;
-        progress.scanned(batches, entries);
+        progress.scanned(entries);
         parts.push(grouping::group(batch.entries, &policy));
         ControlFlow::Continue(())
     })
@@ -335,6 +334,8 @@ pub fn to_json(report: &Report) -> Value {
         })
         .collect();
     Value::Obj(vec![
+        // The field set is provisional until M2 (SPEC §10): consumers must not rely on it.
+        ("schema", Value::str("unstable")),
         ("culla_version", Value::str(culla_adapters::VERSION)),
         (
             "folder",
@@ -429,7 +430,9 @@ fn group_json(position: usize, group: &Group, meta: &Result<PhotoMeta, String>) 
 }
 
 /// Progress on stderr: rewritten in place on a terminal, one line per step otherwise (every
-/// folder while scanning, every 100 groups while reading metadata).
+/// batch while scanning, every 100 groups while reading metadata). While scanning it counts
+/// entries only: batches do not map one to one to the folders of the summary (`NKSC_PARAM`
+/// folders share their parent's batch), so the folder count is given once the scan is done.
 pub struct Progress {
     tty: bool,
     err: io::Stderr,
@@ -455,15 +458,8 @@ impl Progress {
         };
     }
 
-    fn scanned(&mut self, folders: u64, entries: u64) {
-        self.line(
-            &format!(
-                "scanning: {}, {}",
-                count(folders, "folder"),
-                count(entries, "entry")
-            ),
-            false,
-        );
+    fn scanned(&mut self, entries: u64) {
+        self.line(&format!("scanning: {}", count(entries, "entry")), false);
     }
 
     fn scan_done(&mut self, s: &ScanSummary) {

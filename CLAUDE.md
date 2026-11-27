@@ -21,7 +21,7 @@ Work now:
 ## Layout
 - `crates/core` (package `culla-core`) — domain, ports, pure logic (TIFF/IFD walker behind a `ReadAt` port; `grouping` and scan exclusions over plain `ScanEntry` data; `exif` parsing and capture order over plain `RawExif` data; `names`; `volume`: serial + folded relative path keys, run binding). No I/O, no Tauri, `#![forbid(unsafe_code)]`.
 - `crates/adapters` (package `culla-adapters`) — Windows file ops, the read-only folder walk (`scan`, `read_dir` only, re-checks each folder before listing it, swap window until M2, never a partial folder; moves into `winfs` in M2), file reads for NEF previews, EXIF, decode, SQLite; `winfs` (Win32 `unsafe` only in `winfs/win32.rs`, read-only volume and time-zone lookups so far, a stub off Windows). No Tauri.
-- `crates/cli` (package `culla-cli`, binary `culla`) — headless scan (in), preview, plan, apply, resume. Wiring only: std-only argument parsing, hand-written JSON, writes nothing but stdout and stderr.
+- `crates/cli` (package `culla-cli`, binary `culla`) — headless scan (in; exit codes, JSON fields and off-Windows behaviour provisional, SPEC §10), preview, plan, apply, resume. Wiring only, writes nothing but stdout and stderr.
 - `crates/bench` (package `culla-bench`) — benchmark harness. See ADR 0020.
 - `src-tauri` (package `culla-app`) — wiring only: commands, `culla://` image scheme, capabilities. New command: `build.rs` `AppManifest::commands` + `allow-<command>` in `capabilities/main.json`.
 - `src` — React UI, one Vite app, `--mode desktop` or `--mode demo`; `vite.config.ts` aliases `#backend-impl` to `backend/tauri.ts` or `backend/demo.ts` (ADR 0014).

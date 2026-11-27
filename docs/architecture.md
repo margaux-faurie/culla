@@ -109,7 +109,7 @@ flowchart TB
   shell -->|"updater plugin, HTTPS"| gh
 ```
 
-`culla scan <folder> [--no-subfolders] [--json]` resolves the folder (`winfs::resolve_folder`; off Windows the identity is reported as unavailable and the folder is scanned all the same), streams the scan with progress on stderr, groups each batch, reads each group's EXIF and prints the groups in capture-time order with the volume identity, the source key and the totals, as text or JSON. It writes nothing but stdout and stderr. Exit codes: 0 done, 1 usage error, 2 folder refused, 3 folder unreadable.
+`culla scan <folder> [--no-subfolders] [--json]` resolves the folder (`winfs::resolve_folder`; off Windows the identity is reported as unavailable and the folder is scanned all the same), streams the scan with progress on stderr, groups each batch, reads each group's EXIF and prints the groups in capture-time order with the volume identity, the source key and the totals, as text or JSON. It writes nothing but stdout and stderr. Provisional, awaiting Margaux ([SPEC §10](SPEC.md#10-open-questions)): exit codes 0 done (also with metadata errors or held-back folders), 1 usage error, 2 folder refused, 3 folder unreadable; the off-Windows behaviour; the `--json` field set, unstable until M2 and marked `"schema": "unstable"`; std-only argument parsing and hand-written JSON.
 
 The web demo is the same `src/` build in demo mode with `DemoBackend`. It has no shell and no core. See [ADR 0014](adr/0014-backend-interface-with-build-time-implementations.md).
 

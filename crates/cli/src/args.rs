@@ -203,6 +203,9 @@ Options:
 Off Windows the volume cannot be looked up: the folder is scanned all the same and the
 identity is reported as unavailable.
 
+The JSON fields are unstable until M2 and may change: the object says so with
+\"schema\": \"unstable\".
+
 Exit codes: 0 done, 1 usage error, 2 folder refused, 3 folder unreadable.
 ";
 

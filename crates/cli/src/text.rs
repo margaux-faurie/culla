@@ -10,8 +10,9 @@ use crate::scan::{Identity, Report, Totals, exclusion_detail, group_files, is_fo
 
 /// `s` with every character that could change what a terminal shows escaped as `\u{..}`:
 /// control characters (escape sequences, carriage returns), bidi controls and isolates,
-/// zero-width characters, the BOM and the line and paragraph separators. File names and
-/// volume labels come from the card, so they are untrusted (threat model T6).
+/// zero-width and other invisible characters, the BOM, tag characters and the line and
+/// paragraph separators (the set is [`needs_escape`]). File names and
+/// volume labels come from the card, so they are untrusted (threat model T6b).
 #[must_use]
 pub fn shown(s: &str) -> Cow<'_, str> {
     if !s.chars().any(needs_escape) {
@@ -38,15 +39,24 @@ pub fn count(n: u64, noun: &str) -> String {
     }
 }
 
-fn needs_escape(c: char) -> bool {
+/// Whether `c` is escaped by [`shown`] and in `--json`: control characters, the soft hyphen,
+/// the Arabic letter mark and the Mongolian vowel separator, zero-width characters, bidi
+/// controls and isolates, the line and paragraph separators, word joiners and invisible
+/// operators, the BOM, interlinear annotation controls and the tag characters.
+#[must_use]
+pub fn needs_escape(c: char) -> bool {
     c.is_control()
         || matches!(
             c,
-            '\u{200B}'..='\u{200F}'
+            '\u{00AD}'
+                | '\u{061C}'
+                | '\u{180E}'
+                | '\u{200B}'..='\u{200F}'
                 | '\u{2028}'..='\u{202E}'
                 | '\u{2060}'..='\u{2069}'
                 | '\u{FEFF}'
                 | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{E0000}'..='\u{E007F}'
         )
 }
 
@@ -275,5 +285,23 @@ mod tests {
             shown("a\u{200B}\u{2066}\u{FEFF}\u{2028}"),
             "a\\u{200b}\\u{2066}\\u{feff}\\u{2028}"
         );
+    }
+
+    #[test]
+    fn invisible_format_characters_are_escaped() {
+        assert_eq!(
+            shown("a\u{AD}b\u{61C}c\u{180E}d"),
+            "a\\u{ad}b\\u{61c}c\\u{180e}d"
+        );
+        assert_eq!(
+            shown("x\u{E0000}\u{E0041}\u{E007F}y"),
+            "x\\u{e0000}\\u{e0041}\\u{e007f}y"
+        );
+        for c in ['\u{AD}', '\u{61C}', '\u{180E}', '\u{E0000}', '\u{E007F}'] {
+            assert!(needs_escape(c), "{c:?}");
+        }
+        for c in ['a', 'é', '\u{AC}', '\u{AE}', '\u{E0080}', '\u{DFFFF}', '📷'] {
+            assert!(!needs_escape(c), "{c:?}");
+        }
     }
 }
