@@ -1,0 +1,24 @@
+// Cloudflare Worker for the web demo at culla.margauxfaurie.com (docs/deploy-demo.md).
+// Static assets only: no script, no bindings, nothing runs on Cloudflare but the asset server.
+// Workers Builds runs `npx wrangler deploy` with this file on every push to main.
+{
+  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  // Must match the Worker connected to the repository in the dashboard.
+  "name": "culla",
+  // Runtime behaviour is pinned to this date; with no script it changes nothing visible.
+  "compatibility_date": "2026-11-27",
+  // No "main": an assets-only Worker. `_headers` in dist-demo/ applies only to asset responses,
+  // so adding a script later would need the headers set in that script too.
+  "assets": {
+    // `pnpm build:demo` output (vite.config.ts). public-demo/_headers is copied into it.
+    "directory": "./dist-demo",
+    // The demo is one index.html with no client-side routes, so an unknown path is a plain 404.
+    // "single-page-application" would answer a missing /assets/* file with index.html and a 200,
+    // which the immutable cache rule in _headers would then keep for a year.
+    "not_found_handling": "none"
+  },
+  // Served only on the custom domain, which Cloudflare Access protects.
+  // workers.dev and preview (version) URLs would bypass the Access application on that domain.
+  "workers_dev": false,
+  "preview_urls": false
+}

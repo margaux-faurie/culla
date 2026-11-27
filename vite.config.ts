@@ -12,6 +12,9 @@ const backendFor = (mode: string): string => {
 
 export default defineConfig(({ mode }) => ({
   plugins: [react()],
+  // Only the demo has static files to copy as is: public-demo/_headers, the security headers
+  // Cloudflare applies to the demo (docs/deploy-demo.md). The desktop build copies nothing.
+  publicDir: mode === "demo" ? "public-demo" : false,
   resolve: {
     alias: {
       "#backend-impl": backendFor(mode),
@@ -29,6 +32,9 @@ export default defineConfig(({ mode }) => ({
   build: {
     outDir: mode === "demo" ? "dist-demo" : "dist",
     emptyOutDir: true,
+    // The demo's CSP has no data: source (public-demo/_headers), so the demo never inlines
+    // small images or fonts as data: URLs; they stay files under /assets/.
+    ...(mode === "demo" ? { assetsInlineLimit: 0 } : {}),
   },
   test: {
     include: ["src/**/*.test.{ts,tsx}", "tests/**/*.test.ts"],
