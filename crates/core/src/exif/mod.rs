@@ -15,9 +15,9 @@
 //!    `OffsetTimeOriginal` (0x9011);
 //! 2. `CreateDate`, EXIF's `DateTimeDigitized` (0x9004), with `SubSecTimeDigitized` (0x9292)
 //!    and `OffsetTimeDigitized` (0x9012);
-//! 3. the file's modification time, supplied by the caller from the scan listing. ADR 0028 reads it in
-//!    the PC's local time zone; interim: it is an instant in UTC, offset `+00:00`, until the
-//!    time-zone lookup lands (see [`TimeSource::FileModified`]).
+//! 3. the file's modification time, supplied by the caller from the scan listing, read in the
+//!    PC's local time zone (ADR 0028): the caller passes the PC's UTC offset at that instant
+//!    with it ([`FileTime`]), so this module stays free of I/O and of the clock.
 //!
 //! A date and time is `YYYY:MM:DD HH:MM:SS` (a `-` is accepted in the date and a `T` between
 //! the date and the time). A blank value (spaces, colons, NULs) or the all-zero
@@ -204,10 +204,9 @@ pub enum TimeSource {
     DateTimeOriginal,
     /// `DateTimeDigitized` (`CreateDate`).
     CreateDate,
-    /// The file's modification time from the listing. Interim: UTC; ADR 0028 reads it in the
-    /// PC's local time zone once the time-zone lookup lands. Cameras write it from their
-    /// clock, so it can be off by the camera's UTC offset against the EXIF times of other
-    /// photos (ADR 0028).
+    /// The file's modification time from the listing, read in the PC's local time zone
+    /// ([`FileTime`], ADR 0028). Cameras write it from their clock, so it can still be off
+    /// against the EXIF times of other photos when the camera's zone is not the PC's.
     FileModified,
 }
 
@@ -215,7 +214,8 @@ pub enum TimeSource {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CaptureTime {
     /// Milliseconds since 1970-01-01 00:00:00 in the camera's local time (the date and time
-    /// as written, read as if it were UTC). For [`TimeSource::FileModified`] it is UTC for now (interim, ADR 0028).
+    /// as written, read as if it were UTC). For [`TimeSource::FileModified`] it is the file
+    /// time in the PC's local time zone, at the offset the caller gave ([`FileTime`]).
     pub local_ms: i64,
     /// The camera's offset from UTC in minutes, when known.
     pub offset_minutes: Option<i16>,
@@ -231,14 +231,50 @@ impl CaptureTime {
         self.local_ms.checked_sub(offset.checked_mul(60_000)?)
     }
 
-    /// The time from a file modification time in nanoseconds since the Unix epoch.
+    /// The time from a file modification time, in the PC's local time at `file`'s offset.
+    /// Cannot overflow: nanoseconds become milliseconds before the offset is added (the add
+    /// saturates all the same).
     #[must_use]
-    pub fn from_mtime_ns(mtime_ns: i64) -> Self {
+    pub fn from_file_time(file: FileTime) -> Self {
+        let offset_ms = i64::from(file.utc_offset_minutes) * 60_000;
         Self {
-            local_ms: mtime_ns.div_euclid(1_000_000),
-            offset_minutes: Some(0),
+            local_ms: file
+                .mtime_ns
+                .div_euclid(1_000_000)
+                .saturating_add(offset_ms),
+            offset_minutes: Some(file.utc_offset_minutes),
             source: TimeSource::FileModified,
         }
+    }
+}
+
+/// A file's modification time from the listing and the PC's offset from UTC at that instant
+/// (ADR 0028). The adapter looks the offset up in the PC's time zone, with the daylight saving
+/// rule in force on that date (`culla_adapters::winfs::local_utc_offset_minutes`); the core
+/// only applies it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FileTime {
+    /// Nanoseconds since the Unix epoch (UTC).
+    pub mtime_ns: i64,
+    /// The PC's offset from UTC at `mtime_ns`, in minutes east of UTC (`+60` for Paris in
+    /// winter, `+120` in summer).
+    pub utc_offset_minutes: i16,
+}
+
+impl FileTime {
+    /// A file time at the given offset.
+    #[must_use]
+    pub const fn new(mtime_ns: i64, utc_offset_minutes: i16) -> Self {
+        Self {
+            mtime_ns,
+            utc_offset_minutes,
+        }
+    }
+
+    /// A file time read in UTC (offset 0): for tests, and where no time zone is known.
+    #[must_use]
+    pub const fn utc(mtime_ns: i64) -> Self {
+        Self::new(mtime_ns, 0)
     }
 }
 
@@ -300,12 +336,12 @@ pub struct PhotoMeta {
 }
 
 impl PhotoMeta {
-    /// Interprets `raw`. `mtime_ns`, the file's modification time from the listing, is the
-    /// last capture-time fallback.
+    /// Interprets `raw`. `file_time`, the file's modification time from the listing with the
+    /// PC's offset at that instant, is the last capture-time fallback.
     #[must_use]
-    pub fn from_raw(raw: &RawExif, mtime_ns: Option<i64>) -> Self {
+    pub fn from_raw(raw: &RawExif, file_time: Option<FileTime>) -> Self {
         let mut issues = Vec::new();
-        let captured = capture_time(raw, mtime_ns, &mut issues);
+        let captured = capture_time(raw, file_time, &mut issues);
         let orientation = match raw.orientation {
             None => Orientation::Normal,
             Some(v) => Orientation::from_exif(v).unwrap_or_else(|| {
@@ -330,8 +366,8 @@ impl PhotoMeta {
 
     /// The metadata of a file whose EXIF could not be used: only the file time, and `issue`.
     #[must_use]
-    pub fn without_exif(issue: MetaIssue, mtime_ns: Option<i64>) -> Self {
-        let mut meta = Self::from_raw(&RawExif::default(), mtime_ns);
+    pub fn without_exif(issue: MetaIssue, file_time: Option<FileTime>) -> Self {
+        let mut meta = Self::from_raw(&RawExif::default(), file_time);
         meta.issues.insert(0, issue);
         meta
     }
@@ -339,7 +375,7 @@ impl PhotoMeta {
 
 fn capture_time(
     raw: &RawExif,
-    mtime_ns: Option<i64>,
+    file_time: Option<FileTime>,
     issues: &mut Vec<MetaIssue>,
 ) -> Option<CaptureTime> {
     let candidates = [
@@ -391,7 +427,7 @@ fn capture_time(
             source,
         });
     }
-    mtime_ns.map(CaptureTime::from_mtime_ns)
+    file_time.map(CaptureTime::from_file_time)
 }
 
 /// A value that is present but cannot be read.

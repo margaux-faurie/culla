@@ -10,11 +10,11 @@
 #![no_main]
 
 use culla_adapters::metadata::exif::meta_from_head;
-use culla_core::exif::{self, MAX_TEXT_CHARS};
+use culla_core::exif::{self, FileTime, MAX_TEXT_CHARS};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let meta = meta_from_head(data.to_vec(), Some(0));
+    let meta = meta_from_head(data.to_vec(), Some(FileTime::utc(0)));
     assert!(meta.captured.is_some());
     for text in [&meta.lens, &meta.camera_model].into_iter().flatten() {
         assert!(!text.is_empty() && text.chars().count() <= MAX_TEXT_CHARS);

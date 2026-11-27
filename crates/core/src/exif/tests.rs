@@ -194,7 +194,7 @@ fn utc_instant_from_the_offset() {
 
 #[test]
 fn capture_time_from_date_time_original_with_sub_seconds_and_offset() {
-    let m = PhotoMeta::from_raw(&z6iii(), Some(5));
+    let m = PhotoMeta::from_raw(&z6iii(), Some(FileTime::utc(5)));
     let t = m.captured.unwrap();
     assert_eq!(t.source, TimeSource::DateTimeOriginal);
     assert_eq!(t.local_ms, 1_739_591_990_550);
@@ -244,7 +244,7 @@ fn capture_time_falls_back_to_the_file_time_in_utc() {
         ..z6iii()
     };
     let mtime_ns = 1_739_591_990_123_456_789;
-    let m = PhotoMeta::from_raw(&raw, Some(mtime_ns));
+    let m = PhotoMeta::from_raw(&raw, Some(FileTime::utc(mtime_ns)));
     let t = m.captured.unwrap();
     assert_eq!(t.source, TimeSource::FileModified);
     assert_eq!(t.local_ms, 1_739_591_990_123);
@@ -252,9 +252,9 @@ fn capture_time_falls_back_to_the_file_time_in_utc() {
     assert_eq!(t.utc_ms(), Some(1_739_591_990_123));
     assert_eq!(m.issues, [MetaIssue::BadDateTime(TimeTag::Original)]);
     // Before 1970 the division rounds down, so the millisecond is still the one it falls in.
-    assert_eq!(CaptureTime::from_mtime_ns(-1).local_ms, -1);
+    assert_eq!(CaptureTime::from_file_time(FileTime::utc(-1)).local_ms, -1);
     assert_eq!(
-        CaptureTime::from_mtime_ns(i64::MIN).local_ms,
+        CaptureTime::from_file_time(FileTime::utc(i64::MIN)).local_ms,
         i64::MIN / 1_000_000 - 1
     );
     // No source at all.
@@ -262,6 +262,36 @@ fn capture_time_falls_back_to_the_file_time_in_utc() {
         PhotoMeta::from_raw(&RawExif::default(), None).captured,
         None
     );
+}
+
+#[test]
+fn the_file_time_is_read_at_the_pc_offset() {
+    // ADR 0028: the file time is shown and sorted in the PC's local time zone. 15 Feb 2025
+    // 03:59:50.123 UTC is 04:59:50.123 in Paris (+01:00) and 22:59:50.123 the day before in
+    // New York (-05:00); the instant stays the same.
+    let utc_ms = 1_739_591_990_123;
+    let mtime_ns = utc_ms * 1_000_000 + 456_789;
+    for (offset, local) in [
+        (60, utc_ms + 3_600_000),
+        (-300, utc_ms - 18_000_000),
+        (0, utc_ms),
+    ] {
+        let m = PhotoMeta::without_exif(MetaIssue::NoExif, Some(FileTime::new(mtime_ns, offset)));
+        let t = m.captured.unwrap();
+        assert_eq!(t.source, TimeSource::FileModified);
+        assert_eq!(t.local_ms, local, "{offset}");
+        assert_eq!(t.offset_minutes, Some(offset));
+        assert_eq!(t.utc_ms(), Some(utc_ms), "{offset}");
+    }
+    // An EXIF time wins over the file time whatever the PC's offset.
+    let m = PhotoMeta::from_raw(&z6iii(), Some(FileTime::new(mtime_ns, 120)));
+    assert_eq!(m.captured.unwrap().source, TimeSource::DateTimeOriginal);
+    assert_eq!(m.captured.unwrap().offset_minutes, Some(660));
+    // The extremes stay in range: nanoseconds become milliseconds before the offset is added.
+    let max = CaptureTime::from_file_time(FileTime::new(i64::MAX, i16::MAX));
+    assert_eq!(max.local_ms, i64::MAX / 1_000_000 + 32_767 * 60_000);
+    let min = CaptureTime::from_file_time(FileTime::new(i64::MIN, i16::MIN));
+    assert_eq!(min.local_ms, i64::MIN / 1_000_000 - 1 - 32_768 * 60_000);
 }
 
 #[test]
@@ -287,7 +317,7 @@ fn bad_sub_seconds_and_offsets_are_dropped_and_the_time_kept() {
 
 #[test]
 fn without_exif_keeps_the_file_time_and_the_issue() {
-    let m = PhotoMeta::without_exif(MetaIssue::NoExif, Some(2_000_000));
+    let m = PhotoMeta::without_exif(MetaIssue::NoExif, Some(FileTime::utc(2_000_000)));
     assert_eq!(m.captured.unwrap().local_ms, 2);
     assert_eq!(m.orientation, Orientation::Normal);
     assert_eq!(m.lens, None);
@@ -546,7 +576,7 @@ fn no_input_panics() {
             lens_model: Some(s.clone()),
             ..RawExif::default()
         };
-        let _ = PhotoMeta::from_raw(&raw, Some(i64::MAX));
+        let _ = PhotoMeta::from_raw(&raw, Some(FileTime::new(i64::MAX, i16::MAX)));
     }
 }
 

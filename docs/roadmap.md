@@ -59,7 +59,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
 - **Goal:** scan, group and preview a real card fast enough, proven by numbers on the G14.
 - **Scope:**
   - Streamed recursive scan, grouping (JPEG, NEF, sidecars incl. `NKSC_PARAM`), exclusions (`_rejected/`, destination inside source), unknown-extension list.
-  - Volume serial + relative path identity; with it, the PC time-zone lookup for the file-time fallback (ADR 0028).
+  - Volume serial + relative path identity; with it, the PC time-zone lookup for the file-time fallback (ADR 0028). Core rules (`culla_core::volume`) and the read-only Win32 lookups (`culla_adapters::winfs`) are in (slice 4); the session store that uses the key comes with M2.
   - EXIF pass (`kamadak-exif`): DateTimeOriginal, orientation, lens fallback; capture-time sort.
   - Own TIFF/IFD walker for NEF previews; fuzz targets running nightly.
   - Preview pipeline: turbojpeg scaled decode, resize, orientation, encode; reader threads separate from decode workers; prefetch; in-memory LRU; disk cache. No mmap on removable media.

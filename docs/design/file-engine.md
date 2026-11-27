@@ -24,8 +24,8 @@ Types are Rust. `RelPath` is a validated relative path (see §3.4), stored as te
 
 | Entity | Fields | Notes |
 |---|---|---|
-| `VolumeId` | `serial: u32`, `fs_name: String` (`FAT32`, `exFAT`, `NTFS`…), `label: Option<String>`, `last_mount: Option<String>`, `last_guid: Option<String>` | Identity is `serial` only ([ADR 0008](../adr/0008-key-sessions-and-caches-by-volume-serial-and-relative-path.md)). `last_mount` (`F:\`) and `last_guid` are informational; a run binds the serial to a GUID path afresh (§6.3). |
-| `Source` | `volume: VolumeId`, `rel: RelPath` (from the volume root), `rel_key: String` (case-folded) | One per session database. |
+| `VolumeId`, `VolumeRecord` | `VolumeId {serial: u32}`; `VolumeRecord {id: VolumeId, fs_name: String` (`FAT32`, `exFAT`, `NTFS`…)`, label: Option<String>, last_mount: Option<String>, last_guid: Option<VolumeGuidPath>}` | Identity is `serial` only ([ADR 0008](../adr/0008-key-sessions-and-caches-by-volume-serial-and-relative-path.md)). `VolumeRecord` is the `volume` row; `last_mount` (`F:\`) and `last_guid` are informational, refreshed on each lookup (`VolumeRecord::observe`); a run binds the serial to a GUID path afresh (§6.3). One lookup's result is a `VolumeInfo` (serial, GUID path, mount point, label, file system, flags, drive type). In `culla_core::volume`. |
+| `Source` | `volume: VolumeId`, `rel: RelPath` (from the volume root), `rel_key: String` (case-folded) | One per session database. In code, `Source` holds the volume and the components; `Source::key()` gives `SourceKey {serial, rel_key}`. |
 | `Session` | `id: i64`, `status: Active \| Archived`, `created_at`, `include_subfolders: bool`, `raw_follows: bool`, `keep_mode: Move \| Copy`, `dest: Option<(VolumeId, RelPath)>`, `order_frozen: bool` | At most one active session per source. "Start fresh" archives the active one. |
 | `Group` | `id: i64`, `session_id`, `folder: RelPath` (from the source root), `folder_key`, `stem: String`, `stem_key`, `status: Ok \| Ambiguous`, `capture_time: Option<i64>`, `display_ord: Option<i64>` | Unit of decision. Identity is (`folder_key`, `stem_key`) within a session. |
 | `FileMember` | `id: i64`, `group_id`, `kind: Jpeg \| Nef \| Sidecar`, `role: Primary \| Raw \| Sidecar`, `sidecar: Option<SidecarKind>`, `describes: Option<member_id>`, `rel: RelPath`, `name: String`, `size: u64`, `mtime_ns: i64`, `present: bool`, `changed: bool`, `last_seen_scan` | `describes` is set for sidecars bound to one file (`X.NEF.xmp`); empty for group sidecars (`X.xmp`). See §3.3. |
@@ -114,7 +114,7 @@ CREATE TABLE photo_group (
   stem            TEXT NOT NULL,
   stem_key        TEXT NOT NULL,
   status          TEXT NOT NULL CHECK (status IN ('ok','ambiguous')),
-  capture_time    INTEGER,                  -- ms; capture time per ADR 0028: camera-local for EXIF sources and for the file time (PC time zone; UTC until the time-zone lookup lands)
+  capture_time    INTEGER,                  -- ms; capture time per ADR 0028: camera-local for EXIF sources and for the file time (PC time zone at that instant, `winfs::local_utc_offset_minutes`)
   display_ord     INTEGER,
   first_seen_scan INTEGER NOT NULL REFERENCES scan(id),
   UNIQUE (session_id, folder_key, stem_key)
@@ -258,7 +258,7 @@ CREATE TRIGGER journal_no_delete BEFORE DELETE ON journal_entry
 
 ### 3.1 Walk
 
-1. Resolve the chosen folder once: open it, take its final path (`std::fs::canonicalize`), the volume root (`GetVolumePathNameW`), the volume GUID path (`GetVolumeNameForVolumeMountPointW`), the serial and file system name (`GetVolumeInformationByHandleW`). The source is (serial, path from the volume root). A junction *above* the chosen folder is resolved here, once; nothing inside the tree is followed.
+1. Resolve the chosen folder once: open it, take its final path (`std::fs::canonicalize`), the volume root (`GetVolumePathNameW`), the volume GUID path (`GetVolumeNameForVolumeMountPointW`), the serial and file system name (`GetVolumeInformationByHandleW`). The source is (serial, path from the volume root). As built in M1 (`winfs::resolve_folder`): `GetVolumeInformationW` on the volume GUID path instead of the handle form, so the lookup opens no handle; every field still comes from the volume the GUID names. Supported path forms are listed in the `winfs` module docs (drive paths and their `\\?\` form, folder mounts, `subst`; network, GUID-only and device paths refused). A junction *above* the chosen folder is resolved here, once; nothing inside the tree is followed.
 2. Walk depth-first with `follow_links(false)`, or only the root folder if "include subfolders" is off. Use the attributes from the directory listing; never call a following `metadata()`.
 3. Each folder is listed completely, then grouped (§3.3), then its groups are emitted in filename order. This is what makes the scan streamed: the first folder's groups reach the UI before the rest of the tree is listed.
 4. The EXIF pass (first ~128 KB per primary, buffered reads, never mmap) runs after, as described in [architecture.md](../architecture.md). It only fills `capture_time`.
