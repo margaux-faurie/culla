@@ -340,16 +340,22 @@ mod tests {
     use culla_adapters::pipeline::{ReadError, SourceJpeg};
     use culla_adapters::preview::{Preview, PreviewError, PreviewOptions};
 
-    /// Takes longer than the test's limit, then fails.
-    struct Slow;
+    /// Blocks until the test drops the sender, then fails: no read ends before the test
+    /// lets it.
+    struct Blocked(std::sync::Mutex<std::sync::mpsc::Receiver<()>>);
 
-    impl PreviewSource for Slow {
+    impl PreviewSource for Blocked {
         fn read(
             &self,
             _: PhotoId,
             _: &mut dyn FnMut(u64) -> Result<(), ReadError>,
         ) -> Result<SourceJpeg, ReadError> {
-            std::thread::sleep(Duration::from_millis(300));
+            let rx = self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Nothing is ever sent: `recv` returns once the sender is dropped.
+            let _ = rx.recv();
             Err(ReadError::Unknown)
         }
     }
@@ -369,14 +375,17 @@ mod tests {
 
     #[test]
     fn a_photo_that_never_comes_is_reported_as_timed_out() {
-        let pipeline = Pipeline::start(Slow, NoDecode, vec![0], Config::default()).unwrap();
+        let (release, rx) = std::sync::mpsc::channel::<()>();
+        let source = Blocked(std::sync::Mutex::new(rx));
+        let pipeline = Pipeline::start(source, NoDecode, vec![0], Config::default()).unwrap();
         let limit = Duration::from_millis(20);
-        let started = Instant::now();
         assert_eq!(
             wait_for(&pipeline, 0, 0, limit),
             Err(RowError::TimedOut(limit))
         );
-        assert!(started.elapsed() < Duration::from_millis(250));
+        // Lets the read end so the pipeline's threads can be joined.
+        drop(release);
+        drop(pipeline);
         assert_eq!(
             RowError::TimedOut(PHOTO_TIMEOUT).to_string(),
             "no preview after 120 s (timed out)"

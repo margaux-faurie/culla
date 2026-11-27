@@ -651,15 +651,48 @@ fn reserve_input<S, D>(
     }
 }
 
+/// Shortest pause before a thread's loop is started again after an unwind (provisional,
+/// SPEC §10).
+const RESTART_MIN: Duration = Duration::from_millis(10);
+/// Longest pause between restarts (provisional, SPEC §10). A loop that ran at least this long
+/// before unwinding is started again after [`RESTART_MIN`].
+const RESTART_MAX: Duration = Duration::from_secs(1);
+
 /// Runs a thread's loop (`reader` or `worker`, which return only on shutdown) and starts it
-/// again after an unwind outside the per-photo `catch_unwind` regions. The job's drop guard
-/// has then already given back its budgets and failed its photo; the thread carries on with
-/// the next one, so a single reader cannot be lost and stall the pipeline.
+/// again after an unwind outside the per-photo `catch_unwind` regions. If the thread held a
+/// job, its drop guard has already given back the job's budgets and failed its photo; an
+/// unwind with no job held fails nothing. The thread then carries on with the next photo, so
+/// a single reader cannot be lost and stall the pipeline. Restarts back off exponentially
+/// from [`RESTART_MIN`] to [`RESTART_MAX`], so a loop that unwinds before it takes a job does
+/// not spin; the pause waits on the shared condvar and ends at once on shutdown.
 fn supervise<S, D>(sh: &Shared<S, D>, body: impl Fn(&Shared<S, D>)) {
+    let mut pause = RESTART_MIN;
     loop {
-        if panic::catch_unwind(AssertUnwindSafe(|| body(sh))).is_ok() || sh.lock().shutdown {
+        let started = Instant::now();
+        if panic::catch_unwind(AssertUnwindSafe(|| body(sh))).is_ok() {
             return;
         }
+        if started.elapsed() >= RESTART_MAX {
+            pause = RESTART_MIN;
+        }
+        let deadline = Instant::now() + pause;
+        let mut st = sh.lock();
+        loop {
+            if st.shutdown {
+                return;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                break;
+            }
+            st = sh
+                .changed
+                .wait_timeout(st, deadline - now)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+        drop(st);
+        pause = (pause * 2).min(RESTART_MAX);
     }
 }
 
@@ -1205,6 +1238,34 @@ mod tests {
             assert!(t.join().is_ok(), "the thread ends normally on shutdown");
         });
         assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_loop_that_always_unwinds_backs_off_and_stops_promptly_on_shutdown() {
+        let sh = shared();
+        let runs = std::sync::atomic::AtomicUsize::new(0);
+        let count = || runs.load(std::sync::atomic::Ordering::SeqCst);
+        thread::scope(|s| {
+            let t = s.spawn(|| {
+                supervise(&sh, |_| {
+                    runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    panic!("before any job is taken");
+                });
+            });
+            thread::sleep(Duration::from_millis(100));
+            let early = count();
+            assert!(early >= 1, "the loop ran");
+            assert!(early < 20, "{early} restarts in 100 ms: no backoff");
+            // By now the pause has grown to hundreds of milliseconds; shutdown must end it.
+            thread::sleep(Duration::from_millis(250));
+            let asked = Instant::now();
+            sh.lock().shutdown = true;
+            sh.changed.notify_all();
+            assert!(t.join().is_ok(), "the thread returns on shutdown");
+            let took = asked.elapsed();
+            assert!(took < RESTART_MAX / 2, "shutdown took {took:?}");
+        });
+        assert!(count() < 20);
     }
 
     #[test]
