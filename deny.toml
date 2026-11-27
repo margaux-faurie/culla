@@ -1,4 +1,4 @@
-# cargo-deny: advisories, licences, bans, sources (ADR 0017).
+# cargo-deny: advisories, licences, bans, sources (ADR 0017, ADR 0026).
 [graph]
 all-features = true
 targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
@@ -25,8 +25,8 @@ allow = [
 
 # Weak copyleft is allowed per crate only, never globally (ADR 0017).
 # Tauri tree: cssparser, cssparser-macros, selectors and dtoa-short (via tauri-utils' HTML parser),
-# option-ext (via dirs). MPL-2.0 is file-level copyleft on unmodified dependencies: fine in an MIT
-# binary, and the third-party licences file must list them.
+# option-ext (via dirs). MPL-2.0 is file-level copyleft on unmodified dependencies: compatible with
+# GPL-3.0 (MPL-2.0 §3.3), and the third-party licences file must list them.
 exceptions = [
   { crate = "cssparser", allow = ["MPL-2.0"] },
   { crate = "cssparser-macros", allow = ["MPL-2.0"] },
@@ -34,6 +34,11 @@ exceptions = [
   { crate = "dtoa-short", allow = ["MPL-2.0"] },
   { crate = "option-ext", allow = ["MPL-2.0"] },
 ]
+
+# Culla's own crates are GPL-3.0-only and unpublished (`publish = false`): skip their licence
+# rather than allowing GPL globally, which would let GPL dependencies in (ADR 0026).
+[licenses.private]
+ignore = true
 
 [bans]
 multiple-versions = "warn"

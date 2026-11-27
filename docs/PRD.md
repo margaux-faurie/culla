@@ -31,7 +31,7 @@ Not targeted in v1: macOS and Linux users, studios with multi-user or catalogue 
 
 ## 3. Appetite
 
-Solo project, one author with Claude Code agents, open source (MIT). The appetite is the v1 scope in [SPEC.md §8](SPEC.md#8-scope), Windows only, and nothing more. When a feature threatens the appetite, it moves to the v2 list rather than stretching v1.
+Solo project, one author with Claude Code agents, open source (GPL-3.0-only). The appetite is the v1 scope in [SPEC.md §8](SPEC.md#8-scope), Windows only, and nothing more. When a feature threatens the appetite, it moves to the v2 list rather than stretching v1.
 
 To decide: a calendar time budget for v1 (weeks per milestone). Milestones are in [roadmap.md](roadmap.md) (M0 skeleton, M1 scan and preview benchmarks, M2 swipe, M3 apply engine, M4 web demo, then v1).
 
