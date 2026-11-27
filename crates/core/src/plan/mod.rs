@@ -20,8 +20,12 @@
 //!   (reject), so every target is under its root (INV-05).
 //! - One suffix `n` per group, the smallest in `0..=9999` for which no target exists in the
 //!   snapshot and none is claimed by an earlier operation of the plan, compared folded
-//!   (§7.3, INV-06, INV-07). No suffix free, or a target folder blocked by an existing file: the
-//!   group is held back with no operations and listed.
+//!   (§7.3, INV-06, INV-07). A target is not free either when it is a folder (or above one)
+//!   that any candidate group's targets go into, whichever group comes first. No suffix free,
+//!   a target folder blocked by an existing file or by a file an earlier operation claims, or a
+//!   target name Windows would refuse ([`validate_component`], length included): the group is
+//!   held back with no operations and listed. A kept group that would get operations with no
+//!   destination chosen fails the whole plan ([`PlanError::NoDestination`]).
 //! - The kind per §7.2: reject `rename`; keep by move `rename` on the same volume, `xmove`
 //!   otherwise; keep by copy `copy`; any read-only (camera-protected) planned member makes the
 //!   whole group `copy`.
@@ -42,7 +46,7 @@ use std::fmt;
 
 use crate::decisions::{Decisions, GroupId, GroupState, Verdict};
 use crate::grouping::{Describes, Group, GroupStatus, Photo, SidecarKind};
-use crate::names::fold;
+use crate::names::{fold, validate_component};
 
 /// A member's id: `member.id` in the session database (§2.3).
 pub type MemberId = i64;
@@ -243,17 +247,26 @@ impl Existing {
         Self::default()
     }
 
-    /// A file at `path` under `root`.
+    /// A file at `path` under `root`. Its ancestors are folders, so they count as taken too.
     pub fn add_file(&mut self, root: Root, path: &[&str]) {
         let parts: Vec<String> = path.iter().map(|s| (*s).to_owned()).collect();
+        self.add_ancestors(root, &parts);
         self.taken.insert((root, key(&parts)));
         self.files.insert((root, key(&parts)));
     }
 
-    /// A folder (or anything else that is not a file) at `path` under `root`.
+    /// A folder (or anything else that is not a file) at `path` under `root`, and its
+    /// ancestors.
     pub fn add_dir(&mut self, root: Root, path: &[&str]) {
         let parts: Vec<String> = path.iter().map(|s| (*s).to_owned()).collect();
+        self.add_ancestors(root, &parts);
         self.taken.insert((root, key(&parts)));
+    }
+
+    fn add_ancestors(&mut self, root: Root, parts: &[String]) {
+        for n in 1..parts.len() {
+            self.taken.insert((root, key(&parts[..n])));
+        }
     }
 
     /// Something exists at this path (file, folder or other).
@@ -324,8 +337,13 @@ pub enum Held {
     NothingPresent,
     /// No suffix up to [`MAX_SUFFIX`] gives free targets (§7.3).
     NoFreeSuffix,
-    /// A file exists where a target folder would be: no suffix helps.
+    /// A file exists, or an earlier operation of the plan puts one, where a target folder
+    /// would be: no suffix helps.
     TargetFolderBlocked,
+    /// A target name would not be a valid Windows file name ([`validate_component`]): too
+    /// long once the suffix is added (more than 255 UTF-16 units), or invalid as scanned.
+    /// Larger suffixes are longer, so the search stops there.
+    TargetNameInvalid,
     /// A member's name does not start with the group's stem: the session data is
     /// inconsistent (a bug).
     NameMismatch,
@@ -351,7 +369,9 @@ pub struct Plan {
 /// Why no plan can be built.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PlanError {
-    /// A group is kept but no destination is chosen.
+    /// A kept group would get operations but no destination is chosen. Kept groups held for
+    /// a reason that does not depend on the destination (ambiguous, applied, locked, nothing
+    /// present) do not count.
     NoDestination,
     /// Two groups have the same id.
     DuplicateGroup(GroupId),
@@ -360,7 +380,9 @@ pub enum PlanError {
 impl fmt::Display for PlanError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NoDestination => f.write_str("a group is kept but no destination is chosen"),
+            Self::NoDestination => {
+                f.write_str("a kept group would be moved but no destination is chosen")
+            }
             Self::DuplicateGroup(g) => write!(f, "group {g} is given twice"),
         }
     }
@@ -449,9 +471,6 @@ pub fn plan(
             GroupState::Rejected => Some((Verdict::Reject, g)),
         })
         .collect();
-    if settings.keep.is_none() && order.iter().any(|(v, _)| *v == Verdict::Keep) {
-        return Err(PlanError::NoDestination);
-    }
     order.sort_by_cached_key(|(v, g)| {
         (
             *v == Verdict::Keep,
@@ -466,7 +485,9 @@ pub fn plan(
     let mut out = Plan::default();
     let mut held: BTreeMap<GroupId, Held> = BTreeMap::new();
     let mut missing = BTreeSet::new();
-    let mut claimed: BTreeSet<(Root, String)> = BTreeSet::new();
+    // First pass: the holds that do not depend on the targets, and what each remaining group
+    // would move.
+    let mut candidates = Vec::new();
     for (action, g) in order {
         let reason = if g.status == GroupStatus::Ambiguous {
             Some(Held::Ambiguous)
@@ -499,13 +520,34 @@ pub fn plan(
                 (KeepMode::Move, true) => OpKind::Rename,
                 (KeepMode::Move, false) => OpKind::XMove,
             },
-            // Checked before the loop: a kept group needs a destination.
+            // A kept group that would get operations needs a destination.
             (Verdict::Keep, None) => return Err(PlanError::NoDestination),
         };
         // Camera-protected (P13): a read-only member turns a rename or xmove group into copies.
         let protected = kind != OpKind::Copy && members.iter().any(|m| m.read_only);
         let kind = if protected { OpKind::Copy } else { kind };
-        if members.iter().any(|m| existing.is_blocked(root, &m.folder)) {
+        candidates.push((action, g, members, root, kind, protected));
+    }
+    // Every folder a candidate's targets go into (and its ancestors) will be a folder: no
+    // target may take its name, whichever group comes first in the plan.
+    let mut folders: BTreeSet<(Root, String)> = BTreeSet::new();
+    for (_, _, members, root, ..) in &candidates {
+        for m in members {
+            for n in 1..=m.folder.len() {
+                folders.insert((*root, key(&m.folder[..n])));
+            }
+        }
+    }
+    // Targets claimed by earlier operations.
+    let mut claimed: BTreeSet<(Root, String)> = BTreeSet::new();
+    for (action, g, members, root, kind, protected) in candidates {
+        let claimed_file_at = |folder: &[String]| {
+            (1..=folder.len()).any(|n| claimed.contains(&(root, key(&folder[..n]))))
+        };
+        if members
+            .iter()
+            .any(|m| existing.is_blocked(root, &m.folder) || claimed_file_at(&m.folder))
+        {
             held.insert(g.id, Held::TargetFolderBlocked);
             continue;
         }
@@ -519,26 +561,42 @@ pub fn plan(
                 })
                 .collect()
         };
-        if targets_for(0).is_none() {
-            held.insert(g.id, Held::NameMismatch);
-            continue;
-        }
         let free = |paths: &[Vec<String>]| {
             let mut keys = BTreeSet::new();
             paths.iter().all(|p| {
                 let k = key(p);
                 !existing.is_taken(root, p)
                     && !claimed.contains(&(root, k.clone()))
+                    && !folders.contains(&(root, k.clone()))
                     && keys.insert(k)
             })
         };
-        let found = (0..=MAX_SUFFIX).find_map(|n| {
-            let paths = targets_for(n)?;
-            free(&paths).then_some((n, paths))
-        });
-        let Some((suffix, paths)) = found else {
-            held.insert(g.id, Held::NoFreeSuffix);
-            continue;
+        // The smallest free suffix; an invalid name ends the search (longer suffixes are
+        // longer names).
+        let mut found = Err(Held::NoFreeSuffix);
+        for n in 0..=MAX_SUFFIX {
+            let Some(paths) = targets_for(n) else {
+                found = Err(Held::NameMismatch);
+                break;
+            };
+            if paths.iter().any(|p| {
+                p.last()
+                    .is_none_or(|name| validate_component(name).is_err())
+            }) {
+                found = Err(Held::TargetNameInvalid);
+                break;
+            }
+            if free(&paths) {
+                found = Ok((n, paths));
+                break;
+            }
+        }
+        let (suffix, paths) = match found {
+            Ok(x) => x,
+            Err(r) => {
+                held.insert(g.id, r);
+                continue;
+            }
         };
         for (m, dst) in members.iter().zip(paths) {
             let dst_key = key(&dst);

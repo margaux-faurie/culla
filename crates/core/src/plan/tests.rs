@@ -458,8 +458,108 @@ fn errors() {
     );
     assert_eq!(
         PlanError::NoDestination.to_string(),
-        "a group is kept but no destination is chosen"
+        "a kept group would be moved but no destination is chosen"
     );
+}
+
+/// SPEC §10 (c): only a kept group that would get operations needs a destination; kept groups
+/// held for a reason that does not depend on the destination do not, so rejects still apply.
+#[test]
+fn no_destination_only_for_kept_groups_that_would_move() {
+    let mut groups = scan(&["A/X.JPG", "B/X.JPG", "C/X.JPG", "D/X.JPG", "E/X.JPG"]);
+    groups[0].status = GroupStatus::Ambiguous;
+    groups[1].applied = true;
+    groups[2].locked = true;
+    groups[3].members[0].present = false;
+    let no_dest = Settings {
+        raw_follows: true,
+        keep: None,
+    };
+    let d = decide(&[
+        (1, Verdict::Keep),
+        (2, Verdict::Keep),
+        (3, Verdict::Keep),
+        (4, Verdict::Keep),
+        (5, Verdict::Reject),
+    ]);
+    let p = plan(&groups, &d, &no_dest, &Existing::new()).unwrap();
+    assert_eq!(
+        moves(&p),
+        vec![("E/X.JPG".into(), Root::Rejected, "E/X.JPG".into())]
+    );
+    assert_eq!(
+        p.held,
+        vec![
+            (1, Held::Ambiguous),
+            (2, Held::Applied),
+            (3, Held::Locked),
+            (4, Held::NothingPresent)
+        ]
+    );
+    // One kept group that would move: the whole plan fails.
+    groups[3].members[0].present = true;
+    assert_eq!(
+        plan(&groups, &d, &no_dest, &Existing::new()),
+        Err(PlanError::NoDestination)
+    );
+}
+
+/// A target name must be a valid Windows name, length included (255 UTF-16 units): a suffix
+/// that makes a name too long holds the group, as does a member too long already.
+#[test]
+fn invalid_target_names_hold_the_group() {
+    let stem = "S".repeat(251);
+    let jpg = format!("F/{stem}.JPG"); // 255 units: valid as is
+    let groups = scan(&[&jpg]);
+    let d = all(&groups, Verdict::Keep);
+    let p = plan(&groups, &d, &MOVE_SAME, &Existing::new()).unwrap();
+    assert_eq!(p.groups[0].suffix, 0);
+    assert!(p.held.is_empty());
+    // Taken: `_1` would make 257 units.
+    let mut existing = Existing::new();
+    existing.add_file(Root::Dest, &["F", &format!("{stem}.JPG")]);
+    let p = plan(&groups, &d, &MOVE_SAME, &existing).unwrap();
+    assert!(p.ops.is_empty() && p.groups.is_empty());
+    assert_eq!(p.held, vec![(1, Held::TargetNameInvalid)]);
+    // A member already over the limit (a scan drops such names; session data could still hold
+    // one) holds the whole group, even with no suffix.
+    let mut groups = scan(&[&jpg]);
+    let mut xmp = groups[0].members[0].clone();
+    xmp.id += 1;
+    xmp.name = format!("{stem}.JPG.xmp");
+    xmp.role = Role::Sidecar {
+        kind: SidecarKind::FileXmp,
+        describes: Describes::Primary,
+    };
+    groups[0].members.push(xmp);
+    let p = plan(&groups, &d, &MOVE_SAME, &Existing::new()).unwrap();
+    assert_eq!(p.held, vec![(1, Held::TargetNameInvalid)]);
+}
+
+/// A target may not take the name of a folder another group's targets go into, whichever
+/// comes first; ancestors of an existing entry are folders too.
+#[test]
+fn targets_do_not_take_a_planned_folder() {
+    // F/X.JPG, and a folder F/X_1.JPG holding Y.JPG; X.JPG already at the destination.
+    let groups = scan(&["F/X.JPG", "F/X_1.JPG/Y.JPG"]);
+    let d = all(&groups, Verdict::Keep);
+    let mut existing = Existing::new();
+    existing.add_file(Root::Dest, &["F", "X.JPG"]);
+    let p = plan(&groups, &d, &MOVE_SAME, &existing).unwrap();
+    assert_eq!(targets(&p), vec!["F/X_2.JPG", "F/X_1.JPG/Y.JPG"]);
+    assert!(p.held.is_empty());
+    // Rejected, the folder is under the other root: `_1` is free there.
+    let ids: BTreeMap<String, GroupId> = groups.iter().map(|g| (g.stem.clone(), g.id)).collect();
+    let d = decide(&[(ids["X"], Verdict::Keep), (ids["Y"], Verdict::Reject)]);
+    let p = plan(&groups, &d, &MOVE_SAME, &existing).unwrap();
+    assert_eq!(targets(&p), vec!["F/X_1.JPG/Y.JPG", "F/X_1.JPG"]);
+    // An existing file deeper down makes its folders taken.
+    let groups = scan(&["F/X.JPG"]);
+    let d = all(&groups, Verdict::Keep);
+    let mut existing = Existing::new();
+    existing.add_file(Root::Dest, &["F", "X.JPG", "inner.txt"]);
+    let p = plan(&groups, &d, &MOVE_SAME, &existing).unwrap();
+    assert_eq!(targets(&p), vec!["F/X_1.JPG"]);
 }
 
 #[test]
@@ -565,6 +665,12 @@ const FOLDERS: &[&str] = &[
 ];
 const STEMS: &[&str] = &["DSC_0001", "DSC_0001_1", "dsc_0002", "Été", "X.edit", "X"];
 
+/// A stem at the length limit: `<stem>.JPG` and `<stem>.NEF` are 255 UTF-16 units, so any
+/// suffix makes a target name too long (a scan drops the longer `.JPEG` and sidecar names).
+fn long_stem() -> String {
+    "L".repeat(251)
+}
+
 /// A random source tree: per folder a few shots, each a JPEG, a NEF or both, with random
 /// sidecars. Returns the file paths.
 fn random_tree(rng: &mut Rng) -> Vec<String> {
@@ -572,7 +678,12 @@ fn random_tree(rng: &mut Rng) -> Vec<String> {
     let mut used = BTreeSet::new();
     for _ in 0..1 + rng.below(6) {
         let folder = *rng.pick(FOLDERS);
-        let stem = *rng.pick(STEMS);
+        let stem = if rng.chance(4) {
+            long_stem()
+        } else {
+            (*rng.pick(STEMS)).to_owned()
+        };
+        let stem = stem.as_str();
         if !used.insert(fold(&format!("{folder}/{stem}"))) {
             continue;
         }
@@ -619,12 +730,21 @@ struct Case {
     decisions: Decisions,
     settings: Settings,
     existing: Existing,
+    /// Groups decided, then cleared (undecided again).
+    cleared: usize,
 }
 
 fn random_case(rng: &mut Rng) -> Case {
     let paths = random_tree(rng);
     let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
     let mut groups = scan(&refs);
+    // Group ids in no relation to the plan order (member ids stay unique).
+    let mut ids: Vec<GroupId> = (1..=10_000).collect();
+    for (i, g) in groups.iter_mut().enumerate() {
+        let j = i + rng.below(ids.len() - i);
+        ids.swap(i, j);
+        g.id = ids[i];
+    }
     for g in &mut groups {
         if rng.chance(5) {
             g.status = GroupStatus::Ambiguous;
@@ -636,24 +756,42 @@ fn random_case(rng: &mut Rng) -> Case {
             m.read_only = rng.chance(8);
         }
     }
-    let mut pairs = Vec::new();
+    // Undecided, kept, rejected, or decided then cleared.
+    let mut d = Decisions::new();
+    let mut seq = 0;
+    let mut cleared = 0;
+    let mut push = |d: &mut Decisions, e: crate::decisions::NewEvent| {
+        seq += 1;
+        d.apply(&e.at(seq, 0)).unwrap();
+    };
     for g in &groups {
-        match rng.below(3) {
-            0 => {}
-            1 => pairs.push((g.id, Verdict::Keep)),
-            _ => pairs.push((g.id, Verdict::Reject)),
+        let v = match rng.below(4) {
+            0 => continue,
+            1 => Verdict::Keep,
+            _ => Verdict::Reject,
+        };
+        let e = d.decide(g.id, v, NO_LOCKS).unwrap();
+        push(&mut d, e);
+        if rng.chance(15) {
+            let e = d.clear(g.id, NO_LOCKS).unwrap();
+            push(&mut d, e);
+            cleared += 1;
         }
     }
     let settings = Settings {
         raw_follows: rng.chance(50),
-        keep: Some(KeepTo {
-            mode: if rng.chance(50) {
-                KeepMode::Move
-            } else {
-                KeepMode::Copy
-            },
-            same_volume: rng.chance(50),
-        }),
+        keep: if rng.chance(10) {
+            None
+        } else {
+            Some(KeepTo {
+                mode: if rng.chance(50) {
+                    KeepMode::Move
+                } else {
+                    KeepMode::Copy
+                },
+                same_volume: rng.chance(50),
+            })
+        },
     };
     // Existing entries where targets would land, with suffixes, other case, folders, and the
     // odd file where a folder should be.
@@ -682,11 +820,31 @@ fn random_case(rng: &mut Rng) -> Case {
             }
         }
     }
+    // Now and then every suffix of one member taken under both roots (NoFreeSuffix).
+    if !groups.is_empty() && rng.chance(5) {
+        let g = rng.pick(&groups);
+        let m = rng.pick(&g.members);
+        for n in 0..=MAX_SUFFIX {
+            let name = target_name(&m.name, &g.stem, n).unwrap();
+            let mut path: Vec<&str> = m.folder.iter().map(String::as_str).collect();
+            path.push(&name);
+            existing.add_file(Root::Dest, &path);
+            existing.add_file(Root::Rejected, &path);
+        }
+    }
+    // Now and then inconsistent session data: a member whose name lost the stem.
+    if !groups.is_empty() && rng.chance(4) {
+        let i = rng.below(groups.len());
+        let k = rng.below(groups[i].members.len());
+        let m = &mut groups[i].members[k];
+        m.name = format!("Zq{}", m.name);
+    }
     Case {
         groups,
-        decisions: decide(&pairs),
+        decisions: d,
         settings,
         existing,
+        cleared,
     }
 }
 
@@ -723,7 +881,48 @@ fn expected_members(g: &PlanGroup, raw_follows: bool) -> BTreeSet<MemberId> {
         .collect()
 }
 
+/// The rank of a member in its group's operations (§9.5).
+fn rank(m: &PlanMember) -> u8 {
+    match m.role {
+        Role::Primary => 0,
+        Role::Raw => 1,
+        Role::Sidecar {
+            describes: Describes::Group,
+            ..
+        } => 2,
+        Role::Sidecar { .. } => 3,
+    }
+}
+
+fn root_of(state: GroupState) -> Root {
+    if state == GroupState::Kept {
+        Root::Dest
+    } else {
+        Root::Rejected
+    }
+}
+
+/// A decided group past the holds that do not depend on the targets: what it would move.
+fn candidate(c: &Case, g: &PlanGroup) -> Option<BTreeSet<MemberId>> {
+    let open = g.status == GroupStatus::Ok && !g.applied && !g.locked;
+    let want = expected_members(g, c.settings.raw_follows);
+    (c.decisions.state(g.id).is_decided() && open && !want.is_empty()).then_some(want)
+}
+
+/// `NoDestination` is right exactly when a kept candidate exists and no destination is set.
+fn expects_no_destination(c: &Case) -> bool {
+    c.settings.keep.is_none()
+        && c.groups
+            .iter()
+            .any(|g| c.decisions.state(g.id) == GroupState::Kept && candidate(c, g).is_some())
+}
+
+fn member(g: &PlanGroup, id: MemberId) -> &PlanMember {
+    g.members.iter().find(|m| m.id == id).unwrap()
+}
+
 fn check_invariants(c: &Case, p: &Plan, case: u64) {
+    let by_id: BTreeMap<GroupId, &PlanGroup> = c.groups.iter().map(|g| (g.id, g)).collect();
     // Ords in sequence; rejects before keeps.
     for (i, o) in p.ops.iter().enumerate() {
         assert_eq!(o.ord as usize, i, "case {case}");
@@ -735,6 +934,39 @@ fn check_invariants(c: &Case, p: &Plan, case: u64) {
             "case {case}"
         );
     }
+    // §9.5: groups by action, folder key, then stem key; each group's operations contiguous,
+    // in the order of `p.groups`, members by rank, then folded folder and name.
+    let group_key = |id: GroupId| {
+        let g = by_id[&id];
+        (
+            c.decisions.state(id) == GroupState::Kept,
+            key(&g.folder),
+            fold(&g.stem),
+        )
+    };
+    for w in p.groups.windows(2) {
+        assert!(
+            group_key(w[0].group) <= group_key(w[1].group),
+            "case {case}: {w:?}"
+        );
+    }
+    let mut runs: Vec<GroupId> = p.ops.iter().map(|o| o.group).collect();
+    runs.dedup();
+    assert_eq!(
+        runs,
+        p.groups.iter().map(|g| g.group).collect::<Vec<_>>(),
+        "case {case}"
+    );
+    for w in p.ops.windows(2) {
+        if w[0].group == w[1].group {
+            let g = by_id[&w[0].group];
+            let k = |o: &PlannedOp| {
+                let m = member(g, o.member);
+                (rank(m), key(&m.folder), fold(&m.name))
+            };
+            assert!(k(&w[0]) <= k(&w[1]), "case {case}: {w:?}");
+        }
+    }
     // INV-06: no two operations share a folded target.
     let mut keys = BTreeSet::new();
     for o in &p.ops {
@@ -744,20 +976,52 @@ fn check_invariants(c: &Case, p: &Plan, case: u64) {
             "case {case}: {o:?}"
         );
     }
-    // Never overwrite: no target exists, no target folder is blocked by a file.
+    // Folders the candidates' targets go into, worked out from the expected members.
+    let mut folders: BTreeSet<(Root, String)> = BTreeSet::new();
+    for g in &c.groups {
+        if let Some(want) = candidate(c, g) {
+            let root = root_of(c.decisions.state(g.id));
+            for id in want {
+                let f = &member(g, id).folder;
+                for n in 1..=f.len() {
+                    folders.insert((root, key(&f[..n])));
+                }
+            }
+        }
+    }
+    // Never overwrite: no target exists, is a planned folder, or is under a file; every target
+    // name is valid.
     for o in &p.ops {
         assert!(!c.existing.is_taken(o.root, &o.dst), "case {case}: {o:?}");
         assert!(
-            !c.existing.is_blocked(o.root, &o.dst[..o.dst.len() - 1]),
+            !folders.contains(&(o.root, o.dst_key.clone())),
             "case {case}: {o:?}"
         );
+        let folder = &o.dst[..o.dst.len() - 1];
+        assert!(!c.existing.is_blocked(o.root, folder), "case {case}: {o:?}");
+        assert!(
+            (1..=folder.len()).all(|n| !keys.contains(&(o.root, key(&folder[..n])))),
+            "case {case}: {o:?}"
+        );
+        assert!(validate_component(o.dst.last().unwrap()).is_ok());
     }
     let held: BTreeMap<GroupId, Held> = p.held.iter().copied().collect();
     let planned: BTreeMap<GroupId, &PlannedGroup> = p.groups.iter().map(|g| (g.group, g)).collect();
+    // Plan position of a group, for "claimed by an earlier operation" (§9.5, ties by id).
+    let full_key = |g: &PlanGroup| {
+        (
+            c.decisions.state(g.id) == GroupState::Kept,
+            key(&g.folder),
+            fold(&g.stem),
+            g.folder.clone(),
+            g.stem.clone(),
+            g.id,
+        )
+    };
     for g in &c.groups {
         let state = c.decisions.state(g.id);
         let ops: Vec<&PlannedOp> = p.ops.iter().filter(|o| o.group == g.id).collect();
-        // INV-04: undecided groups appear nowhere.
+        // INV-04: undecided groups (decided then cleared included) appear nowhere.
         if state == GroupState::Undecided {
             assert!(ops.is_empty() && !held.contains_key(&g.id), "case {case}");
             assert!(p.missing.iter().all(|(id, _)| *id != g.id));
@@ -779,41 +1043,101 @@ fn check_invariants(c: &Case, p: &Plan, case: u64) {
             continue;
         }
         let want = expected_members(g, c.settings.raw_follows);
+        if want.is_empty() {
+            assert!(
+                ops.is_empty() && !planned.contains_key(&g.id),
+                "case {case}"
+            );
+            assert_eq!(held.get(&g.id), Some(&Held::NothingPresent), "case {case}");
+            continue;
+        }
+        let root = root_of(state);
+        let mine = full_key(g);
+        let earlier: BTreeSet<(Root, String)> = p
+            .ops
+            .iter()
+            .filter(|o| full_key(by_id[&o.group]) < mine)
+            .map(|o| (o.root, o.dst_key.clone()))
+            .collect();
+        let members: Vec<&PlanMember> = want.iter().map(|id| member(g, *id)).collect();
+        let paths_for = |n: u32| -> Option<Vec<Vec<String>>> {
+            members
+                .iter()
+                .map(|m| Some([m.folder.clone(), vec![target_name(&m.name, &g.stem, n)?]].concat()))
+                .collect()
+        };
+        let invalid = |paths: &[Vec<String>]| {
+            paths
+                .iter()
+                .any(|p| validate_component(p.last().unwrap()).is_err())
+        };
+        let clash = |paths: &[Vec<String>]| {
+            let mut seen = BTreeSet::new();
+            paths.iter().any(|p| {
+                let k = key(p);
+                c.existing.is_taken(root, p)
+                    || earlier.contains(&(root, k.clone()))
+                    || folders.contains(&(root, k.clone()))
+                    || !seen.insert(k)
+            })
+        };
         let Some(pg) = planned.get(&g.id) else {
             assert!(ops.is_empty());
             let r = held[&g.id];
-            assert!(
-                matches!(r, Held::NoFreeSuffix | Held::TargetFolderBlocked)
-                    || (r == Held::NothingPresent && want.is_empty()),
-                "case {case}: {r:?}"
-            );
+            // Each reason justified on its own, from the expected members.
+            let folder_blocked = members.iter().any(|m| {
+                c.existing.is_blocked(root, &m.folder)
+                    || (1..=m.folder.len()).any(|n| earlier.contains(&(root, key(&m.folder[..n]))))
+            });
+            let expect = if folder_blocked {
+                Held::TargetFolderBlocked
+            } else if paths_for(0).is_none() {
+                Held::NameMismatch
+            } else {
+                let mut expect = Held::NoFreeSuffix;
+                for n in 0..=MAX_SUFFIX {
+                    let paths = paths_for(n).unwrap();
+                    if invalid(&paths) {
+                        expect = Held::TargetNameInvalid;
+                        break;
+                    }
+                    assert!(clash(&paths), "case {case}: suffix {n} free, held {r:?}");
+                }
+                expect
+            };
+            assert_eq!(r, expect, "case {case}");
             continue;
         };
+        assert!(!held.contains_key(&g.id), "case {case}");
         // The whole group moves (INV-09): exactly the expected members, one root, one kind,
         // one suffix (INV-07), mirrored folders (INV-05).
         let got: BTreeSet<MemberId> = ops.iter().map(|o| o.member).collect();
         assert_eq!(got, want, "case {case}");
         assert_eq!(got.len(), ops.len());
-        let root = if state == GroupState::Kept {
-            Root::Dest
-        } else {
-            Root::Rejected
-        };
-        let protected = ops
-            .iter()
-            .any(|o| g.members.iter().any(|m| m.id == o.member && m.read_only));
-        let keep = c.settings.keep.unwrap();
-        let base = match (state, keep.mode, keep.same_volume) {
-            (GroupState::Rejected, ..) => OpKind::Rename,
-            (_, KeepMode::Copy, _) => OpKind::Copy,
-            (_, KeepMode::Move, true) => OpKind::Rename,
-            (_, KeepMode::Move, false) => OpKind::XMove,
+        let protected = ops.iter().any(|o| member(g, o.member).read_only);
+        let base = match (state, c.settings.keep) {
+            (GroupState::Rejected, _) => OpKind::Rename,
+            (
+                _,
+                Some(KeepTo {
+                    mode: KeepMode::Copy,
+                    ..
+                }),
+            ) => OpKind::Copy,
+            (
+                _,
+                Some(KeepTo {
+                    same_volume: true, ..
+                }),
+            ) => OpKind::Rename,
+            (_, Some(_)) => OpKind::XMove,
+            (_, None) => panic!("case {case}: a kept group planned with no destination"),
         };
         let kind = if protected { OpKind::Copy } else { base };
         assert_eq!(pg.kind, kind, "case {case}");
         assert_eq!(pg.protected, protected && base != OpKind::Copy);
         for o in &ops {
-            let m = g.members.iter().find(|m| m.id == o.member).unwrap();
+            let m = member(g, o.member);
             assert!(m.present);
             assert_eq!(o.root, root);
             assert_eq!(o.kind, kind);
@@ -840,23 +1164,12 @@ fn check_invariants(c: &Case, p: &Plan, case: u64) {
                 );
             }
         }
-        // The suffix is the smallest that works (§7.3).
-        let first = ops[0].ord as usize;
-        let earlier: BTreeSet<(Root, String)> = p.ops[..first]
-            .iter()
-            .map(|o| (o.root, o.dst_key.clone()))
-            .collect();
+        // The suffix is the smallest that works (§7.3): every smaller one has valid names
+        // that clash.
         for n in 0..pg.suffix {
-            let clash = ops.iter().any(|o| {
-                let m = g.members.iter().find(|m| m.id == o.member).unwrap();
-                let path = [
-                    m.folder.clone(),
-                    vec![target_name(&m.name, &g.stem, n).unwrap()],
-                ]
-                .concat();
-                c.existing.is_taken(root, &path) || earlier.contains(&(root, key(&path)))
-            });
-            assert!(clash, "case {case}: suffix {n} was free");
+            let paths = paths_for(n).unwrap();
+            assert!(!invalid(&paths), "case {case}: suffix {n} invalid");
+            assert!(clash(&paths), "case {case}: suffix {n} was free");
         }
     }
     // Missing members that would have moved are listed, for groups past the held checks.
@@ -908,18 +1221,27 @@ fn expected_missing(g: &PlanGroup, raw_follows: bool) -> BTreeSet<MemberId> {
         .collect()
 }
 
-/// INV-04 to INV-09: every invariant of §3.1 over random trees, decisions, settings and
-/// collisions.
-#[test]
-fn prop_plan_invariants() {
-    // How often each situation came up, so a generator change cannot make the test vacuous.
+/// Runs `n` cases of the invariants; returns how often each situation came up.
+fn run_invariants(n: u64) -> BTreeMap<&'static str, u64> {
     let mut seen: BTreeMap<&str, u64> = BTreeMap::new();
-    for case in 0..cases() {
+    for case in 0..n {
         let mut rng = Rng::new(case);
         let c = random_case(&mut rng);
-        let p = plan(&c.groups, &c.decisions, &c.settings, &c.existing).unwrap();
-        check_invariants(&c, &p, case);
         let mut count = |k| *seen.entry(k).or_default() += 1;
+        if c.cleared > 0 {
+            count("cleared");
+        }
+        let result = plan(&c.groups, &c.decisions, &c.settings, &c.existing);
+        if expects_no_destination(&c) {
+            assert_eq!(result, Err(PlanError::NoDestination), "case {case}");
+            count("no destination");
+            continue;
+        }
+        let p = result.unwrap_or_else(|e| panic!("case {case}: {e}"));
+        check_invariants(&c, &p, case);
+        if c.settings.keep.is_none() && !p.ops.is_empty() {
+            count("rejects without destination");
+        }
         if !p.ops.is_empty() {
             count("ops");
         }
@@ -942,7 +1264,9 @@ fn prop_plan_invariants() {
                 Held::Locked => "locked",
                 Held::NothingPresent => "nothing present",
                 Held::TargetFolderBlocked => "blocked",
-                Held::NoFreeSuffix | Held::NameMismatch => "other",
+                Held::NoFreeSuffix => "no free suffix",
+                Held::TargetNameInvalid => "name invalid",
+                Held::NameMismatch => "name mismatch",
             });
         }
         for k in [OpKind::Rename, OpKind::Copy, OpKind::XMove] {
@@ -951,6 +1275,15 @@ fn prop_plan_invariants() {
             }
         }
     }
+    seen
+}
+
+/// INV-04 to INV-09: every invariant of §3.1 over random trees, decisions, settings and
+/// collisions.
+#[test]
+fn prop_plan_invariants() {
+    // How often each situation came up, so a generator change cannot make the test vacuous.
+    let seen = run_invariants(cases());
     for k in [
         "ops",
         "suffix",
@@ -962,6 +1295,12 @@ fn prop_plan_invariants() {
         "locked",
         "nothing present",
         "blocked",
+        "no free suffix",
+        "name invalid",
+        "name mismatch",
+        "cleared",
+        "no destination",
+        "rejects without destination",
         "rename",
         "copy",
         "xmove",
@@ -979,18 +1318,15 @@ fn prop_inv24_plan_is_deterministic() {
     for case in 0..cases() {
         let mut rng = Rng::new(case ^ 0xD5);
         let c = random_case(&mut rng);
-        let p = plan(&c.groups, &c.decisions, &c.settings, &c.existing).unwrap();
-        assert_eq!(
-            plan(&c.groups, &c.decisions, &c.settings, &c.existing).unwrap(),
-            p
-        );
+        let p = plan(&c.groups, &c.decisions, &c.settings, &c.existing);
+        assert_eq!(plan(&c.groups, &c.decisions, &c.settings, &c.existing), p);
         let mut shuffled = c.groups.clone();
         rng.shuffle(&mut shuffled);
         for g in &mut shuffled {
             rng.shuffle(&mut g.members);
         }
         assert_eq!(
-            plan(&shuffled, &c.decisions, &c.settings, &c.existing).unwrap(),
+            plan(&shuffled, &c.decisions, &c.settings, &c.existing),
             p,
             "case {case}"
         );
@@ -1001,10 +1337,5 @@ fn prop_inv24_plan_is_deterministic() {
 #[test]
 #[ignore = "long run (10,000 cases); CI runs the default count"]
 fn prop_plan_10k() {
-    for case in 0..10_000 {
-        let mut rng = Rng::new(case);
-        let c = random_case(&mut rng);
-        let p = plan(&c.groups, &c.decisions, &c.settings, &c.existing).unwrap();
-        check_invariants(&c, &p, case);
-    }
+    run_invariants(10_000);
 }

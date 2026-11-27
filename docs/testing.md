@@ -45,9 +45,9 @@ flowchart TB
 
 ### 3.1 Plan building (`plan()`)
 
-In `crates/core/src/plan/tests.rs` (M2 slice B), with a seeded generator rather than proptest; the properties below are checked on every case (`check_invariants`), and the test asserts that every situation came up at least once in the run (suffixes, suffix above 1, camera-protected copies, missing members, each held reason, each kind), so a generator change cannot make it vacuous. The expected members of each group are worked out again in the test from §7.1, separately from `plan()`. Plans hold no removal: removals belong to apply (§9.7 of file-engine), so the property "every removal targets a verified source or a partial" is checked with the executor in M2, not here. Plans are compared field by field rather than with `insta` snapshots.
+In `crates/core/src/plan/tests.rs` (M2 slice B), with a seeded generator rather than proptest; the properties below are checked on every case (`check_invariants`), and the test asserts that every situation came up at least once in the run (suffixes, suffix above 1, camera-protected copies, missing members, each held reason, each kind, a decision cleared again, a plan refused for `NoDestination` and a rejects-only plan with no destination), so a generator change cannot make it vacuous. Each held reason is justified on its own from the expected members: a blocked folder is worked out again, and `NoFreeSuffix` is accepted only when every suffix `0..=9999` clashes. The expected members of each group are worked out again in the test from §7.1, separately from `plan()`. Plans hold no removal: removals belong to apply (§9.7 of file-engine), so the property "every removal targets a verified source or a partial" is checked with the executor in M2, not here. Plans are compared field by field rather than with `insta` snapshots.
 
-Generators: a random folder tree (depth 0–4, Unicode and mixed-case names), random groups (JPEG only, NEF only, pair, pair with each sidecar kind, `NKSC_PARAM/*.nksc`), random decisions (undecided, kept, rejected), random session options (keep = move or copy, RAW follows on or off, destination inside or outside the source), and pre-existing files at the destination to force collisions.
+Generators: a random folder tree (depth 0–4, Unicode and mixed-case names), random groups (JPEG only, NEF only, pair, pair with each sidecar kind, `NKSC_PARAM/*.nksc`), random group ids (unrelated to the plan order), random decisions (undecided, kept, rejected, decided then cleared), random session options (keep = move or copy, no destination chosen, RAW follows on or off, same or other volume), pre-existing files at the destination to force collisions (now and then every suffix of a member), a stem at the 255-unit name limit, and now and then a member whose name lost its stem (inconsistent session data, `NameMismatch`). Destination inside the source is a preflight check (P6), not a `plan()` input.
 
 Properties, each linked to its invariant in [design/file-engine.md](design/file-engine.md):
 
@@ -64,8 +64,11 @@ Properties, each linked to its invariant in [design/file-engine.md](design/file-
 | Every removal in a plan targets either a verified cross-volume source or a Culla `*.culla-partial` file. | never delete |
 | Subfolder structure is mirrored (relative path preserved). | path containment |
 | `plan()` is deterministic: same input, same plan, whatever the order of groups and members. | determinism |
-| The suffix is the smallest free one: every smaller suffix clashes with an existing entry or an earlier operation. | group consistency |
-| Held groups (ambiguous, applied, locked, nothing present, no free suffix, target folder blocked) get no operations and are listed; missing members that would have moved are listed. | undecided untouched |
+| The suffix is the smallest free one: every smaller suffix clashes with an existing entry, an earlier operation or a folder the plan's targets go into. | group consistency |
+| No target takes the name of a folder the plan's targets go into, sits under a file, or has a name Windows refuses (length included). | no overwrite |
+| Groups in plan order (rejects first, then folder key, then stem key), each group's operations contiguous, members by rank, then folder and name (§9.5 of file-engine). | determinism |
+| Held groups (ambiguous, applied, locked, nothing present, target folder blocked, name mismatch, target name invalid, no free suffix) get no operations and are listed, each reason justified on its own; missing members that would have moved are listed. | undecided untouched |
+| `NoDestination` exactly when a kept group would get operations and no destination is chosen. | undecided untouched |
 
 If `proptest` is adopted for `plan()`, its shrunk failures are saved in `proptest-regressions/` and committed. The seeded plain loops used now have no shrink files: a failure names its case number, which fixes its seed, so it can be rerun and pinned as a named test.
 
