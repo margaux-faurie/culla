@@ -29,3 +29,10 @@ path = "fuzz_targets/exif_fields.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "jpeg_header"
+path = "fuzz_targets/jpeg_header.rs"
+test = false
+doc = false
+bench = false

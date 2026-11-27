@@ -11,6 +11,13 @@ publish.workspace = true
 culla-core = { path = "../core" }
 # EXIF for JPEG and NEF (ADR 0011). BSD-2-Clause. Pure Rust, reads from a buffer, no mmap.
 kamadak-exif = "0.6.1"
+# Preview decode and encode (ADR 0012): DCT-scaled decode, JPEG encode. MIT OR Unlicense; it
+# builds the bundled libjpeg-turbo (IJG, BSD-3-Clause, Zlib) with CMake through turbojpeg-sys.
+# No `image` feature. `cmake` builds from source; libjpeg-turbo uses NASM for SIMD when it is
+# on PATH and falls back to plain C without it (docs/adr/0012, implementation notes).
+turbojpeg = { version = "1", default-features = false, features = ["cmake"] }
+# Preview resize (ADR 0012). MIT OR Apache-2.0. Pure Rust, SIMD picked at run time.
+fast_image_resize = { version = "5", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 # Read-only Win32 lookups in `winfs` (volume identity, time zone). MIT OR Apache-2.0. Already in

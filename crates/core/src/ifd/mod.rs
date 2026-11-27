@@ -369,6 +369,39 @@ pub fn find_preview<R: ReadAt + ?Sized>(
     })
 }
 
+/// What a JPEG that passed [`check_jpeg`] declares.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct JpegFrame {
+    /// Length up to and including EOI, trailing zero padding removed.
+    pub length: u64,
+    /// Width and height from the frame header (SOFn).
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Checks a whole JPEG in memory with the same rules as an embedded candidate: at most
+/// [`Limits::max_preview_bytes`], SOI at the start, EOI at the end (zero padding trimmed),
+/// an 8-bit baseline, extended or progressive frame header, a non-zero size and at most
+/// [`Limits::max_pixels`]. The preview decoder calls it before any decoder sees the bytes
+/// (threat model T5). Only the frame header and the last bytes are read.
+pub fn check_jpeg(jpeg: &[u8], limits: &Limits) -> Result<JpegFrame, Reject> {
+    let range = ByteRange {
+        offset: 0,
+        length: jpeg.len() as u64,
+    };
+    let mut src = jpeg;
+    // Reads stay inside the slice, so a read error cannot happen; map it defensively.
+    match jpeg::probe(&mut src, range, limits) {
+        Ok(Ok(f)) => Ok(JpegFrame {
+            length: f.length,
+            width: f.width,
+            height: f.height,
+        }),
+        Ok(Err(reject)) => Err(reject),
+        Err(_) => Err(Reject::OutOfBounds),
+    }
+}
+
 /// `II*\0` or `MM\0*` and the first IFD offset. BigTIFF (43) is not a NEF and is refused.
 fn parse_header(h: &[u8; 8]) -> Option<(ByteOrder, u32)> {
     let order = match (h[0], h[1]) {

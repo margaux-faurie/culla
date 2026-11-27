@@ -238,4 +238,6 @@ Screen designs (start, swipe, already decided, review, apply) live on the design
 - Minimum WebView2 version and installer mode (the bootstrapper downloads WebView2 at install time if missing).
 - Which photos to publish in the demo.
 - The author's real sample files (Nikon Z series, see §2): 9 Z6III NEFs (8 pairs, 1 lone) used locally since 27 Nov 2026, outside the repo; the stripped Git LFS set is pending.
+- Preview size: M1 fits each preview inside 2880×1800 in the photo's own orientation, so a 3:2 photo is 2700×1800 (1800×2700 portrait), filling the screen height; US-07's "long edge just above the screen size" could instead mean a 2880 long edge (2880×1920, about 14% more pixels, cropped or scaled down by the webview). To confirm (ADR 0012 implementation notes, raised 27 Nov 2026).
+- Colour profiles in previews: the re-encoded preview carries no ICC profile, so an AdobeRGB or Display P3 JPEG would show with the wrong colours (architecture risk table, NFR-COMP-07). Copy the profile into the preview, convert to sRGB, or accept for v1 (Nikon Z JPEGs set to sRGB are unaffected); to decide (raised 27 Nov 2026).
 - Preview cache when the source drive is encrypted and the system drive is not: keep previews in memory only (default) or warn before caching to disk; to decide (raised 27 Nov 2026).
