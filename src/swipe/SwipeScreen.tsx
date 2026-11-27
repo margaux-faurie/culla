@@ -422,8 +422,8 @@ function Actions({ photo, decision, onCommand }: ActionsProps) {
       )}
       {staying !== null && (
         <p className="action-note">
-          RAW and edit files do not follow: {staying.name} {staying.extensions}{" "}
-          {stayVerb(staying)} in {photo.route.folder}.
+          RAW and edit files do not follow: {staying.name} {staying.extensions} {stayVerb(staying)}{" "}
+          in {photo.route.folder}.
         </p>
       )}
     </div>
