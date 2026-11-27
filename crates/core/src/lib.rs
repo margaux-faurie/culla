@@ -10,6 +10,7 @@ pub mod ifd;
 pub mod names;
 pub mod plan;
 pub mod prefetch;
+pub mod preflight;
 pub mod preview;
 pub mod volume;
 
