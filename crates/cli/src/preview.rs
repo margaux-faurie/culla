@@ -378,6 +378,9 @@ mod tests {
         let (release, rx) = std::sync::mpsc::channel::<()>();
         let source = Blocked(std::sync::Mutex::new(rx));
         let pipeline = Pipeline::start(source, NoDecode, vec![0], Config::default()).unwrap();
+        // Rebound after `pipeline` so it drops first on unwind too: a failed assert then ends
+        // the read and the join instead of hanging.
+        let release = release;
         let limit = Duration::from_millis(20);
         assert_eq!(
             wait_for(&pipeline, 0, 0, limit),

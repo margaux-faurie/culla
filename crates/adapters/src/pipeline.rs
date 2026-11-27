@@ -666,15 +666,23 @@ const RESTART_MAX: Duration = Duration::from_secs(1);
 /// from [`RESTART_MIN`] to [`RESTART_MAX`], so a loop that unwinds before it takes a job does
 /// not spin; the pause waits on the shared condvar and ends at once on shutdown.
 fn supervise<S, D>(sh: &Shared<S, D>, body: impl Fn(&Shared<S, D>)) {
-    let mut pause = RESTART_MIN;
+    supervise_with(sh, RESTART_MIN, RESTART_MAX, body);
+}
+
+/// [`supervise`] with the backoff bounds as arguments, so tests can pick them.
+fn supervise_with<S, D>(
+    sh: &Shared<S, D>,
+    min: Duration,
+    max: Duration,
+    body: impl Fn(&Shared<S, D>),
+) {
+    let mut pause = Duration::ZERO;
     loop {
         let started = Instant::now();
         if panic::catch_unwind(AssertUnwindSafe(|| body(sh))).is_ok() {
             return;
         }
-        if started.elapsed() >= RESTART_MAX {
-            pause = RESTART_MIN;
-        }
+        pause = next_pause(pause, started.elapsed(), min, max);
         let deadline = Instant::now() + pause;
         let mut st = sh.lock();
         loop {
@@ -691,8 +699,17 @@ fn supervise<S, D>(sh: &Shared<S, D>, body: impl Fn(&Shared<S, D>)) {
                 .unwrap_or_else(PoisonError::into_inner)
                 .0;
         }
-        drop(st);
-        pause = (pause * 2).min(RESTART_MAX);
+    }
+}
+
+/// The pause before the next restart, given the previous pause (zero before the first) and
+/// how long the loop ran before it unwound: `min` after a run of at least `max`, otherwise
+/// twice the previous pause, kept within `min..=max`.
+fn next_pause(pause: Duration, ran_for: Duration, min: Duration, max: Duration) -> Duration {
+    if ran_for >= max {
+        min
+    } else {
+        pause.saturating_mul(2).max(min).min(max)
     }
 }
 
@@ -1240,8 +1257,30 @@ mod tests {
         assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
+    /// Polls `count` until it reaches `at_least`, for at most 10 s.
+    fn wait_for_count(count: impl Fn() -> usize, at_least: usize) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while count() < at_least {
+            assert!(Instant::now() < deadline, "count stayed below {at_least}");
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
     #[test]
-    fn a_loop_that_always_unwinds_backs_off_and_stops_promptly_on_shutdown() {
+    fn the_restart_pause_doubles_caps_and_resets_after_a_long_run() {
+        let ms = Duration::from_millis;
+        let (min, max) = (ms(10), ms(1000));
+        assert_eq!(next_pause(Duration::ZERO, ms(0), min, max), min);
+        assert_eq!(next_pause(ms(10), ms(0), min, max), ms(20));
+        assert_eq!(next_pause(ms(20), ms(999), min, max), ms(40));
+        assert_eq!(next_pause(ms(640), ms(0), min, max), max);
+        assert_eq!(next_pause(max, ms(0), min, max), max);
+        assert_eq!(next_pause(max, max, min, max), min);
+        assert_eq!(next_pause(ms(80), ms(5000), min, max), min);
+    }
+
+    #[test]
+    fn a_loop_that_always_unwinds_does_not_spin() {
         let sh = shared();
         let runs = std::sync::atomic::AtomicUsize::new(0);
         let count = || runs.load(std::sync::atomic::Ordering::SeqCst);
@@ -1252,20 +1291,42 @@ mod tests {
                     panic!("before any job is taken");
                 });
             });
+            wait_for_count(count, 1);
+            let window = Instant::now();
             thread::sleep(Duration::from_millis(100));
             let early = count();
-            assert!(early >= 1, "the loop ran");
-            assert!(early < 20, "{early} restarts in 100 ms: no backoff");
-            // By now the pause has grown to hundreds of milliseconds; shutdown must end it.
-            thread::sleep(Duration::from_millis(250));
+            let elapsed = window.elapsed();
+            assert!(early < 20, "{early} restarts in {elapsed:?}: no backoff");
+            sh.lock().shutdown = true;
+            sh.changed.notify_all();
+            assert!(t.join().is_ok(), "the thread returns on shutdown");
+        });
+    }
+
+    #[test]
+    fn shutdown_ends_a_restart_pause_at_once() {
+        let sh = shared();
+        let runs = std::sync::atomic::AtomicUsize::new(0);
+        let count = || runs.load(std::sync::atomic::Ordering::SeqCst);
+        let long = Duration::from_secs(60);
+        thread::scope(|s| {
+            let t = s.spawn(|| {
+                supervise_with(&sh, long, long, |_| {
+                    runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    panic!("before any job is taken");
+                });
+            });
+            wait_for_count(count, 1);
+            // Give the thread time to enter its 60 s pause.
+            thread::sleep(Duration::from_millis(50));
             let asked = Instant::now();
             sh.lock().shutdown = true;
             sh.changed.notify_all();
             assert!(t.join().is_ok(), "the thread returns on shutdown");
             let took = asked.elapsed();
-            assert!(took < RESTART_MAX / 2, "shutdown took {took:?}");
+            assert!(took < Duration::from_secs(10), "shutdown took {took:?}");
         });
-        assert!(count() < 20);
+        assert_eq!(count(), 1);
     }
 
     #[test]
