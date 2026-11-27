@@ -2,6 +2,8 @@
 
 Status: 27 Nov 2026. The web demo is the `src/` build in demo mode (ADR 0014), served as static assets by a Cloudflare Worker named `culla` at `culla.margauxfaurie.com`, behind Cloudflare Access until the portfolio opens (SPEC §2). Workers Builds builds and deploys it from this repository.
 
+Margaux decided (27 Nov 2026): the Worker `culla` deployed by Workers Builds, the custom domain `culla.margauxfaurie.com`, Cloudflare Access on, no preview URLs needed; she sets the build command in the dashboard. Proposed by the agent and still to confirm (SPEC §10): workers.dev off, no builds for non-production branches, and treating `wrangler.jsonc` and `public-demo/_headers` as CI for review.
+
 ## What is in the repository
 
 | File | Role |
@@ -16,6 +18,8 @@ Wrangler is not a dependency of the repository: Workers Builds runs it with `npx
 
 Set these in the Cloudflare dashboard, Workers & Pages, Worker `culla`, Settings.
 
+Order: Margaux sets the build command and the build variables before this PR is merged. Merged first, the push to `main` starts a build with the dashboard defaults, which fails once; it deploys nothing, and the next push after the settings are in builds normally.
+
 | Setting | Value |
 |---|---|
 | Git repository | `margaux-faurie/culla` |
@@ -23,9 +27,9 @@ Set these in the Cloudflare dashboard, Workers & Pages, Worker `culla`, Settings
 | Production branch | `main` |
 | Build command | `pnpm install --frozen-lockfile && pnpm build:demo` |
 | Deploy command | `npx wrangler deploy` |
-| Builds for non-production branches (preview builds) | Off |
+| Builds for non-production branches (preview builds) | Off (proposed, to confirm) |
 | Build variable `SKIP_DEPENDENCY_INSTALL` | `1`, so the frozen install in the build command is the only install |
-| Build variable `NODE_VERSION` | `24`, the version CI uses |
+| Build variable `NODE_VERSION` | `24`, the major CI uses. Workers Builds already defaults to Node 24.x; the variable pins the major so a change of default cannot move the build |
 | API token | The default build token works. Narrower, optional: a token for this account with Workers Scripts edit, adding only what a failed deploy log asks for |
 
 Domains & Routes (`wrangler.jsonc` declares no routes, so `wrangler deploy` leaves the custom domain set here as it is):
@@ -33,25 +37,26 @@ Domains & Routes (`wrangler.jsonc` declares no routes, so `wrangler deploy` leav
 | Setting | Value |
 |---|---|
 | Custom domain | `culla.margauxfaurie.com` |
-| workers.dev | Disabled (also set by `workers_dev: false`) |
+| workers.dev | Disabled (also set by `workers_dev: false`; proposed, to confirm) |
 | Preview URLs | Disabled (also set by `preview_urls: false`) |
 
 For the zone `margauxfaurie.com`, leave off for this hostname every feature that injects a script into HTML pages: Rocket Loader, email address obfuscation, Web Analytics automatic setup, Zaraz, Bot Fight Mode JavaScript detections. The CSP blocks them, so they would only add console errors.
 
 ## Cloudflare Access
 
-An Access application of type self-hosted covers `culla.margauxfaurie.com` (all paths), with the same policy as the rest of the site, until the portfolio opens. Opening the demo to the public is a change to this application, made by Margaux in the dashboard; the repository stays public either way. Workers.dev and preview URLs stay off, because those hostnames are outside the Access application.
+An Access application of type self-hosted covers `culla.margauxfaurie.com` (all paths), with the same policy as the rest of the site, until the portfolio opens. Opening the demo to the public is a change to this application, made by Margaux in the dashboard; the repository stays public either way. Preview URLs stay off, and workers.dev is proposed off (to confirm), because those hostnames are outside the Access application.
 
 ## Every push to main deploys
 
-Workers Builds deploys the demo on every push to `main`, so a merged PR is live on the demo a few minutes later. Changes to `wrangler.jsonc`, `public-demo/_headers` or the Workers Builds settings are deployment changes: they wait for Margaux's OK in chat before merge, like CI changes (SPEC §2, review and merge).
+Workers Builds deploys the demo on every push to `main`, so a merged PR is live on the demo a few minutes later. Proposed by the agent, to confirm (SPEC §10): changes to `wrangler.jsonc`, `public-demo/_headers` or the Workers Builds settings are deployment changes and wait for Margaux's OK in chat before merge, like CI changes. Nothing enforces this yet: neither `.github/CODEOWNERS` nor the protected-path hook lists these files. Adding `/wrangler.jsonc` and `/public-demo/` to both is a protected-path change, so Margaux makes it.
 
 ## Checking a deploy
 
 1. The build log in the dashboard ends with the deployed version and no error.
 2. Signed in through Access, `curl -sI https://culla.margauxfaurie.com/` (with the `CF_Authorization` cookie) shows the headers from `_headers`, and a file under `/assets/` shows `Cache-Control: public, max-age=31536000, immutable`.
-3. Without a session, the same request is redirected to the Access sign-in page.
-4. The browser console on the demo shows no CSP violation.
+3. `curl -sI https://culla.margauxfaurie.com/assets/nope.js`, through Access (a browser session or a service token), answers 404 without `Cache-Control: ... immutable`. If a 404 carries the immutable header, a missing asset would be cached for a year: drop `immutable` from `/assets/*` in `_headers` and shorten its `max-age`.
+4. Without a session, the same requests are redirected to the Access sign-in page.
+5. The browser console on the demo shows no CSP violation. This manual check is the only test of the CSP itself: `pnpm e2e` runs on `vite preview`, which ignores `_headers`, so the e2e tests run without the CSP or the other headers; `tests/demo-site.test.ts` only checks that the build stays inside the CSP and that `_headers` is well formed.
 
 ## Known limits
 

@@ -24,7 +24,7 @@ Work now:
 - `crates/cli` (package `culla-cli`, binary `culla`) — headless scan (in; exit codes, JSON fields and off-Windows behaviour provisional, SPEC §10), preview (in; decodes, times and reports), plan, apply, resume. Wiring only; writes nothing but stdout and stderr.
 - `crates/bench` (package `culla-bench`) — benchmark harness. See ADR 0020.
 - `src-tauri` (package `culla-app`) — wiring only: commands, `culla://` image scheme, capabilities. New command: `build.rs` `AppManifest::commands` + `allow-<command>` in `capabilities/main.json`.
-- `src` — React UI, one Vite app, `--mode desktop` or `--mode demo`; `vite.config.ts` aliases `#backend-impl` to `backend/tauri.ts` or `backend/demo.ts` (ADR 0014). The demo deploys to Cloudflare on every push to main (`wrangler.jsonc`, CSP and headers in `public-demo/_headers`, copied in demo mode only; docs/deploy-demo.md): those files count as CI for review.
+- `src` — React UI, one Vite app, `--mode desktop` or `--mode demo`; `vite.config.ts` aliases `#backend-impl` to `backend/tauri.ts` or `backend/demo.ts` (ADR 0014). The demo deploys to Cloudflare on every push to main (`wrangler.jsonc`, CSP and headers in `public-demo/_headers`, copied in demo mode only; docs/deploy-demo.md). Proposed, to confirm (SPEC §10): those files count as CI and wait for Margaux's OK; not enforced by CODEOWNERS or the hook.
 - `xtask` — dev tasks, std only, under the workspace file rules: `fixtures` never overwrites, so delete `testdata/synthetic/` by hand to regenerate. `fuzz` — cargo-fuzz, own workspace. `testdata` — synthetic and golden fixtures.
 - `docs` — specs, ADRs, research.
 
