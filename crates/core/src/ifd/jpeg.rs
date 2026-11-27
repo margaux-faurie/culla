@@ -96,6 +96,9 @@ pub(super) fn probe<R: ReadAt + ?Sized>(
             if width == 0 || height == 0 {
                 return Ok(Err(Reject::ZeroSize));
             }
+            if u64::from(width) * u64::from(height) > limits.max_pixels {
+                return Ok(Err(Reject::TooManyPixels));
+            }
             return Ok(Ok(Frame {
                 length,
                 width,

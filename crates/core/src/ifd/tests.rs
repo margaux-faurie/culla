@@ -708,6 +708,21 @@ fn jpeg_checks() {
         probe(&jpeg_with(0xC0, 8, 0, 8), &l).0,
         inv(Reject::ZeroSize)
     );
+    // A tiny JPEG claiming a 4.3 GP frame never becomes a candidate (T5).
+    assert_eq!(
+        probe(&jpeg_with(0xC0, 8, u16::MAX, u16::MAX), &l).0,
+        inv(Reject::TooManyPixels)
+    );
+    let few = Limits {
+        max_pixels: 63,
+        ..l
+    };
+    assert_eq!(probe(&jpeg(8, 8), &few).0, inv(Reject::TooManyPixels));
+    let exact = Limits {
+        max_pixels: 64,
+        ..l
+    };
+    assert_eq!(probe(&jpeg(8, 8), &exact).0, JpegCheck::Valid);
 
     // SOS before any frame header.
     assert_eq!(

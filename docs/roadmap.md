@@ -63,7 +63,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
   - EXIF pass (`kamadak-exif`): DateTimeOriginal, orientation, lens fallback; capture-time sort.
   - Own TIFF/IFD walker for NEF previews; fuzz targets running nightly.
   - Preview pipeline: turbojpeg scaled decode, resize, orientation, encode; reader threads separate from decode workers; prefetch; in-memory LRU; disk cache. No mmap on removable media.
-  - Parsers, decode and scan I/O in `culla-adapters`; grouping and ordering logic in `culla-core`.
+  - Decode and scan I/O in `culla-adapters`; grouping, ordering and the IFD walker's parsing logic in `culla-core`, fed by positioned reads from `culla-adapters` (ADR 0025, proposed).
   - Headless CLI `culla scan`, `culla preview` (`crates/cli`) and `culla-bench` (`crates/bench`), per [ADR 0020](adr/0020-headless-cli-and-bench-crates.md).
   - Scan and preview benchmark campaign (B-01 to B-11, B-15, B-16) per [benchmarks.md](benchmarks.md).
 - **Exit criteria:**

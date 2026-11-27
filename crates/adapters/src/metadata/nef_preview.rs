@@ -33,6 +33,10 @@ pub struct FileSource {
 
 impl FileSource {
     /// Opens `path` read-only and reads its head.
+    ///
+    /// A plain open: it follows reparse points and hydrates cloud placeholders. Pass only
+    /// paths from the current scan, which refuses both (threat model T2, T2b); the open
+    /// itself gets those checks when the reader is wired to the CLI or `culla://`.
     pub fn open(path: &Path) -> io::Result<Self> {
         let file = File::open(path)?;
         let len = file.metadata()?.len();
@@ -210,7 +214,9 @@ pub fn find_preview(path: &Path) -> Result<Candidate, PreviewError> {
 }
 
 /// Reads `range` of `path` (a range from [`find_preview`]) into memory, refusing more than
-/// `cap` bytes, and checks it still starts with SOI and ends with EOI.
+/// `cap` bytes, and checks it still starts with SOI and ends with EOI. The same file may
+/// hold a different JPEG by then, so the decoder re-reads the frame header of these bytes.
+/// Same path rule as [`FileSource::open`].
 pub fn read_preview_bytes(
     path: &Path,
     range: ByteRange,

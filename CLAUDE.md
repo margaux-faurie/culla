@@ -3,7 +3,7 @@
 Culla is a Windows desktop app (Tauri 2 + Rust + React/TS) that culls Nikon JPEG+NEF photos with a swipe UI, then applies keep/reject as safe, journaled file operations. Start at `docs/SPEC.md`: it records the author's decisions and maps each topic to its owning doc (PRD, nfr, architecture, ADRs, file-engine design, threat model, testing, roadmap). `docs/research/` is historical input: where it disagrees with the spec or an ADR, the spec and ADRs win.
 
 ## Status
-M0 (repo and tooling) is landing; the app is an empty shell. Design docs drafted (24 Nov); author decisions recorded 27 Nov; what is still open is in SPEC §10 and file-engine §13. Next is M1 (core engine headless).
+M0 (repo and tooling) is done; M1 (core engine headless) is in progress, starting with the NEF preview reader. Author decisions recorded 27 Nov; what is still open is in SPEC §10 and file-engine §13.
 
 ## Commands
 Work now (M0):
@@ -19,8 +19,8 @@ Work now (M0):
 - `cargo llvm-cov -p culla-core -p culla-adapters --html` · `cargo +nightly fuzz run tiff_ifd_walk -- -max_total_time=60` (setup: testing.md §7, §10)
 
 ## Layout
-- `crates/core` (package `culla-core`) — domain, ports, pure logic. No I/O, no Tauri, `#![forbid(unsafe_code)]`.
-- `crates/adapters` (package `culla-adapters`) — Windows file ops, EXIF/NEF parsing, decode, SQLite. No Tauri.
+- `crates/core` (package `culla-core`) — domain, ports, pure logic (incl. the TIFF/IFD walker behind a `ReadAt` port). No I/O, no Tauri, `#![forbid(unsafe_code)]`.
+- `crates/adapters` (package `culla-adapters`) — Windows file ops, file reads for NEF previews, EXIF, decode, SQLite. No Tauri.
 - `crates/cli` (package `culla-cli`, binary `culla`) — headless scan, preview, plan, apply, resume. Wiring only.
 - `crates/bench` (package `culla-bench`) — benchmark harness. See ADR 0020.
 - `src-tauri` (package `culla-app`) — wiring only: commands, `culla://` image scheme, capabilities. New command: `build.rs` `AppManifest::commands` + `allow-<command>` in `capabilities/main.json`.

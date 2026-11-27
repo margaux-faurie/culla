@@ -9,7 +9,7 @@ Refines [ADR 0011](0011-own-ifd-walker-for-nef-previews-and-kamadak-exif.md).
 
 ## Context and problem statement
 
-ADR 0011 says the IFD walker "collects every `JPEGInterchangeFormat`/`Length` pair and picks the largest", without saying largest by what, what counts as valid, or whether one IFD should be preferred. A Z6III NEF embeds four JPEGs: 160x120 (IFD0), 6048x4032 (SubIFD0), 1620x1080 (SubIFD2) and 640x424 (MakerNote PreviewIFD) ([z6iii-nef-layout.md](../research/z6iii-nef-layout.md)). Its raw data is HE/HE\* and cannot be decoded, so the embedded JPEG is the only image for a lone NEF (US-03). Which candidate is the preview, and how is it checked?
+ADR 0011 says the IFD walker "collects every `JPEGInterchangeFormat`/`Length` pair and picks the largest", without saying largest by what, what counts as valid, or whether one IFD should be preferred. A Z6III NEF embeds four JPEGs: 160x120 (IFD0), 6048x4032 (SubIFD0), 1620x1080 (SubIFD2) and 640x424 (MakerNote PreviewIFD) ([z6iii-nef-layout.md](../research/z6iii-nef-layout.md)). Its raw data appears to be HE/HE\* (fixed-size strips; the tags cannot tell) and Culla does not decode raw data, so the embedded JPEG is the only image for a lone NEF (US-03). Which candidate is the preview, and how is it checked?
 
 ## Considered options
 
@@ -26,6 +26,8 @@ Chosen option: "Largest valid candidate by pixel count", because it picks the 60
 * Sources walked: the IFD0 chain, SubIFDs (0x014A), and the Nikon type 3 MakerNote PreviewIFD; both 0x0201/0x0202 pairs and single JPEG strips (Compression 6/7).
 * Paired groups are unchanged: their primary is the camera JPEG (SPEC §3.1). Whether the NEF's embedded JPEG would be a faster source for pairs (architecture risk table) is left to the M1 benchmark; on the Z6III it has the same pixel size as the camera JPEG.
 * The smaller candidates (640x424, 1620x1080) are not used for screen previews; they may serve thumbnails later.
+* A candidate declaring more than 100 MP in its frame header is rejected, so a small JPEG claiming a huge frame cannot win and reach the decoder (threat model T5). The decoder still re-checks the frame header of the bytes it gets.
+* Placement: the walker is pure parsing logic, so it lives in `culla-core` (`culla_core::ifd`) behind a `ReadAt` port (length plus positioned reads), and `culla-adapters` feeds it from the file. This keeps it I/O-free and fuzzable on bytes, in line with ADR 0002, and departs from the roadmap's first sketch ("parsers in `culla-adapters`"). A port is used instead of a byte slice so a walk reads ~0.8 MB of a 20 MB NEF without loading it whole or using mmap (ADR 0012).
 
 ### Consequences
 

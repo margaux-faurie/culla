@@ -28,8 +28,8 @@ flowchart TB
 
 | Layer | Tool | Where it runs | What it covers | Trigger |
 |---|---|---|---|---|
-| Unit (Rust, core) | `cargo test -p culla-core`, `insta` for plan snapshots, in-memory `FileSystem` port | anywhere | grouping, sidecar matching, plan, preflight rules, journal state machine, resume logic, session reconcile, decision log | every PR |
-| Unit (Rust, adapters) | `cargo test -p culla-adapters`, `tempfile` | Linux + Windows | EXIF fields, IFD walker, preview pipeline, SQLite store, scan over a real tree | every PR |
+| Unit (Rust, core) | `cargo test -p culla-core`, `insta` for plan snapshots, in-memory `FileSystem` port | anywhere | IFD walker (in-memory bytes), grouping, sidecar matching, plan, preflight rules, journal state machine, resume logic, session reconcile, decision log | every PR |
+| Unit (Rust, adapters) | `cargo test -p culla-adapters`, `tempfile` | Linux + Windows | EXIF fields, NEF preview reads, preview pipeline, SQLite store, scan over a real tree | every PR |
 | Property | `proptest` | Linux | plan building, decision log fold (section 3) | every PR (default case count), nightly (high case count) |
 | Golden | JSONL fixtures in `testdata/event-log/` | Linux (Rust and Node) | Rust and TS reducers give the same state for the same log | every PR |
 | Unit (TS) | Vitest, against `DemoBackend` | Linux | reducer, keyboard map, key-repeat filter, swipe threshold logic, filters, end-of-list | every PR |

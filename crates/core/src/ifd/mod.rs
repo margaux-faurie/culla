@@ -96,6 +96,10 @@ pub struct Limits {
     pub max_preview_bytes: u64,
     /// JPEG marker segments read before the frame header (SOFn) must appear.
     pub max_jpeg_segments: usize,
+    /// Largest declared pixel count (width x height from SOFn) accepted, so a small
+    /// JPEG claiming a huge frame cannot win and reach the decoder (threat model T5).
+    /// The Z6III's full-size preview is 24.4 MP; the largest Nikon Z bodies are ~46 MP.
+    pub max_pixels: u64,
 }
 
 impl Limits {
@@ -109,6 +113,7 @@ impl Limits {
         max_issues: 32,
         max_preview_bytes: 64 * 1024 * 1024,
         max_jpeg_segments: 64,
+        max_pixels: 100_000_000,
     };
 }
 
@@ -182,6 +187,8 @@ pub enum Reject {
     UnsupportedFrame { marker: u8, precision: u8 },
     /// The frame header declares zero width or height.
     ZeroSize,
+    /// The frame header declares more than [`Limits::max_pixels`] pixels.
+    TooManyPixels,
 }
 
 /// Result of checking one candidate.
@@ -281,6 +288,10 @@ impl Walk {
 }
 
 /// Why a walk or a preview search failed.
+///
+/// Hand-written for now: the convention is `thiserror` in core, but adding it needs the
+/// core dependency allowlist (`scripts/ci/check-core-deps.sh`, a protected path). Switch
+/// when core takes its first dependency.
 #[derive(Debug)]
 pub enum WalkError {
     /// The source does not start with a classic TIFF header (`II*\0` or `MM\0*`).

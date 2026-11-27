@@ -2,7 +2,7 @@
 //!
 //! Runs the core walker on arbitrary bytes: IFD0, SubIFDs, MakerNote PreviewIFD, bad offsets
 //! and counts, IFD loops. Pass bar: no panic, no timeout, bounded memory; every valid
-//! candidate lies inside the input. Seed corpus: `testdata/synthetic/` (the NEFs).
+//! candidate lies inside the input and within the pixel cap. Seed corpus: `testdata/synthetic/` (the NEFs).
 #![no_main]
 
 use culla_core::ifd::{self, Limits};
@@ -20,6 +20,7 @@ fuzz_target!(|data: &[u8]| {
         assert!(end <= data.len() as u64);
         assert!(c.range.length <= limits.max_preview_bytes);
         assert!(c.pixels() > 0);
+        assert!(c.pixels() <= limits.max_pixels);
     }
     if let Some(best) = walk.best() {
         let start = best.range.offset as usize;
