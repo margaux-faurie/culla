@@ -143,7 +143,8 @@ Dataset: <D-x> (<n files>, <n pairs>, <MP>)
 
 | ID | Metric | Cold median | Warm median | p95 | p99 | Target (NFR) | Result |
 |---|---|---|---|---|---|---|---|
-| B-01 | First photo | | | — | — | ≤ 1.5 s (est.) | pass / fail |
+| B-01 | Scan, first group (`first_group_ms`) | | | — | — | about 1 s | |
+| NFR-PERF-01 | First photo (`first_photo_ms`) | | | — | — | ≤ 1.5 s (est.) | pass / fail |
 | B-02 + B-03 | Scan + EXIF, 3,000 files | | | — | — | ≤ 15 s (est.) | |
 | B-09 | Next-photo latency, steady | | | | | p95 ≤ 50 ms (est.) | |
 | B-09 | Next-photo latency, fast | | | | | p95 ≤ 50 ms (est.) | |
@@ -199,12 +200,19 @@ $out  = "$HOME\culla-bench-results\2026-12-01-H2-sd"  # anywhere off the card; o
 New-Item -ItemType Directory -Path $out | Out-Null
 
 # A failed run's file is renamed to .failed (never deleted), so a rerun can write the run again
+# A run counts as failed when the bench exits non-zero, does not start (the exit code set
+# beforehand stays) or writes nothing
 function Save-Run([string]$file, [string[]]$benchArgs, [string]$label) {
+  $global:LASTEXITCODE = 1
   & $bench @benchArgs --json --label "$label $commit" | Out-File -Encoding utf8 -NoClobber $file
-  if ($LASTEXITCODE -ne 0) {
-    $kept = "$file.$(Get-Date -Format yyyyMMdd-HHmmss).failed"
-    Rename-Item -LiteralPath $file -NewName (Split-Path $kept -Leaf)
-    Write-Warning "exit code $LASTEXITCODE, kept as $kept; run the same line again to redo it"
+  $code = $LASTEXITCODE
+  $empty = -not (Test-Path -LiteralPath $file) -or (Get-Item -LiteralPath $file).Length -eq 0
+  if ($code -ne 0 -or $empty) {
+    if (Test-Path -LiteralPath $file) {
+      $kept = "$file.$(Get-Date -Format yyyyMMdd-HHmmss).failed"
+      Rename-Item -LiteralPath $file -NewName (Split-Path $kept -Leaf)
+    } else { $kept = "(no file written)" }
+    Write-Warning "exit code $code, output empty: $empty, kept as $kept; run the same line again to redo it"
   }
 }
 

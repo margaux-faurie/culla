@@ -267,7 +267,17 @@ pub(crate) fn run(a: &SwipeArgs) -> Result<Run, Failure> {
             ));
         }
         if !stopped_early && ramp.blocks().last().is_none_or(|b| b.passed) {
-            notes.push("the ramp ran out of photos before p95 went over budget".to_owned());
+            // An advance that was not shown can sit in the last, unfinished block: the ramp
+            // then did not stay within budget, so say so instead of claiming it did.
+            let not_shown = failed + refused;
+            notes.push(if not_shown == 0 {
+                "the ramp ran out of photos before p95 went over budget".to_owned()
+            } else {
+                format!(
+                    "the ramp ran out of photos with {not_shown} advances not shown, so it did \
+                     not stay within budget"
+                )
+            });
         }
     }
     metrics.extend([
