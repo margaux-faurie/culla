@@ -443,8 +443,8 @@ flowchart LR
 |---|---|
 | Installer | NSIS only, per-user, WebView2 through the default bootstrapper. Unsigned for v1 (SmartScreen note in README). |
 | Updater | `tauri-plugin-updater`, its own signing key (private key in CI secret `TAURI_SIGNING_PRIVATE_KEY`, public key in config). Key loss strands installed users: custody in [releasing.md](releasing.md) (planned). |
-| Local data | Preview cache in `%LOCALAPPDATA%\Culla\cache`. Session databases in `%LOCALAPPDATA%\Culla\sessions`, apply logs in `%LOCALAPPDATA%\Culla\logs`. Nothing is written into the source folder except `_rejected/` on apply. |
-| Web demo | Static assets on Cloudflare Workers, subdomain of margauxfaurie.com (to confirm). No server code. |
+| Local data | Preview cache in `%LOCALAPPDATA%\Culla\cache`. Session databases in `%LOCALAPPDATA%\Culla\sessions`, a small app-level settings store beside them (last destination used), apply logs in `%LOCALAPPDATA%\Culla\logs`. Nothing is written into the source folder except `_rejected/` on apply. |
+| Web demo | Static assets on Cloudflare Workers at `culla.margauxfaurie.com`, behind the site's Cloudflare Access policy until the portfolio opens (SPEC §2). No server code. |
 | Later | winget manifest after v1; SignPath signing once v1 is released ([ADR 0016](adr/0016-per-user-nsis-and-signed-updater-code-signing-deferred.md)). |
 
 ## 8. Crosscutting concepts
@@ -522,7 +522,7 @@ To decide (ADR candidate): Tauri isolation pattern. Culla loads no remote conten
 - Inside the core, files are identified by (volume serial, relative path). Absolute paths are rebuilt from the current mount at use time.
 - Long paths: Rust std adds `\\?\` internally, but that does not cover raw Win32 calls. The adapters add the `\\?\` prefix themselves for `CreateFileW` and the rename calls. Deep mirrored destinations are covered by tests.
 - Files on removable media are read into buffers, never memory-mapped, and handles are released before any move.
-- The data root (`%LOCALAPPDATA%\Culla`, holding `sessions`, `cache` and `logs`) is not looked up inside the adapters. The composition root resolves it once (`SHGetKnownFolderPath(FOLDERID_LocalAppData)`) and injects it through config; `culla-cli`, `culla-bench` and tests pass their own root. This keeps every write location testable.
+- The data root (`%LOCALAPPDATA%\Culla`, holding the per-source session databases in `sessions`, `cache`, `logs`, and a small app-level settings store beside them with the last destination used anywhere, which a new source folder proposes as "same as last time") is not looked up inside the adapters. The composition root resolves it once (`SHGetKnownFolderPath(FOLDERID_LocalAppData)`) and injects it through config; `culla-cli`, `culla-bench` and tests pass their own root. This keeps every write location testable.
 
 ## 9. Architecture decisions
 

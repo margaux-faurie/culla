@@ -95,14 +95,14 @@ v1 is a success when all of the following hold. The targets were confirmed by Ma
 | S3 | Fast decisions | The author culls 1,000 pairs from SD in 30 minutes or less of swiping time (about 1.8 s per photo, decision time included) | Timed session log on the G14 |
 | S4 | The app never makes the user wait between photos once prefetch has caught up | Next photo visible within the budget of NFR-PERF-03 for at least 95% of decisions | Instrumented benchmark run |
 | S5 | Keyboard only | Every flow (start, swipe, review, apply) can be done without a mouse | Manual pass + Playwright on the demo |
-| S6 | Web demo live | Demo published on a margauxfaurie.com subdomain (to confirm), loads and runs the full swipe-review-apply flow on sample photos | Playwright in CI against the deployed URL |
+| S6 | Web demo live | Demo deployed at `culla.margauxfaurie.com` (behind the site's Cloudflare Access policy until the portfolio opens, public after), loads and runs the full swipe-review-apply flow on sample photos | Playwright in CI green against the deployed URL, gated or public |
 | S7 | Portfolio-ready repository | README with GIF, ADRs for the main decisions, green CI, OpenSSF Scorecard published | Repository check before the v1 release |
 
 ## 8. Portfolio and blog goals
 
 Culla is also a portfolio piece. v1 ships two outputs beyond the app:
 
-- **Web demo** on a subdomain of margauxfaurie.com (to confirm), in the same visual family as the site through the Portfolio Design System ([SPEC §5.5–5.6](SPEC.md#55-web-demo)). It lets a visitor try the swipe, review and simulated apply in under a minute, without installing anything.
+- **Web demo** at `culla.margauxfaurie.com`, hidden behind the site's Cloudflare Access policy for now and public when the portfolio opens (decided by Margaux, 27 Nov 2026), in the same visual family as the site through the Portfolio Design System ([SPEC §5.5–5.6](SPEC.md#55-web-demo)). It lets a visitor try the swipe, review and simulated apply in under a minute, without installing anything.
 - **Blog enablement guide**: a write-up of how Culla was built with coding agents, using the ADRs and the material listed in [research/practices.md §4](research/practices.md#4-material-for-the-blog-enablement-guide): guideline vs guarantee (how "never delete" is enforced by lints and CI, not prompts), agent-sized slices, the hexagonal core, event-sourced undo, the journalled apply, Tauri hardening, fuzzing the NEF parser, the supply-chain baseline and honest caveats.
 
 To decide: whether the guide is one post or a series, and whether it ships with v1 or after.
@@ -112,7 +112,7 @@ To decide: whether the guide is one post or a series, and whether it ships with 
 From [SPEC §10](SPEC.md#10-open-questions):
 
 - Minimum WebView2 version and installer mode (the bootstrapper downloads WebView2 at install time if missing).
-- Demo subdomain, and which photos to publish in the demo.
+- Which photos to publish in the demo.
 - The author's real sample files (Nikon Z series, SPEC §2) and their licence: pending.
 
 Raised by this pitch:

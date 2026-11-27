@@ -34,7 +34,7 @@ A Windows desktop app that culls a folder of Nikon photos (JPEG + NEF) one photo
 | Camera | Nikon Z series (Z6, Z7, Z8, Z9 family), so lossless, lossy, uncompressed and HE/HE\* NEFs are all possible; test resolutions 24 MP (Z6 class) and 45 MP (Z7, Z8, Z9 class) (decided 27 Nov 2026) |
 | Choices | Binary: keep / reject |
 | Reject | Move to `<source>/_rejected/`, mirroring subfolders. The app never deletes a photo; the only removals are listed in §5.2 step 5. |
-| Keep | Move or copy, chosen per session; destination folder chosen per session (last one remembered); subfolder structure mirrored |
+| Keep | Move or copy, chosen fresh each session with nothing preselected (Start stays disabled until one is chosen); destination remembered per source folder and labelled "same as last time": resuming a folder restores that folder's destination, a new folder proposes the last destination used anywhere, a first run has none (the user chooses), and a remembered destination that is missing (drive unplugged) is shown as not available and the user must choose; subfolder structure mirrored (decided 27 Nov 2026) |
 | Apply | Queue → review screen → explicit confirm → apply |
 | RAW pairing | Per-session toggle "RAW follows JPEG". When off, the NEF is left untouched. |
 | Lone NEF | Shown via its embedded JPEG preview, sorted like any photo |
@@ -49,6 +49,9 @@ A Windows desktop app that culls a folder of Nikon photos (JPEG + NEF) one photo
 | Success criteria | The PRD §7 targets are confirmed: 1,000 pairs from SD with zero lost files, recovery after a card pull, 30 minutes or less of swiping for 1,000 pairs (decided 27 Nov 2026) |
 | Licence and name | GPL-3.0-only (not "or later"), copyright Margaux Faurie; the "Culla" name and logo are reserved and forks must rename; issues are welcome but outside pull requests are not merged, so the code keeps one author (decided 27 Nov 2026, ADR 0026) |
 | Capture time | DateTimeOriginal, then CreateDate, then the file time in the PC's local time zone; camera-local order with filename tie-breaks (decided 27 Nov 2026, ADR 0028) |
+| Where photos go | Shown as one route, the same on the start, swipe, review and apply screens: the origin, then a Kept branch (move or copy, destination, one real example path with its JPEG, NEF and edit files), a Rejected branch (`<source>\_rejected\…` written literally, marked as a new folder only while `_rejected\` doesn't exist yet, "nothing is deleted") and "undecided photos stay where they are". The example path follows the "RAW follows JPEG" toggle (when off, the NEF and its sidecars stay at the origin, ADR 0023) and shows copy for camera-protected files. The swipe screen shows where the current photo would go under each button; on an already decided photo it shows where the photo will go without implying the arrows act (ADR 0006). Full folder trees and the per-file list are one click away on review. Button placement is still open (NFR-A11Y-02) (decided 27 Nov 2026; design canvas linked in §5.6) |
+| Keyboard layouts | By the letter: letters and Ctrl shortcuts match the character on the key (`KeyboardEvent.key`, case-insensitive), so Z and Ctrl+Z stay on the Z key on AZERTY and QWERTZ; arrows, Space, Enter and Esc match by position (`KeyboardEvent.code`); `?` by character. Hints show the key as labelled (decided 27 Nov 2026, §4.1) |
+| Web demo hosting | `culla.margauxfaurie.com`, Cloudflare Workers static assets; same Cloudflare Access policy as the rest of the site until the portfolio goes public; the repository itself stays public (decided 27 Nov 2026) |
 | Subfolders | Included (recursive scan) |
 | Volume | Thousands of photos, often on SD card or external drive |
 | v1 extras | Zoom to 100%, EXIF overlay, resume a session later |
@@ -101,6 +104,8 @@ Sidecar matching (case-insensitive, same folder):
 | Enter | Open the review screen |
 | Esc | Leave zoom / overlay / review |
 
+Letters and Ctrl shortcuts (U, N, Z, I, F, Ctrl+Z, Ctrl+Shift+Z) are matched by the character on the key (`KeyboardEvent.key`, case-insensitive), so Z and Ctrl+Z stay on the Z key on AZERTY and QWERTZ. Arrows, Space, Enter and Esc are matched by position (`KeyboardEvent.code`), and `?` by character. The overlay and hints show each key as labelled on the keyboard (decided by Margaux, 27 Nov 2026).
+
 Rules:
 - Single-key shortcuts (U, N, Z, I, F, ?) work only while the swipe view has focus (WCAG 2.1.4).
 - Auto-repeat on held keys is ignored for decisions, so holding → never keeps 40 photos.
@@ -109,10 +114,10 @@ Rules:
 - At the end of the list, a summary card offers "Jump to undecided (n)" and "Review".
 
 ### 4.2 Screens
-1. **Start:** choosing the folder is part of the experience (Margaux, 27 Nov 2026). v1: recent folders with their session status (in progress, applied) and the native folder dialog opened from Rust; detected drives, a found-photos preview and drag and drop are v2 ([stories.md](stories.md) US-44). The webview only gets opaque source IDs and display data, never a path. Then: source folder, include subfolders, RAW follows JPEG, keep = move/copy, destination. If a session already exists for the folder, offer to resume it (or start fresh).
-2. **Swipe:** full-screen photo, progress bar (n / total, kept, rejected, undecided), decision badge, EXIF overlay, zoom, and visible **Keep** and **Reject** buttons (a single-click alternative to dragging, WCAG 2.5.7).
-3. **Review:** counts; kept / rejected grids (click to jump back); the full operation plan; preflight results; estimated time and size; "Apply" needs a confirm dialog that states the counts. Undecided photos are never touched.
-4. **Apply:** progress per file, can be paused or cancelled (cancel stops after the current file). Ends with a report and a log file (`%LOCALAPPDATA%\Culla\logs`, openable from the report).
+1. **Start:** choosing the folder is part of the experience (Margaux, 27 Nov 2026). v1: recent folders with their session status (in progress, applied) and the native folder dialog opened from Rust; detected drives, a found-photos preview and drag and drop are v2 ([stories.md](stories.md) US-44). The webview only gets opaque source IDs and display data, never a path. Then: source folder, include subfolders, RAW follows JPEG, keep = move/copy, destination. If a session already exists for the folder, offer to resume it (or start fresh). The route view (§2, "Where photos go") shows origin, kept, rejected and left in place as the options are set.
+2. **Swipe:** full-screen photo, progress bar (n / total, kept, rejected, undecided), decision badge, EXIF overlay, zoom, and visible **Keep** and **Reject** buttons (a single-click alternative to dragging, WCAG 2.5.7). Under each button, the route view shows where the current photo would go.
+3. **Review:** counts; kept / rejected grids (click to jump back); the full operation plan; preflight results; estimated time and size; "Apply" needs a confirm dialog that states the counts. Undecided photos are never touched. The route view heads the screen, with folder trees and the per-file list one click away.
+4. **Apply:** progress per file, can be paused or cancelled (cancel stops after the current file). Ends with a report and a log file (`%LOCALAPPDATA%\Culla\logs`, openable from the report). The route view stays visible, the same as on review.
 
 ## 5. Architecture
 
@@ -171,10 +176,10 @@ A Tauri async **custom URI scheme** (`culla://preview/<id>`, which appears as `h
 ### 5.5 Web demo
 - About 25 author photos at 1600 px long edge in AVIF/WebP (~5 MB in total), with EXIF pre-extracted to JSON. Apply is simulated, and the review screen shows the plan it would have run.
 - An optional "your folder" mode uses `<input webkitdirectory>`. It is read-only, works in every browser, and nothing is uploaded.
-- Hosted on Cloudflare Workers static assets (subdomain of margauxfaurie.com, to confirm).
+- Hosted on Cloudflare Workers static assets at `culla.margauxfaurie.com`, behind the site's Cloudflare Access policy until the portfolio is public (§2).
 
 ### 5.6 Visual design
-Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsmsFesTQ7nHuMbJLms), so the app, the demo and margauxfaurie.com look like one family. In practice:
+Screen designs (start, swipe, already decided, review, apply) live on the design canvas https://claude.ai/artifact/CfDZRFBUCphPgXVKmTxSWh, reworked on 27 Nov 2026 after research on import tools, culling apps and plan visualisation. Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsmsFesTQ7nHuMbJLms), so the app, the demo and margauxfaurie.com look like one family. In practice:
 - **Typeface:** Bricolage Grotesque, self-hosted (the app has to work offline, so it isn't loaded from Google Fonts).
 - **Colours:**
   - `paper`, `ink`, `ink-muted` and `rule` for the chrome.
@@ -231,6 +236,6 @@ Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsm
 ## 10. Open questions
 - `xtask`: ADR 0020 says it is outside the file rules, but it inherits the workspace lints and only creates new files. Proposed: keep it inside the rules and supersede ADR 0020 on that point.
 - Minimum WebView2 version and installer mode (the bootstrapper downloads WebView2 at install time if missing).
-- Demo subdomain and which photos to publish.
+- Which photos to publish in the demo.
 - The author's real sample files (Nikon Z series, see §2): 9 Z6III NEFs (8 pairs, 1 lone) used locally since 27 Nov 2026, outside the repo; the stripped Git LFS set is pending.
 - Preview cache when the source drive is encrypted and the system drive is not: keep previews in memory only (default) or warn before caching to disk; to decide (raised 27 Nov 2026).

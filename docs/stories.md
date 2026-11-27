@@ -190,7 +190,12 @@ Links: INV (nothing before Apply), NFR-REL. Test: core unit (recording port), Wi
 ### US-21 Start a session
 As a photographer, I want to pick a folder and my options on one screen, so that I can start culling in a few seconds.
 - Given the start screen, when I choose a source folder, include subfolders, RAW follows, move or copy, and a destination, then the swipe screen opens on the first photo.
-- Given a previous session, when the start screen opens, then the last destination is pre-filled.
+- Given I resume a source folder, when the start screen opens, then that folder's destination is restored and labelled "same as last time".
+- Given a new source folder and a destination used before in any session, then that last destination is proposed and labelled "same as last time".
+- Given a first run, then no destination is proposed and I choose one.
+- Given the remembered destination is missing (drive unplugged), then it is shown as not available and I must choose a destination.
+- Given the start screen, then neither move nor copy is selected, and Start stays disabled until I choose one.
+- Given the start screen, then it shows where kept, rejected and undecided photos will go as one route, with one real example path per branch.
 
 Links: NFR-A11Y. Test: Vitest, Playwright.
 
@@ -199,6 +204,7 @@ As a photographer, I want → to keep and ← to reject and move on, so that I c
 - Given an undecided photo, when I press →, then it is kept and the next photo is shown.
 - Given an undecided photo, when I press ←, then it is rejected and the next photo is shown.
 - Given a decision, when it is made, then it is committed to the log at once and autosaved.
+- Given an AZERTY or QWERTZ layout, when I press U, N or Ctrl+Z, then they act as labelled on the keys (undo, next undecided, global undo); the arrows keep and reject on any layout ([SPEC §4.1](SPEC.md#41-keyboard-map)).
 
 Links: NFR-PERF, NFR-A11Y. Test: Vitest, Playwright keyboard-only.
 
@@ -259,6 +265,7 @@ Links: NFR-A11Y. Test: Vitest, Playwright.
 As a photographer, I want counts and the current photo's state always visible, so that I know where I am.
 - Given the swipe screen, then it shows n / total, kept, rejected and undecided counts, and the current decision badge.
 - Given a decision, then the badge uses a label and a shape (filled for keep, outline for reject) as well as colour.
+- Given the swipe screen, then under the Keep and Reject buttons it shows where the current photo would go (example path, following "RAW follows JPEG"); on an already decided photo it shows where it will go without implying the arrows act ([ADR 0006](adr/0006-arrow-keys-do-not-change-an-existing-decision.md)).
 
 Links: NFR-A11Y. Test: Playwright + axe.
 
@@ -308,12 +315,12 @@ M4 does not start until each of these has full Given/When/Then acceptance criter
 
 | ID | Story | Links |
 |---|---|---|
-| US-34 | As a photographer, I want a review screen with counts, kept and rejected grids, the full plan, preflight results, unknown files and a time and size estimate, so that I know exactly what apply will do. | INV, NFR-PERF |
+| US-34 | As a photographer, I want a review screen headed by the route (origin → kept / rejected / left in place, with example paths) and with counts, kept and rejected grids, the full plan, preflight results, unknown files and a time and size estimate, so that I know exactly what apply will do. | INV, NFR-PERF |
 | US-35 | As a photographer, I want apply to ask for confirmation stating the counts, so that two keystrokes never move thousands of files. | NFR-REL |
 | US-36 | As a photographer, I want per-file progress with pause and cancel (after the current file), and a report at the end, so that a long cross-volume apply stays under my control. | NFR-REL, INV |
 | US-37 | As a photographer, I want to resume a session or start fresh when I reopen a folder, including on another drive letter, so that I can cull a card over several sittings. | NFR-REL |
 | US-38 | As a photographer, I want an interrupted apply resumed with a clear message when the app opens, so that I know my photos are safe. | NFR-REL, INV |
-| US-39 | As a photographer, I want to zoom to 100 % at the cursor (Z toggle or hold Space) and pan with the arrows, so that I can check focus before deciding. | NFR-PERF, NFR-A11Y |
+| US-39 | As a photographer, I want to zoom to 100 % at the cursor (Z toggle or hold Space) and pan with the arrows, so that I can check focus before deciding. Z is the key labelled Z on AZERTY and QWERTZ too ([SPEC §4.1](SPEC.md#41-keyboard-map)). | NFR-PERF, NFR-A11Y |
 | US-40 | As a photographer, I want an EXIF overlay (I) with date, lens, exposure, so that I can tell near-identical shots apart. | NFR-A11Y |
 
 ## M6
