@@ -34,6 +34,7 @@
 //!
 //! - `X:\…` and its verbatim form `\\?\X:\…`: supported. A folder under a volume mounted in a
 //!   folder (`C:\Mounts\Card\DCIM`) resolves to that volume, with the mounted folder as root.
+//!   Choosing the mount point itself (`C:\Mounts\Card`) is refused, since it is a reparse point.
 //! - A `subst` drive: canonicalization resolves it to the folder it stands for, so its
 //!   identity is the underlying volume's, whatever the letter.
 //! - Paths longer than `MAX_PATH` are queried in their verbatim form (not covered by tests).
