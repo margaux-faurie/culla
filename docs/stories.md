@@ -291,11 +291,11 @@ As a photographer who does not want to drag or use the keyboard, I want visible 
 Links: NFR-A11Y. Test: Playwright click-only flow (cull 10 photos with the mouse only, no drag, no keys), axe, Vitest.
 
 ### US-44 Choosing the folder is part of the experience (M3)
-As a photographer, I want the start screen to help me pick what to cull, so that starting a session feels like part of the app, not a file dialog. (Principle decided by Margaux, 27 Nov 2026; the elements below are proposed, to settle in docs/ux.md, planned.)
-- Given an SD card or removable drive is plugged in, when I open Culla, then the start screen shows it with its volume label and photo count, and I can start on it in one click.
+As a photographer, I want the start screen to help me pick what to cull, so that starting a session feels like part of the app, not a file dialog. (Principle decided by Margaux, 27 Nov 2026. For v1 she chose recent folders with their status, plus the native dialog; detected drives, the found-photos preview and drag and drop move to v2.)
+- (v2) Given an SD card or removable drive is plugged in, when I open Culla, then the start screen shows it with its volume label and photo count, and I can start on it in one click.
 - Given folders I culled before, then they are listed as recent folders with their session status (in progress, applied), and I can resume one.
-- Given I drag a folder onto the window, then it becomes the source.
-- Given a source is chosen, then a preview shows what was found (JPEG and NEF counts, lone NEFs, date range) before I start.
+- (v2) Given I drag a folder onto the window, then it becomes the source.
+- (v2) Given a source is chosen, then a preview shows what was found (JPEG and NEF counts, lone NEFs, date range) before I start.
 - Given I prefer it, then the native folder dialog, opened from Rust, is still available.
 - Given any of these, then detection, dropped paths and folder reads stay in Rust: the webview only receives opaque source IDs and display data, never a path, and gets no filesystem or dialog permission (CLAUDE.md invariant, threat model T7). Detection and counting are read-only on the card (INV-03).
 

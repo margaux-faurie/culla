@@ -376,7 +376,7 @@ Members are matched by (`folder_key`, file name folded). For each stored member:
 |---|---|
 | Present, same size and mtime | `present = 1` |
 | Present, size or mtime differs | `present = 1`, `changed = 1`; listed as "changed since scan" |
-| Present, but a `done` `rename` or `xmove` operation had moved it away | `rename`: the file system reverted an unflushed rename after a crash (§9.3). `xmove`: the unflushed source removal was lost, so the file is now at both S and F. Listed as `reverted_move`; the group stays applied. `rename`: offered for redo after the user confirms (§9.6, "Redo reverted moves"). `xmove`: listed, not touched in v1 (§13). Holding renames at `committed` until the plan closes (§9.3) keeps this case to a crash in the seconds after the plan closes. Never applies to `copy`, whose source is meant to stay |
+| Present, but a `done` `rename` or `xmove` operation had moved it away | `rename`: the file system reverted an unflushed rename after a crash (§9.3). `xmove`: the unflushed source removal was lost, so the file is now at both S and F. Listed as `reverted_move`; the group stays applied. `rename`: offered for redo after the user confirms (§9.6, "Redo reverted moves"). `xmove`: offered as "Finish moves" after the user confirms (decided by Margaux, 27 Nov 2026): F is re-verified from scratch (H2 from F and H3 from S, both unbuffered, equal to the journal's H1), then S is removed through `remove_verified_source`; any mismatch keeps both and is reported. Holding renames at `committed` until the plan closes (§9.3) keeps this case to a crash in the seconds after the plan closes. Never applies to `copy`, whose source is meant to stay |
 | Absent, and a `done` or `source_removed` operation moved it | Expected; not reported |
 | Absent otherwise | `present = 0`; listed as missing; no operation for it |
 
@@ -791,7 +791,6 @@ Each invariant has at least one test in [testing.md](../testing.md): property te
 
 - Destination inside a cloud-synced folder (allowed with a warning, P17): folders under a OneDrive sync root can carry cloud reparse tags, which P6 and P9 refuse; how the destination's folders are told apart from placeholders is to check in adapter tests on a real OneDrive folder.
 - Free-space margin (P5).
-- A reverted `xmove` source removal (the file at both S and F after the plan closed, §6.2) is listed and not touched in v1; whether it gets a redo like renames (re-verify, then `remove_verified_source`) is open.
 - "Retry failed" and "Finish moves" run in the same plan (§9.6), but §9.1 has no edge out of `completed` or `cancelled`: either the plan stays open while the report offers them, or they reopen it. To settle in M2.
 - Same-serial threshold on reopen, and network shares (§6.2).
 - WAL with `synchronous=FULL` (proposed in ADR 0009 and NFR-REL-10), and the 500 ms crash window.
