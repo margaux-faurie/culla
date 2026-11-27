@@ -5,6 +5,8 @@ date: 2026-11-24
 
 # Arrow keys don't change an existing decision (undo first)
 
+Confirmed 27 Nov 2026 by Margaux: the same rule applies to the Keep and Reject buttons and to drag.
+
 ## Context and problem statement
 
 When the user comes back to a photo that already has a decision, what should ← and → do?
@@ -20,7 +22,7 @@ Chosen option: "Do nothing, with feedback", because it is the author's choice: u
 
 * ←/→ on a decided photo trigger a short shake animation and a toast saying "Press U to undo".
 * U makes the current photo undecided (a `Cleared` event, see [ADR 0005](0005-decision-state-as-append-only-event-log.md)). Then ←/→ work again.
-* The same rule applies to the visible Keep and Reject buttons and to drag. Extension of SPEC, confirmed by Margaux on 27 Nov 2026.
+* The same rule applies to the visible Keep and Reject buttons and to drag. Extension of SPEC, to confirm with the author.
 * Shift+←/→ navigate without deciding.
 
 ### Consequences

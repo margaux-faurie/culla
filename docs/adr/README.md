@@ -27,5 +27,5 @@ One decision per file, in [MADR 4](https://adr.github.io/madr/) minimal format. 
 | [0020](0020-headless-cli-and-bench-crates.md) | Headless CLI and bench crates | accepted |
 | [0021](0021-unbuffered-source-re-read-for-hash-3.md) | Unbuffered source re-read for hash 3 | accepted |
 | [0022](0022-rename-through-the-checked-handle.md) | Rename through the checked handle, with no-replace semantics | accepted |
-| [0023](0023-bare-xmp-follows-the-nef.md) | A bare `X.xmp` follows the NEF, and stays with it when "RAW follows JPEG" is off | accepted |
+| [0023](0023-bare-sidecars-follow-the-nef.md) | Bare `X.xmp` and `X.pp3` follow the NEF, and stay with it when "RAW follows JPEG" is off | accepted |
 | [0024](0024-reconcile-event-for-a-file-joining-a-decided-group.md) | A new file joining a decided group makes it undecided, through a reconcile event | accepted |

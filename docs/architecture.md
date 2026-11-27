@@ -352,7 +352,7 @@ sequenceDiagram
       C->>DB: renaming
       C->>FS: no-replace rename via checked file and folder handles
       Note right of FS: existing target = hard error for the whole group
-      C->>DB: committed, then done
+      C->>DB: committed (done when the plan closes)
     else Move across volumes, or copy
       C->>DB: copying (attempt, partial path)
       C->>FS: copy to *.culla-partial (create_new), hash source while copying, set times, fsync
@@ -548,6 +548,11 @@ ADR 0000 records how decisions are written. Index with status: [adr/README.md](a
 | [0017](adr/0017-mit-licence-and-cargo-deny-licence-allowlist.md) | MIT licence + cargo-deny licence allowlist |
 | [0018](adr/0018-conventional-commits-and-release-please.md) | Conventional Commits + release-please |
 | [0019](adr/0019-generate-typescript-bindings-with-tauri-specta.md) | TS bindings with tauri-specta pinned RC, ts-rs as fallback |
+| [0020](adr/0020-headless-cli-and-bench-crates.md) | Headless CLI and bench crates |
+| [0021](adr/0021-unbuffered-source-re-read-for-hash-3.md) | Unbuffered source re-read for hash 3 |
+| [0022](adr/0022-rename-through-the-checked-handle.md) | Rename through the checked handle, with no-replace semantics |
+| [0023](adr/0023-bare-sidecars-follow-the-nef.md) | Bare `X.xmp` and `X.pp3` follow the NEF |
+| [0024](adr/0024-reconcile-event-for-a-file-joining-a-decided-group.md) | A new file joining a decided group makes it undecided (reconcile event) |
 
 Candidates not yet written: Tauri isolation pattern (8.5), Biome instead of ESLint + Prettier.
 
@@ -596,7 +601,7 @@ Brief. Targets and measurement live in [nfr.md](nfr.md) and [benchmarks.md](benc
 | Primary | The file shown for a group: the JPEG if there is one, otherwise the NEF (via its embedded JPEG). |
 | Raw | The NEF of a group, if any. Moves with the group only when "RAW follows JPEG" is on. |
 | Lone NEF | A group with a NEF and no JPEG. |
-| Sidecar | A file that follows the file it describes. `X.pp3` follows the group. `X.xmp` follows the NEF if the group has one, otherwise the primary (ADR 0023). `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` follow the JPEG. `X.NEF.xmp` and `NKSC_PARAM/X.NEF.nksc` follow the NEF, so they and `X.xmp` stay put when "RAW follows JPEG" is off. A collision suffix is applied inside sidecar names too. |
+| Sidecar | A file that follows the file it describes. Bare `X.xmp` and `X.pp3` follow the NEF if the group has one, otherwise the primary (ADR 0023). `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` follow the JPEG. `X.NEF.xmp` and `NKSC_PARAM/X.NEF.nksc` follow the NEF, so they and the bare sidecars stay put when "RAW follows JPEG" is off. A collision suffix is applied inside sidecar names too. |
 | Session | The stored state of one source: options, groups, decision events, plans and journal. Keyed by volume identity. |
 | Volume identity | Volume serial number + path relative to the volume root. Independent of the drive letter. |
 | Decision event | One appended record with a `seq`: `Decided {groupId, verdict}`, `Cleared {groupId}` (U), `Undo {targetSeq}` or `Redo {targetSeq}`. The current state is the fold of all events. |

@@ -5,7 +5,7 @@ date: 2026-11-24
 
 # Pair files by case-insensitive basename within the same folder only
 
-Refined by: [ADR 0023](0023-bare-xmp-follows-the-nef.md), for where a bare `X.xmp` goes.
+Refined by: [ADR 0023](0023-bare-sidecars-follow-the-nef.md), for where bare `X.xmp` and `X.pp3` go.
 
 ## Context and problem statement
 

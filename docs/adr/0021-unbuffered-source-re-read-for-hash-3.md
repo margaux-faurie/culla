@@ -5,7 +5,7 @@ date: 2026-11-24
 
 # Unbuffered source re-read for hash 3
 
-Partly supersedes [ADR 0004](0004-never-delete-or-overwrite.md) (its definition of "verified").
+Refines [ADR 0004](0004-never-delete-or-overwrite.md) (its definition of "verified").
 
 ## Context and problem statement
 

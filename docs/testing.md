@@ -56,7 +56,7 @@ Properties, each linked to its invariant in [design/file-engine.md](design/file-
 | All members of a group get the same target stem (same suffix `_1`, `_2`…). | group consistency |
 | Undecided groups produce no operation. | undecided untouched |
 | With RAW follows off, no operation touches a NEF that has a JPEG primary. | RAW pairing |
-| Each sidecar follows the file it describes ([SPEC.md](SPEC.md) section 3.1): `X.NEF.xmp` and `NKSC_PARAM/X.NEF.nksc` follow the NEF, `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` follow the JPEG, `X.xmp` follows the NEF if the group has one and otherwise the primary ([ADR 0023](adr/0023-bare-xmp-follows-the-nef.md)), `X.pp3` follows the group's primary. With RAW follows off, the NEF's sidecars, `X.xmp` included, stay with the NEF. | group consistency |
+| Each sidecar follows the file it describes ([SPEC.md](SPEC.md) section 3.1): `X.NEF.xmp` and `NKSC_PARAM/X.NEF.nksc` follow the NEF, `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` follow the JPEG, bare `X.xmp` and `X.pp3` follow the NEF if the group has one and otherwise the primary ([ADR 0023](adr/0023-bare-sidecars-follow-the-nef.md)). With RAW follows off, the NEF's sidecars, bare `X.xmp` and `X.pp3` included, stay with the NEF. | group consistency |
 | A collision suffix is applied inside sidecar names too (`X_1.NEF.xmp`, `NKSC_PARAM/X_1.NEF.nksc`). | group consistency |
 | Every removal in a plan targets either a verified cross-volume source or a Culla `*.culla-partial` file. | never delete |
 | Subfolder structure is mirrored (relative path preserved). | path containment |
@@ -147,7 +147,8 @@ The card-pull case uses `Dismount-DiskImage` or `diskpart detach vdisk` in the m
 | Destination inside the source, `_rejected/` present | both excluded from the rescan | INV |
 | Volume remounted under another letter | session and cache found by volume serial | NFR-REL |
 | No `remove_*` outside `remove_verified` | enforced by clippy `disallowed-methods` on `culla-core`, `culla-adapters`, `culla-cli` and `src-tauri`, plus a CI grep that `remove_verified` is the only caller of the underlying call | INV never delete |
-| `X.NEF.xmp` with RAW follows off | NEF and its `.NEF.xmp`, `.nksc` and `X.xmp` stay; JPEG, `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` move; `X.pp3` follows the primary (the JPEG) | INV group consistency |
+| `X.NEF.xmp` with RAW follows off | NEF and its `.NEF.xmp`, `.nksc`, `X.xmp` and `X.pp3` stay; JPEG, `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` move |
+| Bare `X.xmp` and `X.pp3` in a JPEG-only group | both follow the JPEG | INV group consistency | INV group consistency |
 
 ### 5.3 Installer and uninstaller (from M6)
 
@@ -184,11 +185,12 @@ For every op, in every case:
 - no file outside the plan was touched (hash and listing of both trees before and after);
 - running resume a second time changes nothing (idempotent).
 
-### 6.2 Roll forward past `verified`
+### 6.2 Roll forward past `verifying`
 
-- An op whose journal row was `verified` at the time of the crash ends `done` after resume: the rename into place and, for a cross-volume move, the source removal are completed. It is never rolled back and never re-copied (asserted with the recording port: no copy call for that op during resume).
+- An op whose journal row was `verifying` (with a partial matching H1) or `committed` at the time of the crash ends `done` after resume: the rename into place and, for a cross-volume move, the source removal are completed. It is never rolled back and never re-copied (asserted with the recording port: no copy call for that op during resume).
 - An op that was `pending` or `copying` is started again from its beginning; its leftover partial is removed through `remove_verified`.
 - If the destination is not what the journal expects (missing, or a different hash), the op ends `failed` and the source is kept.
+- A `done` rename that the durability-modelling fake reverts after the plan closed: the next launch lists it as `reverted_move` and changes nothing; after a simulated confirm, a redo plan (`purpose = 'redo'`) with one `rename` per reverted member, same targets, runs and is journaled; a crash during it recovers like any plan; a target taken meanwhile ends `failed (conflict)` with both files intact.
 - If the final target name was taken by another file in the meantime, the partial is removed through `remove_verified` and the op ends `failed` (the same rule as during a normal apply).
 
 The exact transitions and resume rules are owned by [design/file-engine.md](design/file-engine.md); the checker reads them from there.

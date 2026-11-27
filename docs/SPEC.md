@@ -38,12 +38,12 @@ A Windows desktop app that culls a folder of Nikon photos (JPEG + NEF) one photo
 | Apply | Queue → review screen → explicit confirm → apply |
 | RAW pairing | Per-session toggle "RAW follows JPEG". When off, the NEF is left untouched. |
 | Lone NEF | Shown via its embedded JPEG preview, sorted like any photo |
-| Sidecars | Always follow the file they describe (`.xmp`, `.NEF.xmp`, `.pp3`, NX Studio `NKSC_PARAM/*.nksc`), see §3.1. A bare `X.xmp` describes the RAW (Lightroom's convention): when "RAW follows JPEG" is off, it stays with the NEF (decided 27 Nov 2026, ADR 0023) |
+| Sidecars | Always follow the file they describe (`.xmp`, `.NEF.xmp`, `.pp3`, NX Studio `NKSC_PARAM/*.nksc`), see §3.1. A bare `X.xmp` or `X.pp3` describes the RAW (Lightroom's and RawTherapee's convention): when "RAW follows JPEG" is off, it stays with the NEF (decided 27 Nov 2026, ADR 0023) |
 | Camera-protected files | A source file with the read-only attribute (camera "protect") is copied, never moved: its group is planned as a copy (for a reject, a copy into `_rejected`), the original stays in place, and the review and report say so (decided 27 Nov 2026) |
 | Cloud-synced destination | A destination inside a OneDrive or other cloud-synced folder is allowed, with a warning in the review screen (decided 27 Nov 2026) |
 | Reconcile | A new file that joins an already decided group makes that group undecided again (decided 27 Nov 2026, ADR 0024) |
 | Interrupted moves | A group left "copied, source kept" can be finished from the report with "Finish moves", which re-verifies each copy from scratch and removes its source through `remove_verified` (decided 27 Nov 2026, design/file-engine.md §9.6) |
-| File engine | ADR 0021 (unbuffered source re-read for hash 3) and ADR 0022 (rename through the checked handle) accepted. A same-volume rename stays `committed` until the plan ends, so recovery can redo a rename the file system reverted (decided 27 Nov 2026, §5.2) |
+| File engine | ADR 0021 (unbuffered source re-read for hash 3) and ADR 0022 (rename through the checked handle) accepted. A same-volume rename stays `committed` until the plan ends, so recovery can redo a rename the file system reverted; one reverted after the plan closed is shown at the next launch and redone after the user confirms (decided 27 Nov 2026, §5.2) |
 | Update check | On by default, once a day; can be turned off in settings (decided 27 Nov 2026) |
 | Success criteria | The PRD §7 targets are confirmed: 1,000 pairs from SD with zero lost files, recovery after a card pull, 30 minutes or less of swiping for 1,000 pairs (decided 27 Nov 2026) |
 | Subfolders | Included (recursive scan) |
@@ -62,9 +62,8 @@ A **group** is the unit the user decides on. It holds:
 Pairing is by case-insensitive basename **within the same folder only**. Nikon file counters roll over, so the same name can appear in two folders. Unknown extensions are ignored and listed in the review screen.
 
 Sidecar matching (case-insensitive, same folder):
-- `X.xmp` describes the RAW, as Lightroom writes it: it follows the NEF when the group has one, otherwise the primary (a JPEG-only group). With "RAW follows JPEG" on, it moves with the whole group; with it off, it stays with the NEF (decided by Margaux, 27 Nov 2026, ADR 0023).
-- `X.pp3` describes the group: it follows the group's primary.
-- `X.NEF.xmp`, `X.JPG.xmp` and `NKSC_PARAM/X.NEF.nksc` / `NKSC_PARAM/X.JPG.nksc` describe one file: they follow that file. So when "RAW follows JPEG" is off, the NEF's sidecars (`X.xmp` included) stay with the NEF.
+- A bare `X.xmp` or `X.pp3` describes the RAW, as Lightroom and RawTherapee write them: it follows the NEF when the group has one, otherwise the primary (a JPEG-only group). With "RAW follows JPEG" on, it moves with the whole group; with it off, it stays with the NEF (decided by Margaux, 27 Nov 2026, ADR 0023).
+- `X.NEF.xmp`, `X.JPG.xmp` and `NKSC_PARAM/X.NEF.nksc` / `NKSC_PARAM/X.JPG.nksc` describe one file: they follow that file. So when "RAW follows JPEG" is off, the NEF's sidecars (bare `X.xmp` and `X.pp3` included) stay with the NEF.
 - A collision suffix is applied inside sidecar names too (`X_1.NEF.xmp`, `NKSC_PARAM/X_1.NEF.nksc`).
 
 ### 3.2 Decisions and history
@@ -107,7 +106,7 @@ Rules:
 - At the end of the list, a summary card offers "Jump to undecided (n)" and "Review".
 
 ### 4.2 Screens
-1. **Start:** source folder, include subfolders, RAW follows JPEG, keep = move/copy, destination. If a session already exists for the folder, offer to resume it (or start fresh).
+1. **Start:** choosing the folder is part of the experience (Margaux, 27 Nov 2026): detected SD cards and removable drives, recent folders, drag and drop and a preview of what was found are proposed in [stories.md](stories.md) US-44; the native dialog stays available. Then: source folder, include subfolders, RAW follows JPEG, keep = move/copy, destination. If a session already exists for the folder, offer to resume it (or start fresh).
 2. **Swipe:** full-screen photo, progress bar (n / total, kept, rejected, undecided), decision badge, EXIF overlay, zoom, and visible **Keep** and **Reject** buttons (a single-click alternative to dragging, WCAG 2.5.7).
 3. **Review:** counts; kept / rejected grids (click to jump back); the full operation plan; preflight results; estimated time and size; "Apply" needs a confirm dialog that states the counts. Undecided photos are never touched.
 4. **Apply:** progress per file, can be paused or cancelled (cancel stops after the current file). Ends with a report and a log file (`%LOCALAPPDATA%\Culla\logs`, openable from the report).
@@ -153,7 +152,7 @@ The items below describe behaviour; the pure parts live in `culla-core` and the 
    - Move across volumes: copy to `*.culla-partial` while hashing the source (xxh3/blake3), fsync, then verify: read the destination back with `FILE_FLAG_NO_BUFFERING` (so the OS cache can't answer for the disk) and **re-read the source with `FILE_FLAG_NO_BUFFERING` for a second hash (ADR 0021)**; all three hashes must match (this catches a flaky card reader, which would corrupt the copy and the first hash alike). Then rename into place and remove the source.
    - Copy: same as across volumes, but the source is kept. Modification and creation times are preserved.
    - A group's sources are removed only after every member of the group is committed. If any member fails, the group fails before any of its sources is removed; members already copied are reported as "copied, source kept". Once the cause is fixed, "Finish moves" in the report completes such a group: it re-verifies each copy from scratch and removes its source through `remove_verified` (decided by Margaux, 27 Nov 2026).
-   - A same-volume rename of a user file cannot be flushed, so it stays `committed` until the end of the plan and is only then marked `done`; recovery redoes a rename the file system reverted after a crash (decided by Margaux, 27 Nov 2026; design/file-engine.md §9.3).
+   - A same-volume rename of a user file cannot be flushed, so it stays `committed` until the end of the plan and is only then marked `done`; recovery redoes a rename the file system reverted after a crash. A rename reverted after the plan closed is detected at the next launch, shown, and redone in a small new plan once the user confirms (decided by Margaux, 27 Nov 2026; design/file-engine.md §9.3, §9.6).
    - Sharing violations (Explorer, Defender, Lightroom): retry with backoff, then mark the file failed and continue.
 4. **Resume:** if an apply is interrupted (crash, card pulled), it rolls forward from the journal the next time the app opens. There is no rollback in v1.
 5. **Removal:** one audited function, `remove_verified`, is the only code allowed to remove a file. It removes only (a) the source of a cross-volume move whose verification passed, and (b) Culla's own `*.culla-partial` files (for example when resuming from `copying`). `std::fs::remove_*` is banned elsewhere by clippy `disallowed-methods`.

@@ -20,7 +20,7 @@ Links: NFR-PERF. Test: adapters unit, `culla-bench` B-01.
 ### US-02 Group a JPEG, its NEF and its sidecars
 As a photographer, I want a JPEG, its NEF and their sidecars treated as one photo, so that I decide once and the files never get split up.
 - Given `DSC_0001.JPG`, `dsc_0001.nef`, `DSC_0001.xmp`, `DSC_0001.NEF.xmp` and `NKSC_PARAM/DSC_0001.NEF.nksc` in one folder, when the folder is scanned, then they form one group with the JPEG as primary, the NEF as raw, and the three sidecars attached.
-- Given each sidecar, when it is attached, then it records the file it describes (`X.NEF.xmp` and the `.nksc` describe the NEF, `X.JPG.xmp` the JPEG, `X.xmp` the NEF if the group has one and otherwise the JPEG, `X.pp3` the group).
+- Given each sidecar, when it is attached, then it records the file it describes (`X.NEF.xmp` and the `.nksc` describe the NEF, `X.JPG.xmp` the JPEG, bare `X.xmp` and `X.pp3` the NEF if the group has one and otherwise the JPEG).
 - Given `DSC_0001.JPG` in `100NIKON/` and `DSC_0001.NEF` in `101NIKON/`, when scanned, then they are two separate groups.
 
 Links: INV (grouping). Test: core unit, property.
@@ -115,9 +115,8 @@ Links: INV (undecided untouched, path containment). Test: property, snapshot.
 ### US-14 RAW follows JPEG toggle
 As a photographer, I want to choose per session whether the NEF follows its JPEG, so that I can cull JPEGs and leave RAWs for later.
 - Given RAW follows on, when a pair is kept or rejected, then the NEF and its sidecars get the same op as the JPEG.
-- Given RAW follows off, when a pair is kept or rejected, then the NEF, `X.NEF.xmp`, `NKSC_PARAM/X.NEF.nksc` and a bare `X.xmp` are left untouched, and the JPEG with `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` gets the op ([ADR 0023](adr/0023-bare-xmp-follows-the-nef.md)).
-- Given `X.pp3` next to a pair, when the pair is decided, then it follows the group's primary (the JPEG), whether RAW follows is on or off ([SPEC.md](SPEC.md) section 3.1).
-- Given `X.xmp` next to a JPEG with no NEF, when the JPEG is decided, then `X.xmp` follows the JPEG.
+- Given RAW follows off, when a pair is kept or rejected, then the NEF, `X.NEF.xmp`, `NKSC_PARAM/X.NEF.nksc` and a bare `X.xmp` or `X.pp3` are left untouched, and the JPEG with `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` gets the op ([ADR 0023](adr/0023-bare-sidecars-follow-the-nef.md)).
+- Given a bare `X.xmp` or `X.pp3` next to a JPEG with no NEF, when the JPEG is decided, then it follows the JPEG ([SPEC.md](SPEC.md) section 3.1).
 - Given a lone NEF, when it is decided, then it is moved like any primary, whatever the toggle.
 
 Links: INV (RAW pairing, group consistency). Test: property, unit.
@@ -169,7 +168,8 @@ Links: NFR-REL. Test: Windows integration.
 ### US-20 Resume an interrupted apply
 As a photographer, I want an apply that was cut off by a crash or a pulled card to finish when I reopen the app, so that I never end up with half-moved photos.
 - Given an apply killed at a random point, when the app starts, then resume rolls the journal forward and every op ends in the end state for its kind ([testing.md](testing.md) section 6.1): a move leaves the file at exactly one place, a copy leaves it at both, always with its original hash.
-- Given an op that had reached `verified`, when resume runs, then it completes the rename (and, cross-volume, the source removal) and ends `done`; it is never rolled back or re-copied.
+- Given an op that had reached `verifying` with a matching partial, or `committed`, when resume runs, then it completes the rename into place (and, cross-volume, the source removal once the group is committed) and ends `done` (a same-volume rename ends `done` when the plan closes); it is never rolled back or re-copied.
+- Given a same-volume rename that the file system reverted after the plan closed (the file is back at its source), when the app next launches, then it shows the file as a reverted move and offers "Redo moves"; nothing runs until I confirm, and the redo is a new small plan journaled like any other.
 - Given the card was pulled and comes back under another letter, when resume runs, then it identifies the volume by serial before touching anything.
 - Given resume finished, when it runs again, then it does nothing.
 - Given any apply, when it ends, then a plain-text log of operations is written.
@@ -289,6 +289,17 @@ As a photographer who does not want to drag or use the keyboard, I want visible 
 - Given the buttons, then each has a visible text label, is reachable by Tab, shows a focus ring, and has a target size of at least 24×24 CSS px.
 
 Links: NFR-A11Y. Test: Playwright click-only flow (cull 10 photos with the mouse only, no drag, no keys), axe, Vitest.
+
+### US-44 Choosing the folder is part of the experience (M3)
+As a photographer, I want the start screen to help me pick what to cull, so that starting a session feels like part of the app, not a file dialog. (Principle decided by Margaux, 27 Nov 2026; the elements below are proposed, to settle in docs/ux.md, planned.)
+- Given an SD card or removable drive is plugged in, when I open Culla, then the start screen shows it with its volume label and photo count, and I can start on it in one click.
+- Given folders I culled before, then they are listed as recent folders with their session status (in progress, applied), and I can resume one.
+- Given I drag a folder onto the window, then it becomes the source.
+- Given a source is chosen, then a preview shows what was found (JPEG and NEF counts, lone NEFs, date range) before I start.
+- Given I prefer it, then the native folder dialog is still available.
+- Given any of these, then detection and paths stay in Rust: the webview only receives opaque source IDs and display data (CLAUDE.md invariant, threat model T7).
+
+Links: NFR-A11Y, NFR-PERF. Test: Vitest on the start screen with DemoBackend sources, Playwright, adapter test for removable-drive detection on Windows.
 
 ## M4 — Headline stories
 
