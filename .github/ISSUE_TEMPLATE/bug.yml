@@ -1,0 +1,34 @@
+name: Bug report
+description: Something does not work as described.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not attach your own photos here; they can contain GPS data. For security issues, use the private report link instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Culla version or commit
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+  - type: input
+    id: camera
+    attributes:
+      label: Camera body and file type (JPEG, NEF, HE/HE*)
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error text
+      description: Remove your user name and folder names from paths before pasting.
+      render: text

@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" width="1280" height="360" role="img" aria-labelledby="t d">
+  <title id="t">Culla</title>
+  <desc id="d">The Culla wordmark and pitch beside a photo card being swiped: a kept card leans right, a rejected card leans left, dimmed.</desc>
+  <defs>
+    <g id="photo">
+      <rect x="-75" y="-105" width="150" height="210" rx="18"/>
+      <rect x="-61" y="-91" width="122" height="146" rx="8" fill="#d6cbb4"/>
+      <circle cx="26" cy="-56" r="12" fill="#f1e9d8"/>
+      <path d="M-61 34 L-24 -10 L2 18 L22 0 L61 40 L61 47 Q61 55 53 55 L-53 55 Q-61 55 -61 47 Z" fill="#8f8777"/>
+      <rect x="-61" y="70" width="70" height="6" rx="3" fill="#8f8777"/>
+      <rect x="-61" y="84" width="44" height="6" rx="3" fill="#d6cbb4"/>
+    </g>
+  </defs>
+  <rect width="1280" height="360" rx="32" fill="#f1e9d8"/>
+  <rect x="0.5" y="0.5" width="1279" height="359" rx="32" fill="none" stroke="#d6cbb4"/>
+
+  <g font-family="'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif" fill="#0c0b0a">
+    <text x="88" y="178" font-size="112" font-weight="700" letter-spacing="-4">Culla</text>
+    <text x="92" y="232" font-size="28" fill="#544e44">Sort a folder of photos one swipe at a time.</text>
+    <text x="92" y="270" font-size="20" fill="#544e44">Nikon JPEG + NEF on Windows. Nothing moves until you apply.</text>
+  </g>
+
+  <g fill="none" stroke="#8f8777" stroke-width="3" stroke-linecap="round">
+    <path d="M1004 300 H1046 M1034 290 L1046 300 L1034 310"/>
+    <path d="M862 300 H820 M832 290 L820 300 L832 310"/>
+  </g>
+  <g font-family="'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif" font-size="18" fill="#544e44">
+    <text x="1060" y="306">keep</text>
+    <text x="806" y="306" text-anchor="end">reject</text>
+  </g>
+
+  <g transform="translate(790 168) rotate(-13)" opacity="0.45">
+    <use href="#photo" fill="#e8dfcb" stroke="#544e44" stroke-width="2"/>
+    <circle cx="48" cy="-78" r="17" fill="#f1e9d8" stroke="#544e44" stroke-width="2.5"/>
+    <path d="M41 -85 L55 -71 M55 -85 L41 -71" stroke="#544e44" stroke-width="2.5" stroke-linecap="round"/>
+  </g>
+
+  <g transform="translate(944 160)">
+    <use href="#photo" fill="#e8dfcb" stroke="#0c0b0a" stroke-width="2"/>
+  </g>
+  <g transform="translate(1110 166) rotate(12)">
+    <use href="#photo" fill="#8fd3a8" stroke="#0c0b0a" stroke-width="2"/>
+    <circle cx="48" cy="-78" r="17" fill="#0c0b0a"/>
+    <path d="M40 -78 L46 -72 L57 -84" fill="none" stroke="#8fd3a8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

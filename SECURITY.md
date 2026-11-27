@@ -4,7 +4,7 @@ Culla moves and renames your photo files, so security bugs can mean lost or dama
 
 ## Reporting a vulnerability
 
-Report vulnerabilities privately through GitHub Security Advisories: open the repository's Security tab and select "Report a vulnerability". The button appears once the repository is public and private vulnerability reporting is switched on; until then, open an issue that only asks for a private channel, with no details, and the maintainer will reply. Please do not open a public issue, pull request or discussion for a suspected vulnerability.
+Report vulnerabilities privately through GitHub Security Advisories: open the repository's Security tab and select "Report a vulnerability". If the button is missing, open an issue that only asks for a private channel, with no details, and the maintainer will reply. Please do not open a public issue, pull request or discussion for a suspected vulnerability.
 
 A useful report says what you found, the Culla version or commit, your Windows version, and the steps or file needed to reproduce it. If a crafted photo file triggers the issue, attach it to the advisory, not to a public issue.
 
