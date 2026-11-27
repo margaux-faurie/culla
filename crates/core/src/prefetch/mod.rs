@@ -178,6 +178,12 @@ impl<K: Copy + Eq + Hash> Scheduler<K> {
         self.failed.contains(k)
     }
 
+    /// Whether the cache refused `k`'s preview since the window last changed.
+    #[must_use]
+    pub fn not_admitted(&self, k: &K) -> bool {
+        self.not_admitted.contains(k)
+    }
+
     /// The highest-priority wanted photo that is not `cached`, not in flight, not failed and
     /// not refused by the cache since the window last changed. It is marked in flight.
     pub fn next(&mut self, cached: impl Fn(&K) -> bool) -> Option<K> {
@@ -503,7 +509,9 @@ pub struct Budgets {
 impl Budgets {
     /// Provisional defaults (SPEC §10): 128 MiB of input (two files at the 64 MiB cap, about
     /// five 45 MP camera JPEGs) and 256 MiB of working memory (four 24 or 45 MP calls at about
-    /// 35 MB each with room to spare, or one 25 MP multi-scan call with its coefficients).
+    /// 58 to 59 MB each, or one 25 MP multi-scan call with its coefficients next to a 24 MP
+    /// one). Hard caps on what the pipeline reserves: what each call really allocates is
+    /// estimated ([`crate::preview::Plan::working_bytes`]).
     pub const DEFAULT: Self = Self {
         input: 128 * 1024 * 1024,
         working: 256 * 1024 * 1024,

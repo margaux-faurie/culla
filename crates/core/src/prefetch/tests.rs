@@ -120,10 +120,13 @@ fn a_photo_the_cache_refused_waits_for_the_window_to_change() {
     let none = |_: &usize| false;
     assert_eq!(s.next(none), Some(1));
     s.finish(1, Outcome::NotAdmitted);
+    assert!(s.not_admitted(&1));
     assert_eq!(s.next(none), Some(2));
     s.finish(2, Outcome::Cached);
+    assert!(!s.not_admitted(&2));
     assert_eq!(s.next(|k| *k == 2), None);
     s.set_wanted([2, 1]);
+    assert!(!s.not_admitted(&1));
     assert_eq!(s.next(|k| *k == 2), Some(1));
 }
 

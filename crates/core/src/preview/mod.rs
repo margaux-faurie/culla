@@ -275,7 +275,9 @@ impl Plan {
 
     /// The most memory one preview call holds at once for this plan, besides its input and a
     /// multi-scan JPEG's coefficients ([`coefficient_bytes`]): the larger of its steps (decode;
-    /// resize, holding the decoded and the resized buffer; orient, holding the resized and the
+    /// resize, holding the decoded and the resized buffer and the intermediate image of a
+    /// separable convolution, assumed `resized.width` × `decoded.height` × 3 bytes; orient,
+    /// holding the resized and the
     /// turned buffer; encode, holding the turned buffer and the encoder's output buffer of up
     /// to 3 bytes per pixel, MCU-padded, plus 2 KiB), plus [`DECODER_SLACK_BYTES`] for
     /// libjpeg-turbo's own working memory. The preview pipeline reserves this before the call
@@ -286,6 +288,12 @@ impl Plan {
         let decoded = rgb(self.decoded);
         let resized = if self.needs_resize() {
             rgb(self.resized)
+        } else {
+            0
+        };
+        // A horizontal pass, then a vertical one: the first pass's output.
+        let intermediate = if self.needs_resize() {
+            rgb(Size::new(self.resized.width, self.decoded.height))
         } else {
             0
         };
@@ -305,7 +313,7 @@ impl Plan {
             .saturating_mul(CHANNELS as u64)
             .saturating_add(2048);
         let peak = decoded
-            .max(decoded.saturating_add(resized))
+            .max(decoded.saturating_add(resized).saturating_add(intermediate))
             .max(after_resize.saturating_add(turned))
             .max(upright.saturating_add(encoded));
         peak.saturating_add(DECODER_SLACK_BYTES)

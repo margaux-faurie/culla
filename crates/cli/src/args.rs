@@ -1,5 +1,5 @@
 //! Command line parsing, std only: `culla scan <folder> [--no-subfolders] [--json]`,
-//! `culla preview <folder> [--no-subfolders] [--out <dir>]`, `culla help [scan|preview]`,
+//! `culla preview <folder> [--no-subfolders]`, `culla help [scan|preview]`,
 //! `culla --version`.
 
 use std::ffi::OsString;
@@ -48,9 +48,6 @@ pub(crate) struct PreviewArgs {
     pub folder: PathBuf,
     /// Scan subfolders too (default on, off with `--no-subfolders`).
     pub include_subfolders: bool,
-    /// Where to write the previews: a new or empty folder outside the scanned one. `None`
-    /// writes nothing.
-    pub out: Option<PathBuf>,
 }
 
 /// The command line is not valid. The text says why; usage follows it on stderr.
@@ -174,10 +171,8 @@ fn parse_scan(rest: Vec<OsString>) -> Result<Command, UsageError> {
 fn parse_preview(rest: Vec<OsString>) -> Result<Command, UsageError> {
     let mut folder: Option<OsString> = None;
     let mut no_subfolders = false;
-    let mut out: Option<OsString> = None;
     let mut options_done = false;
-    let mut rest = rest.into_iter();
-    while let Some(arg) = rest.next() {
+    for arg in rest {
         let is_option = !options_done && arg.to_str().is_some_and(|s| s.starts_with('-'));
         if is_option {
             match arg.to_str() {
@@ -191,18 +186,6 @@ fn parse_preview(rest: Vec<OsString>) -> Result<Command, UsageError> {
                         ));
                     }
                     no_subfolders = true;
-                }
-                Some("--out") => {
-                    if out.is_some() {
-                        return Err(usage(
-                            Topic::Preview,
-                            format!("{} given twice", quoted(&arg)),
-                        ));
-                    }
-                    match rest.next() {
-                        Some(dir) if !dir.is_empty() => out = Some(dir),
-                        _ => return Err(usage(Topic::Preview, "'--out' needs a folder")),
-                    }
                 }
                 _ => {
                     return Err(usage(
@@ -228,7 +211,6 @@ fn parse_preview(rest: Vec<OsString>) -> Result<Command, UsageError> {
     Ok(Command::Preview(PreviewArgs {
         folder: PathBuf::from(folder),
         include_subfolders: !no_subfolders,
-        out: out.map(PathBuf::from),
     }))
 }
 
@@ -248,12 +230,11 @@ pub(crate) fn help(topic: Topic) -> &'static str {
 }
 
 const OVERVIEW: &str = "\
-Culla, headless. Reads only: nothing is written anywhere, except the previews
-`culla preview --out` writes into a new or empty folder you name.
+Culla, headless. Reads only: nothing is written anywhere but stdout and stderr.
 
 Usage:
   culla scan <folder> [--no-subfolders] [--json]
-  culla preview <folder> [--no-subfolders] [--out <dir>]
+  culla preview <folder> [--no-subfolders]
   culla help [scan|preview]
   culla --version
 
@@ -268,7 +249,6 @@ Exit codes:
   2  the folder is refused (a link, a cloud placeholder, not a folder, too large,
      a path or volume Culla does not support)
   3  the folder cannot be read
-  4  the output folder is refused or cannot be written (preview --out)
 ";
 
 const SCAN: &str = "\
@@ -295,26 +275,24 @@ Exit codes: 0 done, 1 usage error, 2 folder refused, 3 folder unreadable.
 ";
 
 const PREVIEW: &str = "\
-Usage: culla preview <folder> [--no-subfolders] [--out <dir>]
+Usage: culla preview <folder> [--no-subfolders]
 
 Scans the folder like culla scan, then builds the screen preview of each group in
 capture-time order (the camera JPEG, or a lone NEF's embedded JPEG; 2880x1800 box,
 upright) on the preview pipeline: reader thread, decode workers, prefetch of 5 ahead
 and 2 behind, in-memory cache. Prints the time of each step per photo and the totals.
 Progress goes to stderr. A photo that fails is listed and the others go on.
+Reads only: the previews are decoded, timed and dropped; nothing is written.
 
 Options:
   --no-subfolders  scan the folder itself only
-  --out <dir>      write each preview as a JPEG into <dir>: a new folder (its parent
-                   must exist) or an empty one, outside the scanned folder. Files are
-                   only ever created, never replaced. Without --out nothing is written.
   -h, --help       show this help
   --               treat what follows as the folder, even if it starts with '-'
 
 The output is unstable until M2 and may change.
 
 Exit codes: 0 done (failed previews are listed), 1 usage error, 2 folder refused,
-3 folder unreadable, 4 output folder refused or not writable.
+3 folder unreadable.
 ";
 
 #[cfg(test)]
@@ -349,24 +327,15 @@ mod tests {
 
     #[test]
     fn preview_with_options() {
-        let pv = |folder: &str, include_subfolders, out: Option<&str>| {
+        let pv = |folder: &str, include_subfolders| {
             Command::Preview(PreviewArgs {
                 folder: PathBuf::from(folder),
                 include_subfolders,
-                out: out.map(PathBuf::from),
             })
         };
-        assert_eq!(p(&["preview", "d"]), Ok(pv("d", true, None)));
-        assert_eq!(
-            p(&["preview", "--out", "o", "d", "--no-subfolders"]),
-            Ok(pv("d", false, Some("o")))
-        );
-        // The folder after --out is taken as is, even when it starts with '-'.
-        assert_eq!(
-            p(&["preview", "d", "--out", "-o"]),
-            Ok(pv("d", true, Some("-o")))
-        );
-        assert_eq!(p(&["preview", "--", "-d"]), Ok(pv("-d", true, None)));
+        assert_eq!(p(&["preview", "d"]), Ok(pv("d", true)));
+        assert_eq!(p(&["preview", "--no-subfolders", "d"]), Ok(pv("d", false)));
+        assert_eq!(p(&["preview", "--", "-d"]), Ok(pv("-d", true)));
         assert_eq!(p(&["help", "preview"]), Ok(Command::Help(Topic::Preview)));
         assert_eq!(p(&["preview", "-h"]), Ok(Command::Help(Topic::Preview)));
     }
@@ -398,14 +367,9 @@ mod tests {
         );
         assert_eq!(msg(&["help", "apply"]), "no help for 'apply'");
         assert_eq!(msg(&["preview"]), "no folder given");
-        assert_eq!(msg(&["preview", "a", "--out"]), "'--out' needs a folder");
         assert_eq!(
-            msg(&["preview", "a", "--out", ""]),
-            "'--out' needs a folder"
-        );
-        assert_eq!(
-            msg(&["preview", "a", "--out", "o", "--out", "p"]),
-            "'--out' given twice"
+            msg(&["preview", "a", "--out", "o"]),
+            "unknown option '--out'"
         );
         assert_eq!(msg(&["preview", "a", "--json"]), "unknown option '--json'");
         assert_eq!(msg(&["preview", "a", "b"]), "unexpected argument 'b'");

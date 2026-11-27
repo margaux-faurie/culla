@@ -6,9 +6,9 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use culla_adapters::pipeline::{
     Config, Decoder, FolderSource, Item, PhotoId, Pipeline, PipelineError, PreviewSource,
@@ -16,7 +16,7 @@ use culla_adapters::pipeline::{
 };
 use culla_adapters::preview::{Preview, PreviewError, PreviewOptions, Timings};
 use culla_core::exif::Orientation;
-use culla_core::prefetch::{Budgets, Capacity, Direction, Window};
+use culla_core::prefetch::{Budgets, Capacity, Direction, Window, wanted};
 use culla_core::preview::{self, Size};
 
 const LONG: Duration = Duration::from_secs(20);
@@ -84,9 +84,36 @@ impl PreviewSource for FakeSource {
     }
 }
 
-/// Plans like the real pipeline, sleeps `delay`, and returns a preview of `out_bytes` bytes.
+/// Shut until [`Gate::open`] (or [`LONG`]): holds decodes so a test can move the window while they run.
+#[derive(Default)]
+struct Gate {
+    open: Mutex<bool>,
+    changed: Condvar,
+}
+
+impl Gate {
+    fn open(&self) {
+        *self.open.lock().unwrap() = true;
+        self.changed.notify_all();
+    }
+
+    /// Waits for the gate, at most [`LONG`]: a test that fails while it is shut still ends.
+    fn pass(&self) {
+        let open = self.open.lock().unwrap();
+        let _ = self
+            .changed
+            .wait_timeout_while(open, LONG, |open| !*open)
+            .unwrap();
+    }
+}
+
+/// Plans like the real pipeline, waits at its gate (photos below `gated_below`), sleeps
+/// `delay`, and returns a preview of `out_bytes` bytes.
 struct FakeDecoder {
     delay: Duration,
+    gate: Arc<Gate>,
+    gated_below: PhotoId,
+    started: Mutex<Vec<PhotoId>>,
     out_bytes: usize,
     panic_on: HashSet<PhotoId>,
     running: AtomicUsize,
@@ -100,6 +127,9 @@ impl FakeDecoder {
     fn new(delay_ms: u64) -> Self {
         Self {
             delay: Duration::from_millis(delay_ms),
+            gate: Arc::new(Gate::default()),
+            gated_below: 0,
+            started: Mutex::new(Vec::new()),
             out_bytes: 1000,
             panic_on: HashSet::new(),
             running: AtomicUsize::new(0),
@@ -120,11 +150,15 @@ impl Decoder for FakeDecoder {
     ) -> Result<Preview, PreviewError> {
         let id = id_of(jpeg);
         let multi = jpeg[3] == 0xC2;
+        self.started.lock().unwrap().push(id);
         let n = self.running.fetch_add(1, Ordering::SeqCst) + 1;
         self.max_running.fetch_max(n, Ordering::SeqCst);
         if multi {
             let m = self.multi_running.fetch_add(1, Ordering::SeqCst) + 1;
             self.max_multi_running.fetch_max(m, Ordering::SeqCst);
+        }
+        if id < self.gated_below {
+            self.gate.pass();
         }
         thread::sleep(self.delay);
         self.running.fetch_sub(1, Ordering::SeqCst);
@@ -159,6 +193,28 @@ fn start(
 ) -> Pipeline<FakeSource, Arc<FakeDecoder>> {
     let order = (0..source.len).collect();
     Pipeline::start(source, Arc::clone(decoder), order, config).unwrap()
+}
+
+/// Waits until nothing is reserved in either budget (in-flight work ends on its own).
+fn settles(p: &Pipeline<impl PreviewSource, impl Decoder>) {
+    let deadline = Instant::now() + LONG;
+    while p.in_use() != (0, 0) {
+        assert!(
+            Instant::now() < deadline,
+            "still reserved: {:?}",
+            p.in_use()
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// Polls `cond` until it holds.
+fn until(mut cond: impl FnMut() -> bool) {
+    let deadline = Instant::now() + LONG;
+    while !cond() {
+        assert!(Instant::now() < deadline, "timed out");
+        thread::sleep(Duration::from_millis(1));
+    }
 }
 
 fn ready(p: &Pipeline<impl PreviewSource, impl Decoder>, id: PhotoId) {
@@ -209,16 +265,17 @@ fn the_order_maps_positions_to_photos() {
 
 #[test]
 fn moving_the_window_cancels_stale_prefetches() {
-    let d = Arc::new(FakeDecoder::new(40));
+    let mut decoder = FakeDecoder::new(0);
+    decoder.gated_below = 10;
+    let d = Arc::new(decoder);
     let source = FakeSource::new(100);
     let reads = Arc::clone(&source.reads);
     let p = start(source, &d, config(1));
     p.show(0, Direction::Forward);
-    // Let the reader queue the old window (0 to 5) and the worker start on it.
-    while reads.lock().unwrap().len() < 6 || d.running.load(Ordering::SeqCst) == 0 {
-        thread::sleep(Duration::from_millis(1));
-    }
+    // The reader queues the old window (0 to 5) and the only worker is held decoding 0.
+    until(|| reads.lock().unwrap().len() >= 6 && d.running.load(Ordering::SeqCst) == 1);
     p.show(50, Direction::Forward);
+    d.gate.open();
     for id in [50, 51, 52, 53, 54, 55, 49, 48] {
         ready(&p, id);
     }
@@ -238,6 +295,94 @@ fn moving_the_window_cancels_stale_prefetches() {
     for id in 0..6 {
         assert_eq!(p.status(id), Status::NotWanted, "{id}");
     }
+    settles(&p);
+}
+
+#[test]
+fn a_waiting_current_photo_is_admitted_before_lower_prefetches() {
+    let need = |id| {
+        preview::plan_for_jpeg(
+            &header_jpeg(id, false),
+            Orientation::Normal,
+            PreviewOptions::default().target,
+            &PreviewOptions::default().limits,
+        )
+        .unwrap()
+        .working_bytes()
+    };
+    let mut decoder = FakeDecoder::new(0);
+    decoder.gated_below = 1;
+    let d = Arc::new(decoder);
+    let mut c = config(3);
+    // Room for one call at a time.
+    c.budgets.working = need(2) + need(0) / 2;
+    let p = start(FakeSource::new(3), &d, c);
+    // 0 decodes, held at the gate; then 1 waits for memory.
+    p.set_wanted([0]);
+    until(|| d.running.load(Ordering::SeqCst) == 1);
+    p.set_wanted([0, 1]);
+    until(|| p.waiting() == 1);
+    // 2 comes in as the current photo: it waits for memory too and holds 1 back.
+    p.set_wanted([2, 0, 1]);
+    until(|| p.waiting() == 2);
+    d.gate.open();
+    for id in 0..3 {
+        ready(&p, id);
+    }
+    assert_eq!(*d.started.lock().unwrap(), vec![0, 2, 1]);
+    settles(&p);
+}
+
+#[test]
+fn a_preview_the_cache_refused_is_reported_not_pending() {
+    let d = Arc::new(FakeDecoder::new(0));
+    let mut c = config(1);
+    c.window = Window {
+        ahead: 1,
+        behind: 0,
+    };
+    c.capacity = Capacity {
+        max_entries: 1,
+        max_bytes: 1 << 20,
+    };
+    let p = start(FakeSource::new(5), &d, c);
+    p.show(0, Direction::Forward);
+    ready(&p, 0);
+    // 1 is made, but the cache holds only the current photo, which ranks higher.
+    assert_eq!(p.wait(1, LONG), Status::NotAdmitted);
+    assert_eq!(p.status(1), Status::NotAdmitted);
+    assert_eq!(p.stats().not_admitted, 1);
+    // Once the window moves, it is made again and admitted.
+    p.show(1, Direction::Forward);
+    ready(&p, 1);
+    settles(&p);
+}
+
+#[test]
+fn status_does_not_change_the_eviction_order() {
+    let d = Arc::new(FakeDecoder::new(0));
+    let mut c = config(1);
+    c.window = Window {
+        ahead: 0,
+        behind: 0,
+    };
+    c.capacity = Capacity {
+        max_entries: 2,
+        max_bytes: 1 << 20,
+    };
+    let p = start(FakeSource::new(5), &d, c);
+    p.show(0, Direction::Forward);
+    ready(&p, 0);
+    p.show(1, Direction::Forward);
+    ready(&p, 1);
+    // 0 is the least recently used; looking at it does not change that.
+    for _ in 0..3 {
+        assert!(matches!(p.status(0), Status::Ready(_)));
+    }
+    p.show(2, Direction::Forward);
+    ready(&p, 2);
+    assert_eq!(p.status(0), Status::NotWanted);
+    assert!(matches!(p.status(1), Status::Ready(_)));
 }
 
 #[test]
@@ -265,6 +410,7 @@ fn a_panic_fails_one_photo_and_the_pool_carries_on() {
     let s = p.stats();
     assert_eq!(s.panics, 2);
     assert_eq!(s.failed, 2);
+    settles(&p);
 }
 
 #[test]
@@ -338,6 +484,7 @@ fn work_larger_than_a_budget_fails_that_photo() {
         p.wait(0, LONG),
         Status::Failed(PipelineError::OverBudget { limit: 1024, .. })
     ));
+    settles(&p);
 
     let mut c = config(2);
     c.budgets.input = 10;
@@ -347,6 +494,7 @@ fn work_larger_than_a_budget_fails_that_photo() {
         p.wait(0, LONG),
         Status::Failed(PipelineError::Read(ReadError::OverBudget { limit: 10, .. }))
     ));
+    settles(&p);
 }
 
 #[test]
@@ -361,6 +509,15 @@ fn the_cache_keeps_to_its_capacity_while_swiping() {
     for pos in 0..30 {
         p.show(pos, Direction::Forward);
         ready(&p, pos);
+        // Let the whole window settle: each photo is cached or refused, never left pending.
+        let window = wanted(pos, 40, Direction::Forward, Window::DEFAULT);
+        for &id in &window {
+            let s = p.wait(id, LONG);
+            assert!(
+                matches!(s, Status::Ready(_) | Status::NotAdmitted),
+                "{id}: {s:?}"
+            );
+        }
         let (n, bytes) = p.cached();
         assert!(n <= 3 && bytes <= 3500, "{n} {bytes}");
     }

@@ -1,6 +1,6 @@
-//! `culla preview` run as a process (ADR 0020): previews of a built tree, the `--out` rules
-//! (new or empty folder, outside the scanned one, files created and never replaced), and that
-//! the scanned tree is left exactly as it was.
+//! `culla preview` run as a process (ADR 0020): previews of a built tree, made, timed and
+//! dropped, and the tree (and the folder around it) left exactly as it was: the command
+//! writes nothing but stdout and stderr (file-engine INV-03).
 //!
 //! Temporary trees live under `std::env::temp_dir()` with a unique name, are built with
 //! `create_new` only, and are removed by [`TempTree`] on drop: the only removal in this file,
@@ -29,13 +29,8 @@ fn culla(args: &[&OsStr]) -> Output {
         .expect("run culla")
 }
 
-fn preview(folder: &Path, out: Option<&Path>) -> Output {
-    let mut args: Vec<&OsStr> = vec!["preview".as_ref(), folder.as_os_str()];
-    if let Some(out) = out {
-        args.push("--out".as_ref());
-        args.push(out.as_os_str());
-    }
-    culla(&args)
+fn preview(folder: &Path) -> Output {
+    culla(&["preview".as_ref(), folder.as_os_str()])
 }
 
 fn stdout(o: &Output) -> String {
@@ -82,12 +77,6 @@ impl TempTree {
             .open(&path)
             .unwrap();
         f.write_all(bytes).unwrap();
-        path
-    }
-
-    fn dir(&self, rel: &str) -> PathBuf {
-        let path = self.0.join(rel);
-        fs::create_dir_all(&path).unwrap();
         path
     }
 }
@@ -146,28 +135,19 @@ fn card(t: &TempTree) -> PathBuf {
     t.path().join("card")
 }
 
-fn names(dir: &Path) -> Vec<String> {
-    let mut v: Vec<String> = fs::read_dir(dir)
-        .unwrap()
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
-    v.sort();
-    v
-}
-
 #[test]
-fn previews_a_card_and_writes_nothing_by_default() {
+fn previews_a_card_and_writes_nothing() {
     let t = TempTree::new("default");
     let card = card(&t);
     let before = snapshot(t.path());
-    let o = preview(&card, None);
+    let o = preview(&card);
     assert_eq!(code(&o), 0, "{}", stderr(&o));
     let out = stdout(&o);
     assert!(
         out.contains("previews: 2 made, 0 failed, of 2 groups"),
         "{out}"
     );
-    assert!(out.contains("written:  nothing (no --out)"), "{out}");
+    assert!(out.contains("written:  nothing (read-only)"), "{out}");
     assert!(
         out.contains("DCIM/DSC_0001.JPG") || out.contains("DCIM\\DSC_0001.JPG"),
         "{out}"
@@ -183,127 +163,12 @@ fn previews_a_card_and_writes_nothing_by_default() {
 }
 
 #[test]
-fn writes_previews_into_a_new_folder() {
-    let t = TempTree::new("new-out");
-    let card = card(&t);
-    let src_before = snapshot(&card);
-    let out_dir = t.path().join("previews");
-    let o = preview(&card, Some(&out_dir));
-    assert_eq!(code(&o), 0, "{}", stderr(&o));
-    assert!(
-        stdout(&o).contains("written:  2 files to"),
-        "{}",
-        stdout(&o)
-    );
-    let files = names(&out_dir);
-    assert_eq!(files.len(), 2, "{files:?}");
-    assert!(
-        files.iter().any(|f| f.ends_with("-DSC_0001.jpg")),
-        "{files:?}"
-    );
-    assert!(
-        files.iter().any(|f| f.ends_with("-DSC_0002.jpg")),
-        "{files:?}"
-    );
-    for f in &files {
-        let bytes = fs::read(out_dir.join(f)).unwrap();
-        assert_eq!(&bytes[..2], &[0xFF, 0xD8]);
-        assert_eq!(&bytes[bytes.len() - 2..], &[0xFF, 0xD9]);
-    }
-    assert_eq!(snapshot(&card), src_before, "the source is only read");
-}
-
-#[test]
-fn writes_into_an_empty_existing_folder() {
-    let t = TempTree::new("empty-out");
-    let card = card(&t);
-    let out_dir = t.dir("out");
-    let o = preview(&card, Some(&out_dir));
-    assert_eq!(code(&o), 0, "{}", stderr(&o));
-    assert_eq!(names(&out_dir).len(), 2);
-}
-
-#[test]
-fn refuses_an_output_folder_that_is_not_empty_or_not_a_folder() {
-    let t = TempTree::new("bad-out");
-    let card = card(&t);
-    let busy = t.dir("busy");
-    t.file("busy/0001-DSC_0001.jpg", b"keep me");
-    let file = t.file("a-file", b"x");
-    let before = snapshot(t.path());
-    for (out, why) in [
-        (busy.clone(), "the output folder is not empty"),
-        (file.clone(), "the output folder is not a folder"),
-        (
-            t.path().join("missing/new"),
-            "cannot create the output folder",
-        ),
-    ] {
-        let o = preview(&card, Some(&out));
-        assert_eq!(code(&o), 4, "{out:?}: {}", stderr(&o));
-        assert!(stderr(&o).contains(why), "{out:?}: {}", stderr(&o));
-        assert!(o.stdout.is_empty());
-    }
-    assert_eq!(
-        snapshot(t.path()),
-        before,
-        "nothing may be written or replaced"
-    );
-}
-
-#[test]
-fn refuses_an_output_folder_inside_the_scanned_folder() {
-    let t = TempTree::new("inside-out");
-    let card = card(&t);
-    let before = snapshot(t.path());
-    for out in [
-        card.join("previews"),
-        card.join("DCIM"),
-        card.clone(),
-        card.join("x/../previews"),
-    ] {
-        let o = preview(&card, Some(&out));
-        assert_eq!(code(&o), 4, "{out:?}: {}", stderr(&o));
-        assert!(
-            stderr(&o).contains("inside the scanned folder"),
-            "{out:?}: {}",
-            stderr(&o)
-        );
-    }
-    assert_eq!(
-        snapshot(t.path()),
-        before,
-        "nothing may be created in the source"
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn refuses_an_output_link() {
-    let t = TempTree::new("link-out");
-    let card = card(&t);
-    let target = t.dir("target");
-    let link = t.path().join("link");
-    std::os::unix::fs::symlink(&target, &link).unwrap();
-    let o = preview(&card, Some(&link));
-    assert_eq!(code(&o), 4, "{}", stderr(&o));
-    assert!(stderr(&o).contains("is a link"), "{}", stderr(&o));
-    // A link to a folder inside the source is refused for where it points.
-    let inside = t.path().join("inside");
-    std::os::unix::fs::symlink(card.join("DCIM"), &inside).unwrap();
-    let o = preview(&card, Some(&inside.join("new")));
-    assert_eq!(code(&o), 4, "{}", stderr(&o));
-    assert!(stderr(&o).contains("inside the scanned folder"));
-    assert!(names(&target).is_empty());
-}
-
-#[test]
 fn a_broken_photo_is_listed_and_the_others_go_on() {
     let t = TempTree::new("broken");
     let card = card(&t);
     t.file("card/DCIM/DSC_0003.JPG", b"not a JPEG at all");
-    let out_dir = t.path().join("out");
-    let o = preview(&card, Some(&out_dir));
+    let before = snapshot(t.path());
+    let o = preview(&card);
     assert_eq!(code(&o), 0, "{}", stderr(&o));
     let out = stdout(&o);
     assert!(
@@ -311,23 +176,39 @@ fn a_broken_photo_is_listed_and_the_others_go_on() {
         "{out}"
     );
     assert!(out.contains("failed: preview refused"), "{out}");
-    assert_eq!(names(&out_dir).len(), 2);
+    assert_eq!(snapshot(t.path()), before, "nothing may be written");
 }
 
 #[test]
 fn a_missing_folder_exits_3_and_a_file_exits_2() {
     let t = TempTree::new("missing");
-    let o = preview(&t.path().join("nope"), None);
+    let o = preview(&t.path().join("nope"));
     assert_eq!(code(&o), 3, "{}", stderr(&o));
     let f = t.file("f.JPG", b"x");
-    let o = preview(&f, None);
+    let o = preview(&f);
     assert_eq!(code(&o), 2, "{}", stderr(&o));
-    // A bad --out next to a missing folder: the output folder is checked first, and nothing
-    // is created before the scan succeeds.
-    let out = t.path().join("out");
-    let o = preview(&t.path().join("nope"), Some(&out));
-    assert_eq!(code(&o), 3, "{}", stderr(&o));
-    assert!(!out.exists());
+}
+
+#[test]
+fn there_is_no_out_option() {
+    let t = TempTree::new("no-out");
+    let card = card(&t);
+    let before = snapshot(t.path());
+    let out = t.path().join("previews");
+    let o = culla(&[
+        "preview".as_ref(),
+        card.as_os_str(),
+        "--out".as_ref(),
+        out.as_os_str(),
+    ]);
+    assert_eq!(code(&o), 1, "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("unknown option '--out'"),
+        "{}",
+        stderr(&o)
+    );
+    assert!(o.stdout.is_empty());
+    assert_eq!(snapshot(t.path()), before, "nothing may be written");
 }
 
 #[test]
@@ -338,12 +219,13 @@ fn help_describes_preview() {
         assert_eq!(code(&o), 0);
         let out = stdout(&o);
         assert!(out.starts_with("Usage: culla preview <folder>"), "{out}");
-        assert!(out.contains("never replaced"), "{out}");
+        assert!(out.contains("nothing is written"), "{out}");
+        assert!(!out.contains("--out"), "{out}");
     }
     let o = culla(&[OsStr::new("help")]);
     let out = stdout(&o);
-    assert!(out.contains("culla preview <folder> [--no-subfolders] [--out <dir>]"));
-    assert!(out.contains("4  the output folder is refused"));
+    assert!(out.contains("culla preview <folder> [--no-subfolders]\n"));
+    assert!(!out.contains("--out") && !out.contains("  4  "), "{out}");
 }
 
 #[test]
@@ -355,9 +237,7 @@ fn real_samples_preview_at_screen_size() {
     };
     let root = PathBuf::from(root);
     let before = snapshot(&root);
-    let t = TempTree::new("real");
-    let out_dir = t.path().join("previews");
-    let o = preview(&root, Some(&out_dir));
+    let o = preview(&root);
     assert_eq!(code(&o), 0, "{}", stderr(&o));
     let text = stdout(&o);
     println!("{text}");
@@ -374,7 +254,6 @@ fn real_samples_preview_at_screen_size() {
             "not screen sized: {line}"
         );
     }
-    assert_eq!(names(&out_dir).len(), 9);
     assert!(!text.to_ascii_lowercase().contains("gps"));
     assert_eq!(snapshot(&root), before, "the preview changed the samples");
 }

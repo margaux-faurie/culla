@@ -14,14 +14,21 @@
 //!   priority, check and plan it with Culla's own parser (`preview::check_frame`, before any
 //!   decoder), reserve [`Plan::working_bytes`] and, for a multi-scan JPEG, its coefficients
 //!   ([`coefficient_bytes`]) in the working budget, and run the [`Decoder`] (turbojpeg,
-//!   [`crate::preview::build_preview`]). At most one multi-scan decode runs at a time.
+//!   [`crate::preview::build_preview`]). At most one multi-scan decode runs at a time. While a
+//!   job waits for working memory, no job of lower priority is admitted ahead of it, so small
+//!   prefetches cannot starve the current photo. A job still queued (not yet taken by a
+//!   worker) does not hold back the workers' own jobs: with every worker waiting, the current
+//!   photo can sit in the queue until one of them is done (a known limit, architecture, "Preview
+//!   pipeline threads, prefetch and cache").
 //! * **Cancellation.** Moving the window ([`Pipeline::show`], [`Pipeline::set_wanted`]) makes
 //!   the photos that left it stale: a reader drops one before reading it or while waiting for
 //!   budget, a worker before decoding it or while waiting; a decode already running finishes
 //!   (libjpeg-turbo cannot be interrupted) and its result is dropped.
 //! * **Isolation.** A panic in a source read, the frame check or the decoder fails that photo
 //!   only ([`PipelineError::Panicked`]); the thread carries on. A poisoned lock is recovered:
-//!   no foreign code runs while it is held.
+//!   no foreign code runs while it is held. Each job also has a drop guard: should the thread
+//!   unwind anywhere else, the guard gives back the job's budgets and marks the photo failed
+//!   (that thread then ends; the others go on).
 //!
 //! Nothing here writes a file. The disk cache (`%LOCALAPPDATA%\Culla\cache`) comes later.
 
@@ -243,6 +250,9 @@ pub enum Status {
     Failed(PipelineError),
     /// Wanted and not ready yet.
     Pending,
+    /// Wanted, made, but refused by the cache (everything it holds ranks higher). Not made
+    /// again until the window changes ([`Pipeline::show`], [`Pipeline::set_wanted`]).
+    NotAdmitted,
     /// Not cached, not wanted, not in flight.
     NotWanted,
 }
@@ -287,6 +297,8 @@ struct State {
     working: culla_core::prefetch::Budget,
     decodes: usize,
     multi_scan: usize,
+    /// Jobs waiting for room in the working budget: none of lower priority is admitted first.
+    waiting: Vec<PhotoId>,
     order: Vec<PhotoId>,
     shutdown: bool,
     stats: Stats,
@@ -306,6 +318,36 @@ impl State {
 
     fn live(&self, id: PhotoId) -> bool {
         !self.shutdown && self.sched.is_wanted(&id)
+    }
+
+    /// Where `id` stands, without waiting. `touch` marks a ready preview as just used.
+    fn status(&mut self, id: PhotoId, touch: bool) -> Option<Status> {
+        if let Some(p) = self.ready.get(&id).cloned() {
+            if touch {
+                self.lru.touch(&id);
+            }
+            return Some(Status::Ready(p));
+        }
+        if let Some(e) = self.failed.get(&id) {
+            return Some(Status::Failed(e.clone()));
+        }
+        if self.sched.in_flight(&id) {
+            return None;
+        }
+        if !self.sched.is_wanted(&id) {
+            return Some(Status::NotWanted);
+        }
+        if self.sched.not_admitted(&id) {
+            return Some(Status::NotAdmitted);
+        }
+        None
+    }
+
+    /// Whether a job of higher priority than `id` is waiting for working memory.
+    fn outranked(&self, id: PhotoId) -> bool {
+        let rank = |k: &PhotoId| self.sched.priority(k).unwrap_or(usize::MAX);
+        let mine = rank(&id);
+        self.waiting.iter().any(|w| *w != id && rank(w) < mine)
     }
 }
 
@@ -352,6 +394,7 @@ impl<S: PreviewSource, D: Decoder> Pipeline<S, D> {
             working: culla_core::prefetch::Budget::new(config.budgets.working),
             decodes: 0,
             multi_scan: 0,
+            waiting: Vec::new(),
             order,
             shutdown: false,
             stats: Stats::default(),
@@ -434,28 +477,25 @@ impl<S: PreviewSource, D: Decoder> Pipeline<S, D> {
         p
     }
 
-    /// Where `id` stands now.
+    /// Where `id` stands now. A look only: a ready preview is not marked as used, so the
+    /// cache's eviction order does not change.
     #[must_use]
     pub fn status(&self, id: PhotoId) -> Status {
-        self.wait(id, Duration::ZERO)
+        self.shared
+            .lock()
+            .status(id, false)
+            .unwrap_or(Status::Pending)
     }
 
-    /// Waits up to `timeout` for `id` to be ready or to fail. A ready preview is marked as
-    /// just used.
+    /// Waits up to `timeout` for `id` to be ready, to fail, or to be refused by the cache
+    /// ([`Status::NotAdmitted`]). A ready preview is marked as just used.
     #[must_use]
     pub fn wait(&self, id: PhotoId, timeout: Duration) -> Status {
         let deadline = Instant::now().checked_add(timeout);
         let mut st = self.shared.lock();
         loop {
-            if let Some(p) = st.ready.get(&id).cloned() {
-                st.lru.touch(&id);
-                return Status::Ready(p);
-            }
-            if let Some(e) = st.failed.get(&id) {
-                return Status::Failed(e.clone());
-            }
-            if !st.sched.is_wanted(&id) && !st.sched.in_flight(&id) {
-                return Status::NotWanted;
+            if let Some(status) = st.status(id, true) {
+                return status;
             }
             let now = Instant::now();
             let left = match deadline {
@@ -494,6 +534,78 @@ impl<S: PreviewSource, D: Decoder> Pipeline<S, D> {
     #[must_use]
     pub fn stats(&self) -> Stats {
         self.shared.lock().stats
+    }
+
+    /// Jobs waiting now for room in the working budget.
+    #[must_use]
+    pub fn waiting(&self) -> usize {
+        self.shared.lock().waiting.len()
+    }
+
+    /// Bytes reserved now in the input and the working budget.
+    #[must_use]
+    pub fn in_use(&self) -> (u64, u64) {
+        let st = self.shared.lock();
+        (st.input.used(), st.working.used())
+    }
+}
+
+/// What one job holds, given back exactly once: by [`Job::settle`] on every normal path, or by
+/// `Drop` if the thread unwinds outside the `catch_unwind` regions, which then also marks the
+/// photo failed ([`PipelineError::Panicked`]) so it is not left in flight.
+struct Job<'a, S, D> {
+    sh: &'a Shared<S, D>,
+    id: PhotoId,
+    input: u64,
+    working: u64,
+    /// Counted in `decodes` (and `multi_scan` if `multi_scan`).
+    running: bool,
+    multi_scan: bool,
+    settled: bool,
+}
+
+impl<'a, S, D> Job<'a, S, D> {
+    fn new(sh: &'a Shared<S, D>, id: PhotoId) -> Self {
+        Self {
+            sh,
+            id,
+            input: 0,
+            working: 0,
+            running: false,
+            multi_scan: false,
+            settled: false,
+        }
+    }
+
+    /// Gives back everything the job holds. The caller then records the outcome.
+    fn settle(&mut self, st: &mut State) {
+        if self.settled {
+            return;
+        }
+        self.settled = true;
+        st.input.release(self.input);
+        st.working.release(self.working);
+        if self.running {
+            st.decodes = st.decodes.saturating_sub(1);
+            if self.multi_scan {
+                st.multi_scan = st.multi_scan.saturating_sub(1);
+            }
+        }
+        st.waiting.retain(|w| *w != self.id);
+    }
+}
+
+impl<S, D> Drop for Job<'_, S, D> {
+    fn drop(&mut self) {
+        if self.settled {
+            return;
+        }
+        let mut st = self.sh.lock();
+        self.settle(&mut st);
+        st.stats.panics += 1;
+        st.fail(self.id, PipelineError::Panicked);
+        drop(st);
+        self.sh.changed.notify_all();
     }
 }
 
@@ -552,31 +664,37 @@ fn reader<S: PreviewSource, D: Decoder>(sh: &Shared<S, D>) {
                 st = sh.wait(st);
             }
         };
+        let mut job = Job::new(sh, id);
         let mut reserved = 0u64;
         let started = Instant::now();
         let result = {
             let mut reserve = |bytes| reserve_input(sh, id, bytes, &mut reserved);
             panic::catch_unwind(AssertUnwindSafe(|| sh.source.read(id, &mut reserve)))
         };
+        job.input = reserved;
         let read = started.elapsed();
         let mut st = sh.lock();
         match result {
-            Ok(Ok(source)) if st.live(id) => st.loaded.push(Loaded {
-                id,
-                source,
-                input: reserved,
-                read,
-            }),
+            Ok(Ok(source)) if st.live(id) => {
+                // The input reservation moves with the queued job.
+                job.settled = true;
+                st.loaded.push(Loaded {
+                    id,
+                    source,
+                    input: reserved,
+                    read,
+                });
+            }
             Ok(Ok(_) | Err(ReadError::Cancelled)) => {
-                st.input.release(reserved);
+                job.settle(&mut st);
                 st.cancel(id);
             }
             Ok(Err(e)) => {
-                st.input.release(reserved);
+                job.settle(&mut st);
                 st.fail(id, PipelineError::Read(e));
             }
             Err(_) => {
-                st.input.release(reserved);
+                job.settle(&mut st);
                 st.stats.panics += 1;
                 st.fail(id, PipelineError::Panicked);
             }
@@ -640,20 +758,40 @@ enum Admit {
     Never { limit: u64 },
 }
 
-/// Blocks until the call fits the working budget (and the multi-scan slot, if needed), or the
-/// photo is no longer wanted.
-fn admit<S, D>(sh: &Shared<S, D>, id: PhotoId, need: u64, multi_scan: bool) -> Admit {
+/// Blocks until the call fits the working budget (and the multi-scan slot, if needed) with no
+/// job of higher priority waiting for room, or the photo is no longer wanted. On
+/// [`Admit::Run`] the job holds `need` working bytes and a decode slot.
+fn admit<S, D>(sh: &Shared<S, D>, job: &mut Job<'_, S, D>, need: u64, multi_scan: bool) -> Admit {
+    let id = job.id;
     let mut st = sh.lock();
+    let leave = |st: &mut State| {
+        let before = st.waiting.len();
+        st.waiting.retain(|w| *w != id);
+        before != st.waiting.len()
+    };
     loop {
         if !st.live(id) {
+            if leave(&mut st) {
+                sh.changed.notify_all();
+            }
             return Admit::Cancelled;
         }
         if multi_scan && st.multi_scan > 0 {
             st = sh.wait(st);
             continue;
         }
+        if st.outranked(id) {
+            st = sh.wait(st);
+            continue;
+        }
         match st.working.reserve(need) {
             Reservation::Granted => {
+                if leave(&mut st) {
+                    sh.changed.notify_all();
+                }
+                job.working = need;
+                job.running = true;
+                job.multi_scan = multi_scan;
                 st.decodes += 1;
                 st.multi_scan += usize::from(multi_scan);
                 let (used, decodes, multi) = (st.working.used(), st.decodes, st.multi_scan);
@@ -663,8 +801,16 @@ fn admit<S, D>(sh: &Shared<S, D>, id: PhotoId, need: u64, multi_scan: bool) -> A
                 s.peak_multi_scan = s.peak_multi_scan.max(multi);
                 return Admit::Run;
             }
-            Reservation::Wait => st = sh.wait(st),
+            Reservation::Wait => {
+                if !st.waiting.contains(&id) {
+                    st.waiting.push(id);
+                }
+                st = sh.wait(st);
+            }
             Reservation::Never => {
+                if leave(&mut st) {
+                    sh.changed.notify_all();
+                }
                 return Admit::Never {
                     limit: st.working.limit(),
                 };
@@ -675,54 +821,46 @@ fn admit<S, D>(sh: &Shared<S, D>, id: PhotoId, need: u64, multi_scan: bool) -> A
 
 fn worker<S: PreviewSource, D: Decoder>(sh: &Shared<S, D>) {
     let options = sh.config.options;
-    while let Some(job) = take_loaded(sh) {
+    while let Some(loaded) = take_loaded(sh) {
         let Loaded {
             id,
             source,
             input,
             read,
-        } = job;
+        } = loaded;
+        let mut job = Job::new(sh, id);
+        job.input = input;
         let planned = panic::catch_unwind(AssertUnwindSafe(|| plan_of(&source, &options)));
         let (multi_scan, need) = match planned {
             Ok(Ok((_, multi_scan, need))) => (multi_scan, need),
             Ok(Err(e)) => {
                 drop(source);
-                let mut st = sh.lock();
-                st.input.release(input);
-                st.fail(id, PipelineError::Preview(PreviewError::Plan(e)));
-                drop(st);
-                sh.changed.notify_all();
+                end(sh, &mut job, |st| {
+                    st.fail(id, PipelineError::Preview(PreviewError::Plan(e)));
+                });
                 continue;
             }
             Err(_) => {
                 drop(source);
-                let mut st = sh.lock();
-                st.input.release(input);
-                st.stats.panics += 1;
-                st.fail(id, PipelineError::Panicked);
-                drop(st);
-                sh.changed.notify_all();
+                end(sh, &mut job, |st| {
+                    st.stats.panics += 1;
+                    st.fail(id, PipelineError::Panicked);
+                });
                 continue;
             }
         };
-        match admit(sh, id, need, multi_scan) {
+        match admit(sh, &mut job, need, multi_scan) {
             Admit::Run => {}
             Admit::Cancelled => {
                 drop(source);
-                let mut st = sh.lock();
-                st.input.release(input);
-                st.cancel(id);
-                drop(st);
-                sh.changed.notify_all();
+                end(sh, &mut job, |st| st.cancel(id));
                 continue;
             }
             Admit::Never { limit } => {
                 drop(source);
-                let mut st = sh.lock();
-                st.input.release(input);
-                st.fail(id, PipelineError::OverBudget { bytes: need, limit });
-                drop(st);
-                sh.changed.notify_all();
+                end(sh, &mut job, |st| {
+                    st.fail(id, PipelineError::OverBudget { bytes: need, limit });
+                });
                 continue;
             }
         }
@@ -732,12 +870,7 @@ fn worker<S: PreviewSource, D: Decoder>(sh: &Shared<S, D>) {
         }));
         let source_bytes = source.jpeg.len() as u64;
         drop(source);
-        let mut st = sh.lock();
-        st.input.release(input);
-        st.working.release(need);
-        st.decodes -= 1;
-        st.multi_scan -= usize::from(multi_scan);
-        match result {
+        end(sh, &mut job, |st| match result {
             Ok(Ok(preview)) => {
                 let prepared = Prepared {
                     preview,
@@ -745,17 +878,25 @@ fn worker<S: PreviewSource, D: Decoder>(sh: &Shared<S, D>) {
                     source_bytes,
                     multi_scan,
                 };
-                store(&mut st, id, prepared);
+                store(st, id, prepared);
             }
             Ok(Err(e)) => st.fail(id, PipelineError::Preview(e)),
             Err(_) => {
                 st.stats.panics += 1;
                 st.fail(id, PipelineError::Preview(PreviewError::Panicked));
             }
-        }
-        drop(st);
-        sh.changed.notify_all();
+        });
     }
+}
+
+/// Settles `job` and records its outcome under one lock, then wakes the waiters.
+fn end<S, D>(sh: &Shared<S, D>, job: &mut Job<'_, S, D>, outcome: impl FnOnce(&mut State)) {
+    let mut st = sh.lock();
+    // The outcome first: should it unwind, the job is not settled yet and its guard fails it.
+    outcome(&mut st);
+    job.settle(&mut st);
+    drop(st);
+    sh.changed.notify_all();
 }
 
 /// Puts a finished preview in the cache, if it is still wanted and the cache admits it.
@@ -915,4 +1056,85 @@ fn read_capped(
         return Err(ReadError::Changed);
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shared() -> Shared<(), ()> {
+        let config = Config::default();
+        Shared {
+            state: Mutex::new(State {
+                sched: Scheduler::new(),
+                lru: Lru::new(config.capacity),
+                ready: HashMap::new(),
+                failed: HashMap::new(),
+                loaded: Vec::new(),
+                input: culla_core::prefetch::Budget::new(1000),
+                working: culla_core::prefetch::Budget::new(1000),
+                decodes: 0,
+                multi_scan: 0,
+                waiting: Vec::new(),
+                order: vec![0],
+                shutdown: false,
+                stats: Stats::default(),
+            }),
+            changed: Condvar::new(),
+            source: (),
+            decoder: (),
+            config,
+        }
+    }
+
+    #[test]
+    fn a_job_unwinding_outside_catch_unwind_gives_everything_back_and_fails() {
+        let sh = shared();
+        {
+            let mut st = sh.lock();
+            st.sched.set_wanted([0]);
+            assert_eq!(st.sched.next(|_| false), Some(0));
+            assert_eq!(st.input.reserve(300), Reservation::Granted);
+            assert_eq!(st.working.reserve(400), Reservation::Granted);
+            st.decodes = 1;
+            st.multi_scan = 1;
+            st.waiting.push(0);
+        }
+        let r = panic::catch_unwind(AssertUnwindSafe(|| {
+            let mut job = Job::new(&sh, 0);
+            job.input = 300;
+            job.working = 400;
+            job.running = true;
+            job.multi_scan = true;
+            panic!("outside the isolated regions");
+        }));
+        assert!(r.is_err());
+        let st = sh.lock();
+        assert_eq!((st.input.used(), st.working.used()), (0, 0));
+        assert_eq!((st.decodes, st.multi_scan), (0, 0));
+        assert!(st.waiting.is_empty());
+        assert!(!st.sched.in_flight(&0));
+        assert_eq!(st.failed.get(&0), Some(&PipelineError::Panicked));
+        assert_eq!(st.stats.panics, 1);
+    }
+
+    #[test]
+    fn a_settled_job_gives_back_once_and_records_nothing_on_drop() {
+        let sh = shared();
+        {
+            let mut st = sh.lock();
+            assert_eq!(st.input.reserve(300), Reservation::Granted);
+        }
+        {
+            let mut job = Job::new(&sh, 0);
+            job.input = 300;
+            let mut st = sh.lock();
+            job.settle(&mut st);
+            job.settle(&mut st);
+            assert_eq!(st.input.used(), 0);
+        }
+        let st = sh.lock();
+        assert!(st.failed.is_empty());
+        assert_eq!(st.stats.panics, 0);
+    }
 }

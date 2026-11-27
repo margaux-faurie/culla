@@ -781,17 +781,18 @@ fn progressive_frames_have_the_multi_scan_cap() {
 
 #[test]
 fn working_bytes_is_the_largest_step_plus_slack() {
-    // 24 MP, upright: the resize holds the 1/2 decode (3024x2016) and the 2700x1800 buffer.
+    // 24 MP, upright: the resize holds the 1/2 decode (3024x2016), the 2700x1800 buffer and
+    // the separable convolution's intermediate (2700 wide, 2016 high).
     let p = g14(Z6, Orientation::Normal);
     assert_eq!(
         p.working_bytes(),
-        3024 * 2016 * 3 + 2700 * 1800 * 3 + DECODER_SLACK_BYTES
+        3024 * 2016 * 3 + 2700 * 1800 * 3 + 2700 * 2016 * 3 + DECODER_SLACK_BYTES
     );
     // 45 MP turned: the 3/8 decode (3096x2064) and the resized buffer still dominate.
     let p = g14(Z8, Orientation::Rotate90);
     assert_eq!(
         p.working_bytes(),
-        3096 * 2064 * 3 + 2700 * 1800 * 3 + DECODER_SLACK_BYTES
+        3096 * 2064 * 3 + 2700 * 1800 * 3 + 2700 * 2064 * 3 + DECODER_SLACK_BYTES
     );
     // A small JPEG, not resized: the encode step (MCU-padded output buffer) dominates.
     let p = g14(Size::new(100, 80), Orientation::Normal);
