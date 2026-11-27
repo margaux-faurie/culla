@@ -132,7 +132,9 @@ pub(crate) fn moves(
 }
 
 /// The ramp of B-10: the rate starts at `start` photos/s and goes up by `step` every `every`
-/// advances. Each block of `every` advances is judged on its p95 against `budget_ms`.
+/// advances. Each block of `every` advances is judged on its p95 against `budget_ms`, over
+/// the advances whose photo was shown; a block with any advance that was not (failed, timed
+/// out or not admitted) fails whatever its p95.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Ramp {
     pub start: f64,
@@ -163,7 +165,10 @@ impl Ramp {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Block {
     pub rate: f64,
+    /// Over the successful advances of the block; infinite when there is none.
     pub p95_ms: f64,
+    /// Advances of the block whose photo was not shown.
+    pub failed: usize,
     pub passed: bool,
 }
 
@@ -172,6 +177,7 @@ pub(crate) struct Block {
 pub(crate) struct RampTracker {
     ramp: Ramp,
     current: Vec<f64>,
+    failed: usize,
     index: usize,
     blocks: Vec<Block>,
 }
@@ -181,30 +187,35 @@ impl RampTracker {
         Self {
             ramp,
             current: Vec::new(),
+            failed: 0,
             index: 0,
             blocks: Vec::new(),
         }
     }
 
-    /// Adds the latency of the next advance (`None` when its photo failed: it counts as an
-    /// advance but has no latency). Returns true when the block it ends failed: stop there.
+    /// Adds the latency of the next advance (`None` when its photo was not shown: it counts as
+    /// an advance, has no latency and fails its block). Returns true when the block it ends
+    /// failed: stop there.
     pub(crate) fn push(&mut self, latency_ms: Option<f64>) -> bool {
         let rate = self.ramp.rate(self.index);
         self.index += 1;
-        if let Some(l) = latency_ms {
-            self.current.push(l);
+        match latency_ms {
+            Some(l) => self.current.push(l),
+            None => self.failed += 1,
         }
         if !self.index.is_multiple_of(self.ramp.every.max(1)) {
             return false;
         }
-        let p95 = quantile(&self.current, 0.95).unwrap_or(f64::INFINITY);
-        let passed = p95 <= self.ramp.budget_ms;
+        let p95 = quantile(&self.current, 95).unwrap_or(f64::INFINITY);
+        let passed = self.failed == 0 && p95 <= self.ramp.budget_ms;
         self.blocks.push(Block {
             rate,
             p95_ms: p95,
+            failed: self.failed,
             passed,
         });
         self.current.clear();
+        self.failed = 0;
         !passed
     }
 
@@ -328,5 +339,26 @@ mod tests {
         assert_eq!(t.sustained(), None);
         let t = RampTracker::new(Ramp::DEFAULT);
         assert_eq!(t.sustained(), None);
+    }
+
+    #[test]
+    fn one_failed_advance_fails_its_block() {
+        let mut t = RampTracker::new(Ramp {
+            every: 4,
+            ..Ramp::DEFAULT
+        });
+        // Block 1 passes; block 2 has a fast p95 over its three successes but one failure.
+        for l in [1.0, 1.0, 1.0, 1.0] {
+            assert!(!t.push(Some(l)));
+        }
+        assert!(!t.push(Some(1.0)));
+        assert!(!t.push(None));
+        assert!(!t.push(Some(1.0)));
+        assert!(t.push(Some(1.0)));
+        let b = t.blocks()[1];
+        assert_eq!((b.failed, b.passed), (1, false));
+        assert!((b.p95_ms - 1.0).abs() < 1e-12);
+        assert_eq!(t.blocks()[0].failed, 0);
+        assert_eq!(t.sustained(), Some(1.0));
     }
 }

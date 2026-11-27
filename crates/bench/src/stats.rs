@@ -9,23 +9,26 @@ pub(crate) fn ms(d: Duration) -> f64 {
     d.as_secs_f64() * 1000.0
 }
 
-/// The `q`-quantile (0 to 1) of `v` by nearest rank, `None` when `v` is empty. `v` need not be
-/// sorted; values that are not finite are left out.
+/// The `percent`-th percentile (0 to 100, more is taken as 100) of `v` by nearest rank: the
+/// value at rank `ceil(percent * n / 100)`, at least 1. Integer arithmetic, so p95 of 100
+/// values is exactly the 95th. `None` when `v` has no finite value. `v` need not be sorted;
+/// values that are not finite are left out.
 #[must_use]
-pub(crate) fn quantile(v: &[f64], q: f64) -> Option<f64> {
+pub(crate) fn quantile(v: &[f64], percent: u32) -> Option<f64> {
     let mut s: Vec<f64> = v.iter().copied().filter(|x| x.is_finite()).collect();
     if s.is_empty() {
         return None;
     }
     s.sort_by(f64::total_cmp);
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_precision_loss,
-        reason = "a rank within the slice"
-    )]
-    let rank = ((q.clamp(0.0, 1.0) * s.len() as f64).ceil() as usize).clamp(1, s.len());
-    Some(s[rank - 1])
+    Some(s[rank(s.len(), percent) - 1])
+}
+
+/// The 1-based nearest rank of the `percent`-th percentile among `n` values (`n` at least 1).
+#[must_use]
+fn rank(n: usize, percent: u32) -> usize {
+    let p = u128::from(percent.min(100));
+    let r = (p * n as u128).div_ceil(100);
+    usize::try_from(r).unwrap_or(n).clamp(1, n)
 }
 
 /// The median: the middle value, or the mean of the two middle ones. `None` when empty.
@@ -60,10 +63,10 @@ impl Summary {
     pub(crate) fn of(v: &[f64]) -> Option<Self> {
         Some(Self {
             n: v.iter().filter(|x| x.is_finite()).count(),
-            p50: quantile(v, 0.5)?,
-            p95: quantile(v, 0.95)?,
-            p99: quantile(v, 0.99)?,
-            max: quantile(v, 1.0)?,
+            p50: quantile(v, 50)?,
+            p95: quantile(v, 95)?,
+            p99: quantile(v, 99)?,
+            max: quantile(v, 100)?,
         })
     }
 }
@@ -91,14 +94,41 @@ mod tests {
     #[test]
     fn quantiles_by_nearest_rank() {
         let v: Vec<f64> = (1..=20).rev().map(f64::from).collect();
-        assert_eq!(quantile(&v, 0.5), Some(10.0));
-        assert_eq!(quantile(&v, 0.95), Some(19.0));
-        assert_eq!(quantile(&v, 0.99), Some(20.0));
-        assert_eq!(quantile(&v, 1.0), Some(20.0));
-        assert_eq!(quantile(&v, 0.0), Some(1.0));
-        assert_eq!(quantile(&[], 0.5), None);
-        assert_eq!(quantile(&[f64::NAN], 0.5), None);
-        assert_eq!(quantile(&[3.0, f64::NAN, 1.0], 1.0), Some(3.0));
+        assert_eq!(quantile(&v, 50), Some(10.0));
+        assert_eq!(quantile(&v, 95), Some(19.0));
+        assert_eq!(quantile(&v, 99), Some(20.0));
+        assert_eq!(quantile(&v, 100), Some(20.0));
+        assert_eq!(quantile(&v, 0), Some(1.0));
+        assert_eq!(quantile(&v, 250), Some(20.0));
+        assert_eq!(quantile(&[], 50), None);
+        assert_eq!(quantile(&[f64::NAN], 50), None);
+        assert_eq!(quantile(&[3.0, f64::NAN, 1.0], 100), Some(3.0));
+        assert_eq!(quantile(&[f64::INFINITY, 2.0], 100), Some(2.0));
+    }
+
+    #[test]
+    fn nearest_rank_edge_cases() {
+        // One value: every percentile is that value.
+        for p in [0, 1, 50, 95, 99, 100] {
+            assert_eq!(rank(1, p), 1);
+        }
+        // Exact multiples land on the value itself, with no rounding up past it.
+        assert_eq!(rank(100, 95), 95);
+        assert_eq!(rank(100, 99), 99);
+        assert_eq!(rank(1000, 95), 950);
+        assert_eq!(rank(20, 95), 19);
+        // Otherwise the next rank up.
+        assert_eq!(rank(101, 99), 100);
+        assert_eq!(rank(101, 50), 51);
+        assert_eq!(rank(3, 50), 2);
+        assert_eq!(rank(2, 50), 1);
+        assert_eq!(rank(2, 51), 2);
+        // Bounds.
+        assert_eq!(rank(7, 0), 1);
+        assert_eq!(rank(7, 100), 7);
+        assert_eq!(rank(7, u32::MAX), 7);
+        assert_eq!(rank(usize::MAX, 100), usize::MAX);
+        assert_eq!(rank(usize::MAX, 1), usize::MAX.div_ceil(100));
     }
 
     #[test]

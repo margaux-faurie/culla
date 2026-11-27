@@ -1,8 +1,13 @@
 //! `culla-bench scan` (B-01, B-02, B-03; NFR-PERF-01 and NFR-PERF-08): the walk and grouping,
 //! the first group's preview made inside the walk as the app would show it, and with `--exif`
 //! the EXIF pass and the capture-time sort.
+//!
+//! The first-photo figure of NFR-PERF-01 (`first_photo_ms`) runs from the folder's
+//! resolution (`winfs::resolve_folder`: canonical path and volume lookups, as the app does
+//! when a folder is opened) to the first preview made; `resolve_ms` reports that first step
+//! apart, and `first_group_ms` (B-01) still starts at the walk.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use culla_adapters::preview::PreviewOptions;
 use culla_core::exif::Orientation;
@@ -21,7 +26,9 @@ use crate::stats::ms;
 ///
 /// When the folder is refused or cannot be read.
 pub(crate) fn run(a: &ScanArgs) -> Result<Run, Failure> {
+    let t = Instant::now();
     let (root, medium) = folder::resolve(&a.common.folder)?;
+    let resolve = t.elapsed();
     let options = PreviewOptions::default();
     let mut first: Option<Result<OnePreview, String>> = None;
     let mut notes = Vec::new();
@@ -33,7 +40,7 @@ pub(crate) fn run(a: &ScanArgs) -> Result<Run, Failure> {
         }
     })?;
     let first_photo = match (&scanned.first_group, &first) {
-        (Some(g), Some(Ok(p))) => Some(*g + p.total()),
+        (Some(g), Some(Ok(p))) => Some(resolve + *g + p.total()),
         (_, Some(Err(e))) => {
             notes.push(format!("the first photo's preview failed: {e}"));
             None
@@ -51,6 +58,7 @@ pub(crate) fn run(a: &ScanArgs) -> Result<Run, Failure> {
         .filter(|g| g.primary.kind == PhotoKind::Nef)
         .count();
     let mut metrics = vec![
+        Metric::new("resolve_ms", "", Unit::Ms, Some(ms(resolve))),
         Metric::new(
             "first_group_ms",
             "B-01",

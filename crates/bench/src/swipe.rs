@@ -44,7 +44,10 @@ pub(crate) fn config(a: &SwipeArgs) -> Config {
         },
         capacity: Capacity {
             max_entries: a.lru.unwrap_or(d.capacity.max_entries),
-            max_bytes: a.lru_mb.map_or(d.capacity.max_bytes, |m| m * 1024 * 1024),
+            // `--lru-mb` is capped at parse time; saturating all the same.
+            max_bytes: a
+                .lru_mb
+                .map_or(d.capacity.max_bytes, |m| m.saturating_mul(1024 * 1024)),
         },
         ..d
     }
@@ -67,25 +70,36 @@ fn sleep_until(at: Instant) {
     }
 }
 
-/// Waits for `id` at `position`, re-asking when the pipeline reports it not wanted or not
-/// admitted. `Err` with the reason when it failed or timed out.
+/// How waiting for one photo ended.
+#[derive(Debug, PartialEq, Eq)]
+enum Waited {
+    Ready,
+    /// Made, but the cache refused it (everything it holds ranks higher). The pipeline will
+    /// not make it again until the window changes, so waiting longer cannot help.
+    NotAdmitted,
+    /// Failed or timed out, with why.
+    Failed(String),
+}
+
+/// Waits for `id` at `position`, re-asking when the pipeline reports it not wanted.
 fn wait_ready(
     p: &Pipeline<FolderSource, Turbo>,
     id: usize,
     position: usize,
     direction: Direction,
-) -> Result<(), String> {
+) -> Waited {
     let deadline = Instant::now() + PHOTO_TIMEOUT;
     loop {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
-            return Err("timed out".to_owned());
+            return Waited::Failed("timed out".to_owned());
         }
         match p.wait(id, left) {
-            Status::Ready(_) => return Ok(()),
-            Status::Failed(e) => return Err(e.to_string()),
+            Status::Ready(_) => return Waited::Ready,
+            Status::Failed(e) => return Waited::Failed(e.to_string()),
+            Status::NotAdmitted => return Waited::NotAdmitted,
             Status::Pending => {}
-            Status::NotWanted | Status::NotAdmitted => p.show(position, direction),
+            Status::NotWanted => p.show(position, direction),
         }
     }
 }
@@ -126,10 +140,12 @@ pub(crate) fn run(a: &SwipeArgs) -> Result<Run, Failure> {
     let mut lateness = Vec::with_capacity(moves.len());
     let mut prefetched = 0usize;
     let mut failed = 0usize;
+    let mut refused = 0usize;
     let mut ramp = RampTracker::new(a.ramp);
     let mut stopped_early = false;
 
-    // The first photo: shown cold, before any prefetch.
+    // The first photo: shown cold, before any prefetch, but after the scan and the EXIF pass
+    // (so not B-01: `culla-bench scan` measures that).
     let started = Instant::now();
     let first = if order.is_empty() {
         notes.push("no photo group found".to_owned());
@@ -137,8 +153,12 @@ pub(crate) fn run(a: &SwipeArgs) -> Result<Run, Failure> {
     } else {
         pipeline.show(0, Direction::Forward);
         match wait_ready(&pipeline, order[0], 0, Direction::Forward) {
-            Ok(()) => Some(started.elapsed()),
-            Err(e) => {
+            Waited::Ready => Some(started.elapsed()),
+            Waited::NotAdmitted => {
+                notes.push("the first photo was not admitted to the cache".to_owned());
+                None
+            }
+            Waited::Failed(e) => {
                 notes.push(format!("the first photo failed: {e}"));
                 None
             }
@@ -161,12 +181,19 @@ pub(crate) fn run(a: &SwipeArgs) -> Result<Run, Failure> {
         let result = wait_ready(&pipeline, id, mv.position, mv.direction);
         let ready = Instant::now();
         let latency = match result {
-            Ok(()) => {
+            Waited::Ready => {
                 let l = ms(ready - at);
                 latencies.push(l);
                 Some(l)
             }
-            Err(e) => {
+            Waited::NotAdmitted => {
+                refused += 1;
+                if refused <= 20 {
+                    notes.push(format!("advance {}: not admitted to the cache", i + 1));
+                }
+                None
+            }
+            Waited::Failed(e) => {
                 failed += 1;
                 if failed <= 20 {
                     notes.push(format!("advance {} failed: {e}", i + 1));
@@ -188,6 +215,15 @@ pub(crate) fn run(a: &SwipeArgs) -> Result<Run, Failure> {
     if failed > 20 {
         notes.push(format!("{} more failures not listed", failed - 20));
     }
+    if refused > 20 {
+        notes.push(format!(
+            "{} more advances not admitted not listed",
+            refused - 20
+        ));
+    }
+    if failed + refused > 0 {
+        notes.push("next_photo_ms covers the advances whose photo was shown only".to_owned());
+    }
 
     let stats = pipeline.stats();
     let (cached_n, cached_bytes) = pipeline.cached();
@@ -198,9 +234,10 @@ pub(crate) fn run(a: &SwipeArgs) -> Result<Run, Failure> {
     #[allow(clippy::cast_precision_loss, reason = "byte counts")]
     let bytes = |b: u64| Some(b as f64);
     let mut metrics = vec![
-        Metric::new("first_photo_ms", "B-01", Unit::Ms, first.map(ms)),
+        Metric::new("first_preview_ms", "", Unit::Ms, first.map(ms)),
         Metric::count("advances", done as u64),
         Metric::count("failed", failed as u64),
+        Metric::count("not_admitted_advances", refused as u64),
         Metric::new("prefetched", "B-09", Unit::Percent, prefetched_pct),
         Metric::new("advances_per_s", "B-10", Unit::PerS, per_s(done, elapsed)),
         Metric::count("groups", order.len() as u64),
@@ -216,11 +253,14 @@ pub(crate) fn run(a: &SwipeArgs) -> Result<Run, Failure> {
         ));
         for b in ramp.blocks() {
             notes.push(format!(
-                "ramp {:.1} photos/s: p95 {:.1} ms, {}",
+                "ramp {:.1} photos/s: p95 {:.1} ms, {} not shown, {}",
                 b.rate,
                 b.p95_ms,
+                b.failed,
                 if b.passed {
                     "within budget"
+                } else if b.failed > 0 {
+                    "failed (an advance was not shown)"
                 } else {
                     "over budget"
                 }
@@ -354,5 +394,7 @@ mod tests {
         assert_eq!(c.capacity.max_bytes, 96 * 1024 * 1024);
         assert_eq!(c.budgets, d.budgets);
         assert_eq!(c.options, d.options);
+        let c = config(&args(&["swipe", "f", "--lru-mb", "65536"]));
+        assert_eq!(c.capacity.max_bytes, 65536 * 1024 * 1024);
     }
 }

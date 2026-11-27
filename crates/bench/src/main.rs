@@ -64,7 +64,14 @@ fn run_cli() -> u8 {
             let mut loaded = Vec::new();
             for f in &a.files {
                 match report::load(f) {
-                    Ok(l) => loaded.push(l),
+                    Ok(Some(l)) => loaded.push(l),
+                    Ok(None) => {
+                        let _ = writeln!(
+                            io::stderr(),
+                            "culla-bench: {}: empty, skipped (a run that failed?)",
+                            shown(&f.to_string_lossy())
+                        );
+                    }
                     Err(e) => {
                         let _ = writeln!(io::stderr(), "culla-bench: {e}");
                         return EXIT_IO;

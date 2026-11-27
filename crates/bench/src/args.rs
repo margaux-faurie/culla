@@ -77,6 +77,9 @@ pub(crate) enum Command {
 /// Defaults, all proposals (SPEC §10).
 pub(crate) const DEFAULT_BACK_PERCENT: u8 = 10;
 pub(crate) const DEFAULT_SEED: u64 = 1;
+/// The largest `--lru-mb`: 64 GiB, far above any machine Culla targets, so the byte count
+/// cannot overflow.
+pub(crate) const MAX_LRU_MB: u64 = 64 * 1024;
 pub(crate) const DEFAULT_IO_MB: u64 = 1000;
 
 pub(crate) const HELP: &str = "\
@@ -298,6 +301,10 @@ pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command,
                 return Err("--back-percent is at most 50".to_owned());
             }
             let budget = p.number("--budget-ms", 1u32)?;
+            let lru_mb = p.number("--lru-mb", 1u64)?;
+            if lru_mb.is_some_and(|m| m > MAX_LRU_MB) {
+                return Err(format!("--lru-mb is at most {MAX_LRU_MB}"));
+            }
             Ok(Command::Swipe(SwipeArgs {
                 common: common(&p)?,
                 cadence,
@@ -307,7 +314,7 @@ pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command,
                 ahead: p.number("--ahead", 0)?,
                 behind: p.number("--behind", 0)?,
                 lru: p.number("--lru", 1)?,
-                lru_mb: p.number("--lru-mb", 1)?,
+                lru_mb,
                 steps: p.number("--steps", 1)?,
                 back_percent,
                 seed: p.number("--seed", 0)?.unwrap_or(DEFAULT_SEED),
@@ -469,6 +476,11 @@ mod tests {
             (&["swipe", "a", "--readers", "0"][..], "at least 1"),
             (&["swipe", "a", "--readers", "x"][..], "whole number"),
             (&["swipe", "a", "--back-percent", "60"][..], "at most 50"),
+            (&["swipe", "a", "--lru-mb", "65537"][..], "at most 65536"),
+            (
+                &["swipe", "a", "--lru-mb", "18446744073709551615"][..],
+                "at most",
+            ),
             (&["swipe", "a", "--seed"][..], "needs a value"),
             (&["swipe", "a", "--lru", "1", "--lru", "2"][..], "twice"),
             (&["preview", "a", "--source", "raw"][..], "jpeg or nef"),

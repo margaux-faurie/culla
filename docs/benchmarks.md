@@ -28,13 +28,13 @@ Key targets (all "(est.)", canonical values in [nfr.md](nfr.md)):
 | B-07 | Resize + encode | `fast_image_resize` to fit 2880×1800, orientation applied, JPEG q85–90 | criterion | resize < 15 ms, encode 15–25 ms | informational, feeds B-09 | M1 |
 | B-08 | Preview cache | Disk cache hit (read from `%LOCALAPPDATA%\Culla\cache`) and miss (full pipeline from media), per photo | `culla-bench preview` | — | `NFR-PERF` | M1 |
 | B-09 | Next-photo latency | Time from "advance to photo i+1" to its encoded preview being in the in-memory LRU, under a simulated swipe cadence (section 4.3). Report p50, p95, p99 | `culla-bench swipe` | < 50 ms from cache | ≤ 50 ms at p95 (est.), `NFR-PERF` | M1 (headless), M3 (webview) |
-| B-10 | Sustained swipe rate | Highest cadence where p95 of B-09 stays within budget | `culla-bench swipe --ramp` | 3–4 photos/s on UHS-I for 45 MP fine JPEGs | ≥ 3/s on SD UHS-I for 45 MP (est.), NFR-PERF-04 | M1 |
+| B-10 | Sustained swipe rate | Highest cadence where p95 of B-09 stays within budget | `culla-bench swipe --cadence ramp` | 3–4 photos/s on UHS-I for 45 MP fine JPEGs | ≥ 3/s on SD UHS-I for 45 MP (est.), NFR-PERF-04 | M1 |
 | B-11 | Preview source choice | B-09 using the camera JPEG versus the NEF's full-size embedded JPEG (JpgFromRaw) for pairs | `culla-bench swipe --preview-source jpeg\|nef` | NEF preview may be faster | decision input | M1 |
 | B-12 | Apply, same volume | Time for 1,000 groups (about 3,000 files), journal included, on SD and NVMe | `culla-bench apply --same-volume` | near instant | ≤ 30 s for 1,000 groups (est.), NFR-PERF-10 | M2 |
 | B-13 | Apply, cross volume | MB/s and total time for copy (hashing the source) + fsync + destination read-back and source re-read, both with `FILE_FLAG_NO_BUFFERING`, + rename + source removal ([SPEC.md](SPEC.md) section 5.2), SD → NVMe, and NVMe → external | `culla-bench apply --cross-volume` | about 90 MB/s on UHS-I; 140 GB in 25+ min for a single read (research), about 52+ min with the second source read | ≥ 85 % of the slower device's sequential throughput over the bytes read (the source is read twice) (est.), NFR-PERF-11; also checks the review-screen ETA (NFR-PERF-12) | M2 |
 | B-14 | Verify overhead | B-13 with xxh3 versus blake3 versus no verify (bench only); the source re-read costs a second read of the card, so report it separately | `culla-bench apply` | — | recorded, no pass/fail; decision input for the hash choice | M2 |
-| B-15 | Memory | Peak working set during B-09 and B-13 | `culla-bench` (reports peak RSS) | ~12 previews in LRU | ≤ 1 GB (est.), `NFR-PERF` | M1 (swipe), M2 (apply) |
-| B-16 | Medium baseline | Raw sequential read speed of the medium, 1 GB file, buffered reads | `culla-bench io-baseline` | about 90 MB/s UHS-I | reference for B-03, B-10, B-13 | M1 |
+| B-15 | Memory | Peak working set during B-09 and B-13 | `culla-bench` (reports the process's peak working set on Windows, `VmHWM` on Linux) | ~12 previews in LRU | ≤ 1 GB (est.), `NFR-PERF` | M1 (swipe), M2 (apply) |
+| B-16 | Medium baseline | Raw sequential read speed of the medium: buffered 1 MiB reads of the photo files already on it, up to 1000 MB (no test file is written) | `culla-bench io-baseline` | about 90 MB/s UHS-I | reference for B-03, B-10, B-13 | M1 |
 
 Notes:
 - B-06 and B-07 are CPU-only and run in criterion with the image already in memory. Everything that touches the medium runs in `culla-bench`.
@@ -69,7 +69,7 @@ D-2 and D-3 come from the author's Nikon Z bodies ([SPEC.md](SPEC.md) section 2)
 - **Cold:** nothing from the medium in the Windows file cache, and Culla's disk cache empty.
   - For SD and USB media: safely eject and reinsert the card before each run. Removing the volume drops its cached pages. This is also the realistic case (a card just plugged in).
   - For the NVMe: empty the standby list with Sysinternals RAMMap (`RAMMap.exe -Et`, admin) before each run. A reboot is the fallback.
-  - Culla's disk cache: `culla-bench` points the cache at a fresh temporary directory for each cold run, so there is nothing to clear and the app's own cache is never touched.
+  - Culla's disk cache: there is none in M1 (the pipeline keeps previews in memory only), so there is nothing to clear. Once it exists, `culla-bench` will point it at a fresh temporary directory for each cold run, so the app's own cache is never touched.
 - **Warm:** the same run repeated right after, without ejecting. Reported, but pass/fail uses cold numbers unless the NFR says otherwise.
 - **Cache hit (B-08):** run once to fill the disk cache, eject and reinsert the card, run again. This is the resume case.
 - Scan and preview reads are buffered, as in the app. The apply verify step reads the destination back with `FILE_FLAG_NO_BUFFERING`, as [SPEC.md](SPEC.md) section 5.2 requires, so B-13 and B-14 measure it that way. The source re-read for hash 3 also uses `FILE_FLAG_NO_BUFFERING`, so it is a real second read of the card even on a warm run (otherwise the standby cache would answer and hash 3 would only repeat hash 1). B-13 and B-14 measure both verify reads that way.
@@ -107,19 +107,25 @@ culla-bench io-baseline <folder> [--mb N]
 culla-bench report      <result.json>...
 ```
 
-Every folder benchmark also takes `--no-subfolders`, `--label TEXT` (kept in the result: medium, run number, cold or warm) and `--json`. Exit codes as `culla`: 0 done, 1 usage error, 2 folder refused, 3 folder or file unreadable.
+Every folder benchmark also takes `--no-subfolders`, `--label TEXT` (kept in the result: medium, run number, cold or warm, commit) and `--json`. Exit codes as `culla`: 0 done, 1 usage error, 2 folder refused, 3 folder or file unreadable. `--lru-mb` is at most 65536. `report` refuses a file over 256 MiB and skips an empty one with a note on stderr.
+
+Peak memory on Windows goes through a child PowerShell for now, since the bench has no `windows-sys` dependency. The proposed long-term route is a `GetProcessMemoryInfo` lookup in `culla-adapters::winfs`, which is a protected path, so it waits for a session of Margaux's (SPEC §10).
 
 What each one measures:
 
 | Command | Benchmarks | Metrics (JSON key) |
 |---|---|---|
-| `scan` | B-01, B-02, B-03 with `--exif`; NFR-PERF-01, NFR-PERF-08 | `first_group_ms` (walk start to the first group), `first_photo_ms` (plus that group's preview, made inside the walk, upright, from the camera JPEG), `listing_ms` (walk and grouping, the first preview left out), `exif_ms`, `sort_ms`, `scan_total_ms`, the first photo's steps, counts |
+| `scan` | B-01, B-02, B-03 with `--exif`; NFR-PERF-01, NFR-PERF-08 | `resolve_ms` (the folder's canonical path and volume lookups, before the walk), `first_group_ms` (walk start to the first group, B-01), `first_photo_ms` (NFR-PERF-01: `resolve_ms` plus `first_group_ms` plus that group's preview, made inside the walk, upright, from the camera JPEG), `listing_ms` (walk and grouping, the first preview left out), `exif_ms`, `sort_ms`, `scan_total_ms`, the first photo's steps, counts |
 | `preview` | B-05, B-08 (miss), B-06 and B-07 per photo; NFR-PERF-05 | per photo, in walk order, outside the pipeline: `exif_ms` (read just before, for the orientation), `nef_walk_ms` and `nef_walk_read_kb` (NEF sources), `read_ms`, `check_ms`, `decode_ms`, `resize_ms`, `orient_ms`, `encode_ms`, `miss_total_ms`; `read_mb_per_s` |
-| `swipe` | B-09, B-10 (`ramp`, and `max` for NFR-PERF-04), B-11 (`--preview-source`), B-15 | `next_photo_ms` per advance, `prefetched` (share of advances already in the cache), `advances_per_s`, `sustained_rate_per_s` (ramp), `first_photo_ms`, the pipeline's peaks and counters, `advance_late_ms` (how late the bench made each advance: the timer's error, should stay near 0) |
+| `swipe` | B-09, B-10 (`ramp`, and `max` for NFR-PERF-04), B-11 (`--preview-source`), B-15 | `next_photo_ms` per advance, `prefetched` (share of advances already in the cache), `advances_per_s`, `sustained_rate_per_s` (ramp), `first_preview_ms` (the pipeline's first preview after the scan and EXIF pass: not B-01), `failed` and `not_admitted_advances` (advances whose photo was not shown), the pipeline's peaks and counters, `advance_late_ms` (how late the bench made each advance: the timer's error, should stay near 0) |
 | `io-baseline` | B-16 | `read_mb_per_s`: buffered 1 MiB reads of the photo files already on the medium (primaries and NEFs, scan order) until `--mb` MB; no test file is written |
-| every command | B-15 | `peak_memory_bytes`: the process's peak working set (Windows, from `Get-Process` at the end of the run) or peak resident set (Linux) |
+| every command | B-15 | `peak_memory_bytes`: the process's peak working set (Windows, from Windows PowerShell's `Get-Process` at the end of the run, started by its absolute path under `%SystemRoot%`; unavailable, with a note, when `SystemRoot` is unset or that file is missing) or peak resident set (`VmHWM`, Linux) |
 
-`swipe` runs the scan and the EXIF pass first, then replays the sequence in capture-time order against the real pipeline (`culla_adapters::pipeline`). Latency is from the advance to the preview being in the in-memory cache. The next advance comes the cadence's gap after the previous one but never before the current photo is ready, since a user cannot decide on a photo they have not seen. The first photo is reported apart (`first_photo_ms`), not as a next-photo latency. `--steps` caps the advances; by default the sequence runs once to the last photo, so a ramp on a small folder can end before its p95 goes over budget (the result says so).
+`swipe` runs the scan and the EXIF pass first, then replays the sequence in capture-time order against the real pipeline (`culla_adapters::pipeline`). Latency is from the advance to the preview being in the in-memory cache. The next advance comes the cadence's gap after the previous one but never before the current photo is ready, since a user cannot decide on a photo they have not seen. The first photo is reported apart (`first_preview_ms`), not as a next-photo latency. `--steps` caps the advances; by default the sequence runs once to the last photo, so a ramp on a small folder can end before its p95 goes over budget (the result says so).
+
+- Next-photo latencies (`next_photo_ms`, and so every p95 of B-09 and of the ramp) cover the advances whose photo was shown only. An advance whose photo failed, timed out (120 s) or was refused by the cache (`not_admitted_advances`: the pipeline does not make it again until the window moves, so the bench does not wait for it) has no latency; it is counted, and a ramp block with any such advance fails whatever its p95.
+- The swipe starts after the scan and the full EXIF pass, so the prefetch never competes with the EXIF reads. In the app the user can start swiping while EXIF is still being read; on an SD card the first seconds of B-09 and B-10 here are therefore optimistic. The M3 webview measurement covers the real overlap.
+- First photo (NFR-PERF-01): the figure is `scan`'s `first_photo_ms`, which starts before the folder is resolved (`resolve_ms`, reported apart) and so covers what the app does from "open folder" to the first preview. `first_group_ms` (B-01) still starts at the walk.
 
 Not in M1: `--cache hit` for B-08 (the disk cache does not exist yet), `apply` (B-12 to B-14, M2), and B-04 (criterion).
 
@@ -132,7 +138,7 @@ One file per session: `docs/benchmarks/results/YYYY-MM-DD-<hardware>-<medium>.md
 ```markdown
 # Benchmark results — <date> — <H-x> — <medium>
 
-Commit: <sha> · Windows <build> · power mode <mode> · Defender <on/off> · medium <brand, model, FS> · reader <model, port>
+Commit: <short sha> · NASM <`nasm -v` at build time: libjpeg-turbo built with SIMD> · Windows <build> · power mode <mode> · Defender <on/off> · medium <brand, model, FS> · reader <model, port>
 Dataset: <D-x> (<n files>, <n pairs>, <MP>)
 
 | ID | Metric | Cold median | Warm median | p95 | p99 | Target (NFR) | Result |
@@ -179,7 +185,8 @@ git switch main; git pull
 cargo build --release -p culla-bench       # if NASM was installed after an earlier build: cargo clean -p turbojpeg-sys first
 $bench = "$PWD\target\release\culla-bench.exe"
 & $bench --version
-git rev-parse --short HEAD                 # the commit, for the result file
+$commit = git rev-parse --short HEAD       # the commit: goes into every label and the result file
+$nasm = nasm -v                            # for the result file's NASM line (SIMD on)
 ```
 
 A debug build (`cargo run` without `--release`) prints a warning and its timings mean nothing; `report` flags it.
@@ -191,21 +198,32 @@ $card = "E:\DCIM"                                    # the card's photo folder (
 $out  = "$HOME\culla-bench-results\2026-12-01-H2-sd"  # anywhere off the card; one folder per session
 New-Item -ItemType Directory -Path $out | Out-Null
 
+# A failed run's file is renamed to .failed (never deleted), so a rerun can write the run again
+function Save-Run([string]$file, [string[]]$benchArgs, [string]$label) {
+  & $bench @benchArgs --json --label "$label $commit" | Out-File -Encoding utf8 -NoClobber $file
+  if ($LASTEXITCODE -ne 0) {
+    $kept = "$file.$(Get-Date -Format yyyyMMdd-HHmmss).failed"
+    Rename-Item -LiteralPath $file -NewName (Split-Path $kept -Leaf)
+    Write-Warning "exit code $LASTEXITCODE, kept as $kept; run the same line again to redo it"
+  }
+}
+
 function Run-Cold([string]$name, [string[]]$benchArgs, [int]$runs = 5) {
   for ($i = 1; $i -le $runs; $i++) {
+    $file = "$out\$name-cold-$i.json"
+    if (Test-Path -LiteralPath $file) { continue }  # done in an earlier attempt
     Read-Host "Safely eject the card, reinsert it, then press Enter ($name, cold run $i of $runs)"
-    & $bench @benchArgs --json --label "H-2 $name cold $i" |
-      Out-File -Encoding utf8 -NoClobber "$out\$name-cold-$i.json"
+    Save-Run $file $benchArgs "H-2 $name cold $i"
   }
 }
 
 function Run-Warm([string]$name, [string[]]$benchArgs) {
-  & $bench @benchArgs --json --label "H-2 $name warm" |
-    Out-File -Encoding utf8 -NoClobber "$out\$name-warm.json"
+  $file = "$out\$name-warm.json"
+  if (-not (Test-Path -LiteralPath $file)) { Save-Run $file $benchArgs "H-2 $name warm" }
 }
 ```
 
-`-NoClobber` refuses to replace an existing result. Write results with `Out-File -Encoding utf8` (or `>` in PowerShell 7 only): `>` in Windows PowerShell 5.1 writes UTF-16, which `report` refuses. Progress goes to stderr and stays on screen.
+`-NoClobber` refuses to replace an existing result, and a run whose file already exists is skipped, so after a failure (or an interrupted session) running the same line again does only the missing runs. A failed run (exit code other than 0) keeps its file, renamed with a time stamp and `.failed`, so `report` (which reads `*.json`) never sees it; `report` also skips an empty file with a note. Every label ends with the commit (`$commit`), and the session file records the NASM version (`$nasm`), so a result says which code and which libjpeg-turbo build produced it. Write results with `Out-File -Encoding utf8` (or `>` in PowerShell 7 only): `>` in Windows PowerShell 5.1 writes UTF-16, which `report` refuses. Progress goes to stderr and stays on screen.
 
 Before the first run: plugged in, ASUS power mode fixed (for example Performance), Defender left on, nothing else heavy running. Note the card (brand, size, speed class), the reader (model, USB port) and the Windows build (`winver`) for the result file.
 
@@ -251,6 +269,6 @@ Copy the card's folder to the internal drive first (for example `C:\bench\D-2`),
 & $bench report (Get-ChildItem "$out\*-warm.json").FullName   | Out-File -Encoding utf8 -NoClobber "$out\report-warm.txt"
 ```
 
-`report` groups runs with the same benchmark and parameters, and prints for each metric the median, min and max across runs (a result passes on the median of the cold runs, section 4.4) and for each per-item sample the p50, p95 and p99 pooled over the runs. Cold and warm runs are summarised apart, since `report` groups by parameters and not by label. Copy the numbers into `docs/benchmarks/results/<date>-<hardware>-<medium>.md` (section 5) and attach the JSON files to the PR.
+`report` groups runs with the same benchmark, parameters, medium (drive kind and file system), build profile and culla version, and prints for each metric the median, min and max across runs (a result passes on the median of the cold runs, section 4.4) and for each per-item sample the p50, p95 and p99 pooled over the runs. Runs of a debug build are listed and flagged but left out of the figures. Cold and warm runs are summarised apart, since `report` groups by parameters and not by label. Copy the numbers into `docs/benchmarks/results/<date>-<hardware>-<medium>.md` (section 5) and attach the JSON files to the PR.
 
 Cross-check B-15 once with Task Manager (Details, "Peak working set" column) during a swipe run.
