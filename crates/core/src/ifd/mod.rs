@@ -95,7 +95,8 @@ pub struct Limits {
     pub max_issues: usize,
     /// Largest JPEG accepted as a preview. The Z6III's full-size preview is 1.2–3.4 MB.
     pub max_preview_bytes: u64,
-    /// JPEG marker segments read before the frame header (SOFn) must appear.
+    /// JPEG marker segments read, fill bytes included, before the first scan header (SOS)
+    /// must appear.
     pub max_jpeg_segments: usize,
     /// Largest declared pixel count (width x height from SOFn) accepted, so a small
     /// JPEG claiming a huge frame cannot win and reach the decoder (threat model T5).

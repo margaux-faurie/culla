@@ -748,6 +748,47 @@ fn jpeg_checks() {
     let mut bad_len = jpeg(8, 8);
     bad_len[sos + 3] = 0x0A;
     assert_eq!(probe(&bad_len, &l).0, inv(Reject::NoScan));
+    // Ns > Nf alone: two components in the scan, its length matching (6 + 2 * 2), Nf = 1.
+    let mut ns_over_nf = jpeg(8, 8);
+    ns_over_nf.splice(
+        sos..sos + 10,
+        [
+            0xFF, 0xDA, 0x00, 0x0A, 0x02, 0x01, 0x00, 0x01, 0x00, 0x00, 0x3F, 0x00,
+        ],
+    );
+    assert_eq!(probe(&ns_over_nf, &l).0, inv(Reject::NoScan));
+    // `FF 00 <len>` is not a segment: libjpeg discards `FF 00` and rescans byte by byte, so
+    // whatever it hides would be read there and skipped here. Refused before and after SOF.
+    let hidden = [0xFF, 0x00, 0x00, 0x04, 0x00, 0x00];
+    let mut before_sof = jpeg(8, 8);
+    let sof = before_sof
+        .windows(2)
+        .position(|w| w == [0xFF, 0xC0])
+        .unwrap();
+    before_sof.splice(sof..sof, hidden);
+    assert_eq!(probe(&before_sof, &l).0, inv(Reject::NoFrame));
+    let mut after_sof = jpeg(8, 8);
+    after_sof.splice(sos..sos, hidden);
+    assert_eq!(probe(&after_sof, &l).0, inv(Reject::NoScan));
+    // Other markers outside the allowlist: TEM, RST0, JPG, DNL, DHP, EXP, JPG0, reserved.
+    for m in [0x01, 0xD0, 0xC8, 0xDC, 0xDE, 0xDF, 0xF0, 0x02, 0xBF] {
+        let mut j = jpeg(8, 8);
+        j.splice(sos..sos, [0xFF, m, 0x00, 0x04, 0x00, 0x00]);
+        assert_eq!(probe(&j, &l).0, inv(Reject::NoScan), "marker {m:#04x}");
+    }
+    // Allowed markers between SOF and SOS: DQT, DHT, DRI, DAC, COM, APP15, and fill bytes.
+    for seg in [
+        &[0xFF, 0xDB, 0x00, 0x02][..],
+        &[0xFF, 0xC4, 0x00, 0x02],
+        &[0xFF, 0xDD, 0x00, 0x04, 0x00, 0x00],
+        &[0xFF, 0xCC, 0x00, 0x02],
+        &[0xFF, 0xFE, 0x00, 0x03, b'x'],
+        &[0xFF, 0xFF, 0xFF, 0xEF, 0x00, 0x02],
+    ] {
+        let mut j = jpeg(8, 8);
+        j.splice(sos..sos, seg.iter().copied());
+        assert_eq!(probe(&j, &l).0, JpegCheck::Valid, "{seg:02x?}");
+    }
     // A frame header whose length does not match Nf.
     let mut bad_nf = jpeg(8, 8);
     let sof = bad_nf.windows(2).position(|w| w == [0xFF, 0xC0]).unwrap();

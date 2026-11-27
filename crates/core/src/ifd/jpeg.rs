@@ -73,18 +73,22 @@ pub(super) fn probe<R: ReadAt + ?Sized>(
             break;
         }
         let marker = m[1];
+        // An allowlist of the length-bearing markers that may come before the first scan, so
+        // Culla and libjpeg see the same first scan (threat model T5). Anything else is a
+        // broken file: SOI, EOI, TEM, RSTn, JPG, DNL, DHP, EXP, JPGn, reserved markers, and
+        // `FF 00`, which libjpeg discards before scanning on byte by byte, so a scan header
+        // hidden behind it would be skipped here and read there.
         match marker {
-            // Fill byte before a marker.
+            // Fill byte before a marker, skipped as libjpeg does.
             0xFF => {
                 pos += 1;
                 continue;
             }
-            // SOS after a frame header is read below; before one, the file is broken.
-            0xDA if frame.is_some() => {}
-            // SOI, EOI, SOS, TEM, RSTn: no frame header (or no scan) before them is a broken
-            // file.
-            0xD8 | 0xD9 | 0xDA | 0x01 | 0xD0..=0xD7 => break,
-            _ => {}
+            // JPG (C8) is reserved, not a frame header.
+            0xC8 => break,
+            // APPn, COM, DQT, DHT, DRI, DAC, SOFn, SOS (refused below without a frame).
+            0xE0..=0xEF | 0xFE | 0xDB | 0xC4 | 0xDD | 0xCC | 0xC0..=0xCF | 0xDA => {}
+            _ => break,
         }
         let seg = u64::from(u16::from_be_bytes([m[2], m[3]]));
         if seg < 2 || pos + 2 + seg > end {

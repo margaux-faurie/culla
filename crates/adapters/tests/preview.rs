@@ -244,6 +244,23 @@ fn caps_refuse_before_decoding() {
             cap: 25_000_000
         }))
     );
+    // The same 45 MP claim with the interleaved scan header kept, and a one-component scan
+    // header hidden in front of it behind `FF 00 <len>`. libjpeg discards `FF 00`, rescans
+    // and starts on the hidden non-interleaved scan; skipping it by length would see only the
+    // interleaved one and let the frame through. The marker allowlist refuses it first.
+    let mut hidden = jpeg.clone();
+    hidden[sof + 5..sof + 7].copy_from_slice(&5504u16.to_be_bytes());
+    hidden[sof + 7..sof + 9].copy_from_slice(&8256u16.to_be_bytes());
+    hidden.splice(
+        sos..sos,
+        [
+            0xFF, 0x00, 0x00, 0x0C, 0xFF, 0xDA, 0x00, 0x08, 0x01, first, 0x00, 0x00, 0x3F, 0x00,
+        ],
+    );
+    assert_eq!(
+        build_preview(&hidden, Orientation::Normal, &PreviewOptions::default()),
+        Err(PreviewError::Plan(PlanError::Rejected(Reject::NoScan)))
+    );
 }
 
 #[test]
