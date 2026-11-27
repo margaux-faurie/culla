@@ -29,7 +29,7 @@ A Windows desktop app that culls a folder of Nikon photos (JPEG + NEF) one photo
 
 | Topic | Decision |
 |---|---|
-| App identifier | `com.margauxfaurie.culla` (reverse-DNS convention; sets the AppData folder, installer registry key and updater identity; decided 27 Nov 2026) |
+| App identifier | `com.margauxfaurie.culla` (reverse-DNS; Tauri bundle identifier, used by the installer and the WebView2 data folder; Culla's own data stays in `%LOCALAPPDATA%\Culla`, architecture §8.7; decided 27 Nov 2026) |
 | Platform | Windows 11 first; Windows 10 22H2 to decide (target machine: ROG Zephyrus G14 2024, 2880×1800 OLED) |
 | Choices | Binary: keep / reject |
 | Reject | Move to `<source>/_rejected/`, mirroring subfolders. The app never deletes a photo; the only removals are listed in §5.2 step 5. |
