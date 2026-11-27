@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/adapters", "crates/cli", "crates/bench", "src-tauri"]
+members = ["crates/core", "crates/adapters", "crates/cli", "crates/bench", "src-tauri", "xtask"]
+# cargo-fuzz needs nightly and libFuzzer; it is its own workspace (docs/testing.md §7).
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.0.0" # x-release-please-version

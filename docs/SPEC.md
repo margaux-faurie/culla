@@ -214,6 +214,7 @@ Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsm
 - Moving 2,000 pairs across volumes is about 140 GB of files, but about 280 GB read (the source is read twice for verification), so 50+ minutes from a UHS-I card. The review screen shows an estimate that includes the verification reads.
 
 ## 10. Open questions
+- `xtask`: ADR 0020 says it is outside the file rules, but it inherits the workspace lints and only creates new files. Proposed: keep it inside the rules and supersede ADR 0020 on that point.
 - App identifier: `com.margauxfaurie.culla` is used in `src-tauri/tauri.conf.json` (proposed). It sets the AppData paths, the installer's registry key and the updater identity, so it should be confirmed before the first release.
 - Windows 10 22H2 support (out of mainstream support since Oct 2025): must, should, or dropped.
 - Update check: on or off by default, and how often.
