@@ -87,7 +87,7 @@ flowchart TB
   end
 
   subgraph tools["Headless tools (not shipped in v1, ADR 0020)"]
-    cli["CLI<br/>[Container: Rust binary, culla-cli]<br/>crates/cli/ — culla scan|preview|plan|apply|resume; wiring only"]
+    cli["CLI<br/>[Container: Rust binary, culla-cli]<br/>crates/cli/ — culla scan (M1, read-only); preview, plan, apply, resume to come; wiring only"]
     bench["Bench<br/>[Container: Rust binary, culla-bench]<br/>crates/bench/ — benchmark harness; temp dirs only"]
   end
 
@@ -108,6 +108,8 @@ flowchart TB
   adapters -->|"read; move/copy on apply"| photos
   shell -->|"updater plugin, HTTPS"| gh
 ```
+
+`culla scan <folder> [--no-subfolders] [--json]` resolves the folder (`winfs::resolve_folder`; off Windows the identity is reported as unavailable and the folder is scanned all the same), streams the scan with progress on stderr, groups each batch, reads each group's EXIF and prints the groups in capture-time order with the volume identity, the source key and the totals, as text or JSON. It writes nothing but stdout and stderr. Exit codes: 0 done, 1 usage error, 2 folder refused, 3 folder unreadable.
 
 The web demo is the same `src/` build in demo mode with `DemoBackend`. It has no shell and no core. See [ADR 0014](adr/0014-backend-interface-with-build-time-implementations.md).
 

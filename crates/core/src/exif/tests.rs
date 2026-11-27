@@ -188,6 +188,57 @@ fn utc_instant_from_the_offset() {
     assert_eq!(edge.utc_ms(), None);
 }
 
+fn ct(local_ms: i64, offset_minutes: Option<i16>) -> CaptureTime {
+    CaptureTime {
+        local_ms,
+        offset_minutes,
+        source: TimeSource::DateTimeOriginal,
+    }
+}
+
+#[test]
+fn iso8601_text_of_capture_times() {
+    let z6 = PhotoMeta::from_raw(&z6iii(), None).captured.unwrap();
+    assert_eq!(z6.to_iso8601(), "2025-02-15T03:59:50.550+11:00");
+    assert_eq!(ct(0, None).to_iso8601(), "1970-01-01T00:00:00.000");
+    assert_eq!(ct(0, Some(0)).to_iso8601(), "1970-01-01T00:00:00.000Z");
+    assert_eq!(
+        ct(-1, Some(-90)).to_iso8601(),
+        "1969-12-31T23:59:59.999-01:30"
+    );
+    let leap = secs("2024:02:29 23:59:59") * 1000 + 7;
+    assert_eq!(
+        ct(leap, Some(840)).to_iso8601(),
+        "2024-02-29T23:59:59.007+14:00"
+    );
+    assert_eq!(
+        ct(secs("0001:01:01 00:00:00") * 1000, None).to_iso8601(),
+        "0001-01-01T00:00:00.000"
+    );
+    assert_eq!(
+        ct(secs("9999:12:31 23:59:59") * 1000, None).to_iso8601(),
+        "9999-12-31T23:59:59.000"
+    );
+    // Only a file time reaches these; they must not panic and keep a sign.
+    assert!(ct(i64::MIN, None).to_iso8601().starts_with('-'));
+    assert!(ct(i64::MAX, Some(-840)).to_iso8601().starts_with('+'));
+    assert_eq!(
+        ct(secs("0001:01:01 00:00:00") * 1000 - 86_400_000, None).to_iso8601(),
+        "0000-12-31T00:00:00.000"
+    );
+}
+
+#[test]
+fn iso8601_round_trips_every_day_of_four_centuries() {
+    let start = secs("1900:01:01 12:00:00");
+    for d in 0..146_097i64 {
+        let local = (start + d * 86_400) * 1000;
+        let text = ct(local, None).to_iso8601();
+        // Back through the parser: `YYYY-MM-DDTHH:MM:SS` is one of its accepted forms.
+        assert_eq!(secs(&text[..19]) * 1000, local, "{text}");
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Capture time fallbacks
 // ---------------------------------------------------------------------------------------------
