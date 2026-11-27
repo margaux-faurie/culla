@@ -593,3 +593,23 @@ fn entries_of_a_folder_share_one_folder_allocation() {
     let e = &got[1].entries;
     assert!(std::sync::Arc::ptr_eq(&e[0].folder, &e[1].folder));
 }
+
+/// Threat model T19: a chain one folder deeper than the default cap is walked to the cap, the
+/// queue holding only each folder's parent and name.
+#[test]
+fn a_deep_chain_is_walked_to_the_default_cap() {
+    let t = TempTree::new("chain");
+    let deepest = culla_core::grouping::DEFAULT_MAX_DEPTH + 1;
+    let mut rel = String::new();
+    for _ in 0..deepest {
+        rel.push_str("d/");
+        t.file(&format!("{rel}X.JPG"), b"x");
+    }
+    let (g, summary) = scan_and_group(t.path(), &all()).unwrap();
+    assert_eq!(g.groups.len(), culla_core::grouping::DEFAULT_MAX_DEPTH);
+    assert_eq!(g.groups.last().unwrap().folder.len(), deepest - 1);
+    assert_eq!(g.excluded.len(), 1);
+    assert_eq!(g.excluded[0].reason, ExclusionReason::TooDeep);
+    assert_eq!(g.excluded[0].entry.folder.len(), deepest - 1);
+    assert_eq!(summary.folders as usize, deepest);
+}

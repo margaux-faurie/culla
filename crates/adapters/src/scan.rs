@@ -2,8 +2,9 @@
 //! US-05).
 //!
 //! The walk lists folders with `std::fs::read_dir` and nothing else: it never opens, reads,
-//! creates or changes a file, and it never follows a link. Each entry is described from the
-//! listing itself (`DirEntry::file_type` and `DirEntry::metadata`, which do not traverse links:
+//! creates or changes a file, and it does not enter a link it sees. It re-checks each folder
+//! just before listing it, but lists by path, so a swap in between can still redirect a
+//! listing (see "Swaps" below). Each entry is described from the listing itself (`DirEntry::file_type` and `DirEntry::metadata`, which do not traverse links:
 //! `lstat` on Unix, the `FindNextFileW` data on Windows), so a symlink, junction or mount point
 //! is seen as a reparse point and is never entered. Which folders are entered, and how files
 //! group, is decided by `culla_core::grouping`.
@@ -188,38 +189,46 @@ pub fn scan(
     check_folder(root).map_err(ListFailure::into_root_error)?;
 
     let mut summary = ScanSummary::default();
-    // Folders still to list, the next one last.
-    let mut stack: Vec<Vec<String>> = vec![Vec::new()];
-    while let Some(folder) = stack.pop() {
+    // Folders still to list, the next one last; `None` is the root. Each queued folder holds
+    // only its parent's shared components and its own name (threat model T19).
+    let mut stack: Vec<Option<Queued>> = vec![None];
+    while let Some(queued) = stack.pop() {
         summary.folders += 1;
-        let (batch_folder, mut entries) = match list(root, &folder, policy) {
-            Ok(entries) => (folder, entries),
-            Err(fail) if folder.is_empty() => return Err(fail.into_root_error()),
-            Err(fail) => {
+        let folder = match &queued {
+            None => Vec::new(),
+            Some(q) => {
+                let mut path = q.parent.to_vec();
+                path.push(q.name.clone());
+                path
+            }
+        };
+        let (batch_folder, mut entries) = match (list(root, &folder, policy), queued) {
+            (Ok(entries), _) => (folder, entries),
+            (Err(fail), None) => return Err(fail.into_root_error()),
+            (Err(fail), Some(q)) => {
                 // Reported against its parent; nothing below it is emitted.
-                let mut parent = folder;
-                let name = parent.pop().unwrap_or_default();
-                let entry = ScanEntry::in_folder(parent.clone().into(), &name, fail.into_kind());
+                let parent = q.parent.to_vec();
+                let entry = ScanEntry::in_folder(q.parent, &q.name, fail.into_kind());
                 (parent, vec![entry])
             }
         };
 
         // Children to enter, in walk order. NKSC_PARAM is listed now, into this batch.
-        let mut next: Vec<Vec<String>> = Vec::new();
+        let mut next: Vec<Option<Queued>> = Vec::new();
         let mut sidecar_entries = Vec::new();
         for e in &mut entries {
             if e.kind != EntryKind::Dir {
                 continue;
             }
             match policy.dir_action(e) {
-                DirAction::Enter => next.push(e.components()),
+                DirAction::Enter => next.push(Some(Queued::child_of(e))),
                 DirAction::Sidecars => {
                     summary.folders += 1;
                     match list(root, &e.components(), policy) {
                         Ok(inner) => {
                             for d in inner.iter().filter(|d| d.kind == EntryKind::Dir) {
                                 if policy.dir_action(d) == DirAction::Enter {
-                                    next.push(d.components());
+                                    next.push(Some(Queued::child_of(d)));
                                 }
                             }
                             sidecar_entries.extend(inner);
@@ -262,6 +271,21 @@ pub fn scan_and_group(
         ControlFlow::Continue(())
     })?;
     Ok((Grouping::merge(parts), summary))
+}
+
+/// A folder waiting to be listed: its parent's shared components and its name.
+struct Queued {
+    parent: Arc<[String]>,
+    name: String,
+}
+
+impl Queued {
+    fn child_of(dir: &ScanEntry) -> Self {
+        Self {
+            parent: Arc::clone(&dir.folder),
+            name: dir.name.clone(),
+        }
+    }
 }
 
 fn path_of(root: &Path, components: &[String]) -> PathBuf {
