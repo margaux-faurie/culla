@@ -17,15 +17,25 @@
 //! - [`bind`] and [`relation`]: the run binding of §6.3 (one mounted volume per serial, "same
 //!   volume" decided by GUID).
 //!
-//! Paths are Windows paths as text: [`classify_path`] says which forms are supported, and
-//! [`rel_under_root`] splits a folder's path under its volume root into validated components
-//! (design/file-engine.md §3.4).
+//! Paths are Windows paths as text: [`classify_path`] says which forms are supported,
+//! [`validate_drive_path`] checks every name in one, and [`rel_under_root`] splits a folder's
+//! path under its volume root into validated components (design/file-engine.md §3.4).
+//!
+//! What v1 refuses (decided by Margaux, 27 Nov 2026): network shares and mapped network
+//! drives, volumes with no drive letter or mounted folder, and volumes with serial 0
+//! ([`classify_path`], [`check_volume`]); a chosen folder that is a link or a cloud placeholder
+//! ([`check_chosen_folder`]).
+//!
+//! A [`SourceKey`] built from a path lookup is a session lookup key only, never a run binding:
+//! M2 re-reads the serial from the opened folder's handle and binds by GUID before any
+//! operation (design/file-engine.md §3.1, §6.3).
 
 #[cfg(test)]
 mod tests;
 
 use std::fmt;
 
+use crate::grouping::Attributes;
 use crate::names::{NameError, fold, validate_component};
 
 /// The identity of a volume: its 32-bit serial number (ADR 0008). Two volumes with the same
@@ -423,8 +433,9 @@ pub enum UnsupportedPath {
     /// Not an absolute drive path: relative (`DCIM`), drive-relative (`E:DCIM`) or rooted on
     /// the current drive (`\DCIM`).
     NotAbsolute,
-    /// A network path (`\\server\share`, `\\?\UNC\…`). Network shares are refused in v1
-    /// (design/file-engine.md §6.2, to confirm).
+    /// A network path (`\\server\share`, `\\?\UNC\…`) or a volume Windows reports as a
+    /// network drive (`DRIVE_REMOTE`) or without a valid root (`DRIVE_NO_ROOT_DIR`). Refused in
+    /// v1 (decided by Margaux, 27 Nov 2026; design/file-engine.md §6.2).
     Network,
     /// A volume GUID path without a drive letter or mounted folder (`\\?\Volume{…}\…`).
     VolumeGuid,
@@ -456,6 +467,16 @@ pub enum VolumePathError {
     Name(NameError),
     /// Not a volume GUID path of the form `\\?\Volume{…}\`.
     BadGuidPath,
+    /// The volume reports serial 0, which cannot identify it (refused in v1, decided by Margaux,
+    /// 27 Nov 2026).
+    NoSerial,
+    /// The chosen folder is itself a symlink, junction, mount point or other reparse point.
+    ReparsePoint,
+    /// The chosen folder is a cloud placeholder (`OFFLINE`, `RECALL_ON_OPEN`,
+    /// `RECALL_ON_DATA_ACCESS`; threat model T2b).
+    CloudPlaceholder,
+    /// The chosen path is not a folder.
+    NotAFolder,
 }
 
 impl fmt::Display for VolumePathError {
@@ -466,6 +487,10 @@ impl fmt::Display for VolumePathError {
             Self::NotUnderRoot => f.write_str("the folder is not under its volume root"),
             Self::Name(e) => write!(f, "invalid name in the path: {e}"),
             Self::BadGuidPath => f.write_str("not a volume GUID path"),
+            Self::NoSerial => f.write_str("the volume has no serial number"),
+            Self::ReparsePoint => f.write_str("the folder is a link, junction or mount point"),
+            Self::CloudPlaceholder => f.write_str("the folder is a cloud placeholder"),
+            Self::NotAFolder => f.write_str("not a folder"),
         }
     }
 }
@@ -562,4 +587,64 @@ pub fn rel_under_root(path: &str, root: &str) -> Result<Vec<String>, VolumePathE
         validate_component(c)?;
     }
     Ok(rel)
+}
+
+/// Checks the chosen folder before anything else is asked about it, from its own entry read
+/// without following links (`symlink_metadata`): it must be a real folder, not a reparse point
+/// and not a cloud placeholder (design/file-engine.md §3.1, threat model T2, T2b). A link
+/// *above* the folder is resolved by canonicalization afterwards.
+///
+/// # Errors
+///
+/// [`VolumePathError::ReparsePoint`], [`VolumePathError::CloudPlaceholder`] or
+/// [`VolumePathError::NotAFolder`], checked in that order.
+pub fn check_chosen_folder(attrs: Attributes, is_dir: bool) -> Result<(), VolumePathError> {
+    if attrs.reparse_point {
+        Err(VolumePathError::ReparsePoint)
+    } else if attrs.cloud_placeholder {
+        Err(VolumePathError::CloudPlaceholder)
+    } else if !is_dir {
+        Err(VolumePathError::NotAFolder)
+    } else {
+        Ok(())
+    }
+}
+
+/// Validates every component of a drive path below its drive letter (`E:\DCIM\100NIKON`:
+/// `DCIM` and `100NIKON`) with [`validate_component`], so no name Culla would refuse reaches a
+/// Win32 call (design/file-engine.md §3.4). A trailing `\` is allowed; `E:\` has none.
+///
+/// # Errors
+///
+/// [`VolumePathError::Unsupported`] when `path` is not a supported form ([`classify_path`]),
+/// [`VolumePathError::Name`] for the first invalid or empty component.
+pub fn validate_drive_path(path: &str) -> Result<(), VolumePathError> {
+    let drive = classify_path(path)?;
+    let below = &drive[3..];
+    let below = below.strip_suffix('\\').unwrap_or(below);
+    if below.is_empty() {
+        return Ok(());
+    }
+    for c in below.split('\\') {
+        validate_component(c)?;
+    }
+    Ok(())
+}
+
+/// Refuses the volumes v1 does not take (decided by Margaux, 27 Nov 2026): network drives
+/// (`DRIVE_REMOTE`) and roots Windows calls invalid (`DRIVE_NO_ROOT_DIR`), as
+/// [`UnsupportedPath::Network`], and serial 0, as [`VolumePathError::NoSerial`]. Volumes
+/// reachable only by GUID path are refused earlier, by [`classify_path`].
+///
+/// # Errors
+///
+/// As above.
+pub fn check_volume(info: &VolumeInfo) -> Result<(), VolumePathError> {
+    match info.drive_kind {
+        DriveKind::Remote | DriveKind::NoRootDir => {
+            Err(VolumePathError::Unsupported(UnsupportedPath::Network))
+        }
+        _ if info.id.serial == 0 => Err(VolumePathError::NoSerial),
+        _ => Ok(()),
+    }
 }

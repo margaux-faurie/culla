@@ -258,7 +258,7 @@ CREATE TRIGGER journal_no_delete BEFORE DELETE ON journal_entry
 
 ### 3.1 Walk
 
-1. Resolve the chosen folder once: open it, take its final path (`std::fs::canonicalize`), the volume root (`GetVolumePathNameW`), the volume GUID path (`GetVolumeNameForVolumeMountPointW`), the serial and file system name (`GetVolumeInformationByHandleW`). The source is (serial, path from the volume root). As built in M1 (`winfs::resolve_folder`): `GetVolumeInformationW` on the volume GUID path instead of the handle form, so the lookup opens no handle; every field still comes from the volume the GUID names. Supported path forms are listed in the `winfs` module docs (drive paths and their `\\?\` form, folder mounts, `subst`; network, GUID-only and device paths refused). A junction *above* the chosen folder is resolved here, once; nothing inside the tree is followed.
+1. Resolve the chosen folder once: open it, take its final path (`std::fs::canonicalize`), the volume root (`GetVolumePathNameW`), the volume GUID path (`GetVolumeNameForVolumeMountPointW`), the serial and file system name (`GetVolumeInformationByHandleW`). The source is (serial, path from the volume root). Decided by Margaux, 27 Nov 2026: in M1 (`winfs::resolve_folder`) the identity is read by GUID path (`GetVolumeInformationW` on the volume GUID path), not from a held handle. The folder is checked with `symlink_metadata` (no reparse point, no cloud placeholder), canonicalized (which opens it briefly with no access rights) and closed again. Trade-off: between that check and the lookups, a swapped link or a remounted volume could make the result describe another folder or volume (TOCTOU). So the M1 result is a session lookup key only, never a run binding. M2 must open the folder, take the serial from that handle (`GetVolumeInformationByHandleW`), check that it matches the session's serial, and bind the GUID (§6.3) before any operation. Supported path forms are in the `winfs` module docs: drive paths and their `\\?\` form, folder mounts, `subst`. Network, GUID-only and device paths and serial 0 are refused (§6.2). A junction *above* the chosen folder is resolved here, once; nothing inside the tree is followed.
 2. Walk depth-first with `follow_links(false)`, or only the root folder if "include subfolders" is off. Use the attributes from the directory listing; never call a following `metadata()`.
 3. Each folder is listed completely, then grouped (§3.3), then its groups are emitted in filename order. This is what makes the scan streamed: the first folder's groups reach the UI before the rest of the tree is listed.
 4. The EXIF pass (first ~128 KB per primary, buffered reads, never mmap) runs after, as described in [architecture.md](../architecture.md). It only fills `capture_time`.
@@ -393,7 +393,7 @@ mtime comparison accepts a difference of exactly ±3600 s whenever the timestamp
 
 To decide: a threshold above which a reopened source is treated as "probably a different card with the same serial" (for example more than half the members missing and the same number new), and what the UI then asks. This is the residual risk of a 32-bit serial ([ADR 0008](../adr/0008-key-sessions-and-caches-by-volume-serial-and-relative-path.md)). Whatever the answer, operations never trust the session alone: each one re-checks the file on disk before acting (§9).
 
-To decide: network shares and volumes without a serial. Proposal: refuse them as sources and destinations in v1.
+Decided by Margaux, 27 Nov 2026: v1 refuses, as sources and destinations, network shares and mapped network drives (UNC paths, `DRIVE_REMOTE`, and `DRIVE_NO_ROOT_DIR`), volumes with no drive letter or mounted folder (GUID-only), and volumes with serial 0. In place for sources in `winfs::resolve_folder` (M1).
 
 ### 6.3 Volume binding during a run
 
@@ -797,7 +797,8 @@ Each invariant has at least one test in [testing.md](../testing.md): property te
 - Destination inside a cloud-synced folder (allowed with a warning, P17): folders under a OneDrive sync root can carry cloud reparse tags, which P6 and P9 refuse; how the destination's folders are told apart from placeholders is to check in adapter tests on a real OneDrive folder.
 - Free-space margin (P5).
 - "Retry failed" and "Finish moves" run in the same plan (§9.6), but §9.1 has no edge out of `completed` or `cancelled`: either the plan stays open while the report offers them, or they reopen it. To settle in M2.
-- Same-serial threshold on reopen, and network shares (§6.2).
+- Same-serial threshold on reopen (§6.2). Network shares: decided, refused (§6.2).
+- What `DriveKind` (removable or fixed, from `GetDriveTypeW`) is used for: reported in `VolumeInfo`, no rule uses it yet (many USB card readers report fixed).
 - WAL with `synchronous=FULL` (proposed in ADR 0009 and NFR-REL-10), and the 500 ms crash window.
 - BLAKE3 recommended over xxh3 (§9.3); to record when ADR 0010 is updated with the states of §9.2.
 - `_rejected` excluded at any depth (§3.2).

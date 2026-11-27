@@ -1,5 +1,6 @@
 //! The Win32 calls behind [`super::resolve_folder`] and [`super::local_utc_offset_minutes`].
-//! Read-only lookups: no call here opens, creates or changes a file.
+//! Read-only lookups: nothing here creates, writes or changes a file; the only handle is the
+//! one `std::fs::canonicalize` opens briefly, with no access rights.
 //!
 //! Every buffer handed to Windows is owned here, NUL-terminated when it is an input, and
 //! passed with its exact length in UTF-16 units; outputs are read up to their first NUL and
@@ -32,8 +33,8 @@ use std::path::Path;
 
 use culla_core::names::NameError;
 use culla_core::volume::{
-    DriveKind, Source, VolumeFlags, VolumeGuidPath, VolumeId, VolumeInfo, classify_path,
-    rel_under_root,
+    DriveKind, Source, VolumeFlags, VolumeGuidPath, VolumeId, VolumeInfo, check_volume,
+    classify_path, rel_under_root, validate_drive_path,
 };
 use windows_sys::Win32::Foundation::{FILETIME, SYSTEMTIME};
 use windows_sys::Win32::Storage::FileSystem::{
@@ -66,6 +67,8 @@ pub(super) fn resolve_folder(path: &Path) -> Result<ResolvedFolder, VolumeError>
     let canonical = std::fs::canonicalize(path).map_err(VolumeError::Io)?;
     let text = canonical.to_str().ok_or(NameError::NotUnicode)?;
     let drive = classify_path(text)?;
+    // Every name below the drive letter, before any Win32 call sees the path.
+    validate_drive_path(drive)?;
     // The drive form while it fits MAX_PATH (the documented form), the verbatim form beyond.
     let query = if drive.len() < MAX_PATH { drive } else { text };
     let root = volume_path_name(query)?;
@@ -77,6 +80,7 @@ pub(super) fn resolve_folder(path: &Path) -> Result<ResolvedFolder, VolumeError>
     }
     let guid_path = volume_guid_path(&root)?;
     let volume = volume_information(guid_path, root)?;
+    check_volume(&volume)?;
     let rel = rel_under_root(drive, &volume.mount_point)?;
     let source = Source::new(volume.id, rel)?;
     Ok(ResolvedFolder {

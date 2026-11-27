@@ -1,18 +1,84 @@
 //! `winfs` read-only lookups: a folder's volume identity (ADR 0008, US-09) and the PC's UTC
 //! offset (ADR 0028). On Windows (CI's `windows-latest` job) they query the volume of the
 //! system temp folder, which needs no admin rights and no VHDX; elsewhere they check the
-//! "unsupported" stub.
+//! "unsupported" stub. The checks on the chosen folder itself run on every OS.
 
-use culla_adapters::winfs::{local_utc_offset_minutes, resolve_folder};
+use std::fs::{self, OpenOptions};
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use culla_adapters::winfs::{VolumeError, local_utc_offset_minutes, resolve_folder};
+use culla_core::volume::VolumePathError;
 
 /// 2025-01-15 12:00 UTC and 2025-07-15 12:00 UTC, in nanoseconds.
 const WINTER_NS: i64 = 1_736_942_400_000_000_000;
 const SUMMER_NS: i64 = 1_752_580_800_000_000_000;
 
+/// A uniquely named folder under the system temp folder, removed on drop.
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn new(test: &str) -> Self {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let dir =
+            std::env::temp_dir().join(format!("culla-winfs-{test}-{}-{nanos}", std::process::id()));
+        fs::create_dir(&dir).unwrap();
+        Self(dir)
+    }
+}
+
+impl Drop for TempDir {
+    #[allow(clippy::disallowed_methods, reason = "test temp folder only")]
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn a_missing_folder_is_an_io_error() {
+    let tmp = TempDir::new("missing");
+    let err = resolve_folder(&tmp.0.join("not-there")).unwrap_err();
+    assert!(matches!(err, VolumeError::Io(_)), "{err:?}");
+}
+
+#[test]
+fn a_file_is_not_a_folder() {
+    let tmp = TempDir::new("file");
+    let path = tmp.0.join("DSC_0001.JPG");
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .unwrap();
+    let err = resolve_folder(&path).unwrap_err();
+    assert!(
+        matches!(err, VolumeError::Path(VolumePathError::NotAFolder)),
+        "{err:?}"
+    );
+}
+
+/// A symlink to a folder is refused before canonicalization would follow it. (Junctions and
+/// Windows symlinks, which need a privilege to create, are in the `windows-it` suite, M2.)
+#[cfg(unix)]
+#[test]
+fn a_link_to_a_folder_is_refused() {
+    let tmp = TempDir::new("link");
+    let target = tmp.0.join("DCIM");
+    fs::create_dir(&target).unwrap();
+    let link = tmp.0.join("card");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let err = resolve_folder(&link).unwrap_err();
+    assert!(
+        matches!(err, VolumeError::Path(VolumePathError::ReparsePoint)),
+        "{err:?}"
+    );
+}
+
 #[cfg(not(windows))]
 mod stub {
     use super::*;
-    use culla_adapters::winfs::VolumeError;
 
     #[test]
     fn volumes_are_unsupported_off_windows() {
@@ -34,35 +100,8 @@ mod stub {
 
 #[cfg(windows)]
 mod windows {
-    use std::fs;
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use super::*;
-    use culla_adapters::winfs::VolumeError;
     use culla_core::volume::DriveKind;
-
-    /// A uniquely named folder under the system temp folder, removed on drop.
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(test: &str) -> Self {
-            let nanos = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos());
-            let dir = std::env::temp_dir()
-                .join(format!("culla-winfs-{test}-{}-{nanos}", std::process::id()));
-            fs::create_dir(&dir).unwrap();
-            Self(dir)
-        }
-    }
-
-    impl Drop for TempDir {
-        #[allow(clippy::disallowed_methods, reason = "test temp folder only")]
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
 
     #[test]
     fn the_temp_folder_resolves_to_a_sane_volume() {
@@ -115,13 +154,6 @@ mod windows {
         let root = resolve_folder(std::path::Path::new(&r.volume.mount_point)).unwrap();
         assert!(root.source.components().is_empty(), "{root:?}");
         assert_eq!(root.volume.id, r.volume.id);
-    }
-
-    #[test]
-    fn a_missing_folder_is_an_io_error() {
-        let tmp = TempDir::new("missing");
-        let err = resolve_folder(&tmp.0.join("not-there")).unwrap_err();
-        assert!(matches!(err, VolumeError::Io(_)), "{err:?}");
     }
 
     #[test]

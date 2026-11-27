@@ -9,29 +9,48 @@
 //! - [`local_utc_offset_minutes`]: the PC's offset from UTC at an instant, so the file-time
 //!   fallback of the capture time is read in the PC's local time zone (ADR 0028).
 //!
-//! Neither opens, creates or changes a file. On other platforms (Linux CI, the CLI on a dev
-//! machine) [`resolve_folder`] returns [`VolumeError::Unsupported`] and the offset is 0 (UTC).
+//! Neither creates, writes or changes a file. [`resolve_folder`] reads the chosen folder's own
+//! entry (`symlink_metadata`) and canonicalizes it, which briefly opens a handle to it with no
+//! access rights; nothing else is opened. On other platforms (Linux CI, the CLI on a dev
+//! machine) it checks the folder the same way, then returns [`VolumeError::Unsupported`]; the
+//! offset is 0 (UTC).
+//!
+//! # A session lookup key, not a run binding
+//!
+//! Decided by Margaux, 27 Nov 2026 (design/file-engine.md §3.1): the identity is read by path
+//! and by volume GUID path, not from a held handle. Between the checks and the lookups a
+//! swapped link or a remounted volume could make the answer describe another folder or volume
+//! (TOCTOU), so the result only finds the session. M2 must open the folder, read the serial
+//! from that handle (`GetVolumeInformationByHandleW`), check it matches, and bind the GUID
+//! (§6.3) before any operation.
 //!
 //! # Supported paths
 //!
-//! The folder is first canonicalized (`std::fs::canonicalize`, which follows links above the
-//! folder once and returns the final path), then split by [`culla_core::volume::classify_path`]:
+//! The chosen folder must itself be a real folder, not a link, junction, mount point or cloud
+//! placeholder ([`culla_core::volume::check_chosen_folder`]). It is then canonicalized
+//! (`std::fs::canonicalize`, which follows links above the folder once and returns the final
+//! path), split by [`culla_core::volume::classify_path`], and every name below the drive
+//! letter is validated ([`culla_core::volume::validate_drive_path`]) before any Win32 call:
 //!
 //! - `X:\…` and its verbatim form `\\?\X:\…`: supported. A folder under a volume mounted in a
 //!   folder (`C:\Mounts\Card\DCIM`) resolves to that volume, with the mounted folder as root.
 //! - A `subst` drive: canonicalization resolves it to the folder it stands for, so its
 //!   identity is the underlying volume's, whatever the letter.
 //! - Paths longer than `MAX_PATH` are queried in their verbatim form (not covered by tests).
-//! - Refused: network paths (`\\server\share`, `\\?\UNC\…`, and mapped network drives, which
-//!   canonicalize to UNC), volumes reachable only by GUID path, device paths, and paths that
-//!   are not valid Unicode.
+//! - Refused (v1, decided by Margaux, 27 Nov 2026): network paths (`\\server\share`,
+//!   `\\?\UNC\…`, mapped network drives, which canonicalize to UNC, and any root Windows
+//!   reports as `DRIVE_REMOTE` or `DRIVE_NO_ROOT_DIR`), volumes reachable only by GUID path,
+//!   volumes with serial 0 ([`culla_core::volume::check_volume`]), device paths, and paths
+//!   that are not valid Unicode.
 
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use culla_core::names::NameError;
-use culla_core::volume::{Source, UnsupportedPath, VolumeInfo, VolumePathError};
+use culla_core::volume::{
+    Source, UnsupportedPath, VolumeInfo, VolumePathError, check_chosen_folder,
+};
 
 #[cfg(windows)]
 mod win32;
@@ -114,15 +133,21 @@ impl From<NameError> for VolumeError {
 
 /// The volume of the folder at `path` and the folder's path from the volume root.
 ///
-/// Read-only: `std::fs::canonicalize`, then `GetVolumePathNameW` (the volume root),
+/// Read-only: `symlink_metadata` and the folder checks, `std::fs::canonicalize`, the name
+/// checks, then `GetVolumePathNameW` (the volume root),
 /// `GetVolumeNameForVolumeMountPointW` (its GUID path), `GetVolumeInformationW` on the GUID
-/// path (serial, label, file system, flags) and `GetDriveTypeW` on the root. See the module
-/// docs for the supported paths.
+/// path (serial, label, file system, flags) and `GetDriveTypeW` on the root, then
+/// [`culla_core::volume::check_volume`]. The result is a session lookup key only (module
+/// docs). See the module docs for the supported paths.
 ///
 /// # Errors
 ///
-/// [`VolumeError::Unsupported`] off Windows; otherwise the step that failed.
+/// [`VolumeError::Io`] when the folder cannot be read, [`VolumeError::Path`] when it or its
+/// volume is refused, [`VolumeError::Unsupported`] off Windows once the folder checks pass;
+/// otherwise the Win32 step that failed.
 pub fn resolve_folder(path: &Path) -> Result<ResolvedFolder, VolumeError> {
+    let meta = std::fs::symlink_metadata(path).map_err(VolumeError::Io)?;
+    check_chosen_folder(crate::scan::attributes(&meta), meta.is_dir())?;
     sys::resolve_folder(path)
 }
 

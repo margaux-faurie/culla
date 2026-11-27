@@ -347,3 +347,127 @@ fn odd_input_never_panics() {
         let _ = VolumeGuidPath::parse(s);
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// What v1 refuses (decided by Margaux, 27 Nov 2026)
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn network_drives_invalid_roots_and_serial_zero_are_refused() {
+    let ok = info(1, GUID_E, "E:\\");
+    assert_eq!(check_volume(&ok), Ok(()));
+    for kind in [
+        DriveKind::Removable,
+        DriveKind::Fixed,
+        DriveKind::CdRom,
+        DriveKind::RamDisk,
+        DriveKind::Unknown,
+    ] {
+        let v = VolumeInfo {
+            drive_kind: kind,
+            ..ok.clone()
+        };
+        assert_eq!(check_volume(&v), Ok(()), "{kind:?}");
+    }
+    for kind in [DriveKind::Remote, DriveKind::NoRootDir] {
+        let v = VolumeInfo {
+            drive_kind: kind,
+            ..ok.clone()
+        };
+        assert_eq!(
+            check_volume(&v),
+            Err(VolumePathError::Unsupported(UnsupportedPath::Network)),
+            "{kind:?}"
+        );
+    }
+    let zero = info(0, GUID_E, "E:\\");
+    assert_eq!(check_volume(&zero), Err(VolumePathError::NoSerial));
+    // A network drive with serial 0 is refused as a network drive.
+    let both = VolumeInfo {
+        drive_kind: DriveKind::Remote,
+        ..zero
+    };
+    assert_eq!(
+        check_volume(&both),
+        Err(VolumePathError::Unsupported(UnsupportedPath::Network))
+    );
+    // GUID-only volumes never get this far: their paths are refused by form.
+    assert_eq!(classify_path(GUID_E), Err(UnsupportedPath::VolumeGuid));
+}
+
+#[test]
+fn the_chosen_folder_must_be_a_plain_folder() {
+    let plain = Attributes::default();
+    assert_eq!(check_chosen_folder(plain, true), Ok(()));
+    // Read-only, hidden or system folders are still folders (camera cards mark DCIM so).
+    let marked = Attributes {
+        read_only: true,
+        hidden: true,
+        system: true,
+        ..plain
+    };
+    assert_eq!(check_chosen_folder(marked, true), Ok(()));
+    assert_eq!(
+        check_chosen_folder(plain, false),
+        Err(VolumePathError::NotAFolder)
+    );
+    let link = Attributes {
+        reparse_point: true,
+        ..plain
+    };
+    // A directory symlink is not a dir to symlink_metadata: the link reason wins.
+    assert_eq!(
+        check_chosen_folder(link, false),
+        Err(VolumePathError::ReparsePoint)
+    );
+    assert_eq!(
+        check_chosen_folder(link, true),
+        Err(VolumePathError::ReparsePoint)
+    );
+    let cloud = Attributes {
+        cloud_placeholder: true,
+        ..plain
+    };
+    assert_eq!(
+        check_chosen_folder(cloud, true),
+        Err(VolumePathError::CloudPlaceholder)
+    );
+}
+
+#[test]
+fn every_component_below_the_drive_is_validated() {
+    for ok in [
+        "E:\\",
+        "E:\\DCIM",
+        "E:\\DCIM\\",
+        "\\\\?\\E:\\DCIM\\100NIKON",
+        "C:\\Program Files (x86)\\Été",
+    ] {
+        assert_eq!(validate_drive_path(ok), Ok(()), "{ok}");
+    }
+    for (bad, why) in [
+        ("E:\\DCIM\\\\x", NameError::Empty),
+        ("E:\\\\x", NameError::Empty),
+        ("E:\\DCIM\\..\\x", NameError::DotOrDotDot),
+        ("E:\\DCIM\\.", NameError::DotOrDotDot),
+        ("E:\\a/b", NameError::ReservedChar('/')),
+        ("E:\\a:b", NameError::ReservedChar(':')),
+        ("E:\\NUL\\x", NameError::DeviceName),
+        ("E:\\DCIM.\\x", NameError::TrailingSpaceOrDot),
+        ("E:\\x\u{1}", NameError::ControlChar),
+    ] {
+        assert_eq!(
+            validate_drive_path(bad),
+            Err(VolumePathError::Name(why)),
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        validate_drive_path("\\\\server\\share"),
+        Err(VolumePathError::Unsupported(UnsupportedPath::Network))
+    );
+    assert_eq!(
+        validate_drive_path("DCIM"),
+        Err(VolumePathError::Unsupported(UnsupportedPath::NotAbsolute))
+    );
+}
