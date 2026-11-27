@@ -252,18 +252,18 @@ Privacy for real samples: before committing, strip GPS, owner name and body seri
 ## 10. Coverage
 
 - Measured with `cargo llvm-cov` on `culla-core` (Linux) and `culla-adapters` (Windows job), reported on PRs.
-- Setup: `cargo install cargo-llvm-cov --locked` and `rustup component add llvm-tools-preview`. Not wired into CI in M0.
+- Setup: `cargo install cargo-llvm-cov --locked` and `rustup component add llvm-tools-preview`. Not wired into CI yet.
 - Gate: line coverage of the file engine modules in `culla-core` (plan, preflight, journal, apply, resume) at 90 % or more, the rest of `culla-core` at 80 % or more. The fs-op module of `culla-adapters` (checked rename, copy, verify, audited removal) at 90 % or more on the Windows job.
 - No gate on the UI or on `src-tauri`. Vitest coverage is reported for the reducer and keyboard logic only.
 - Coverage is a floor, not the goal. A PR that lowers it on the file engine needs a reason in the description.
 
 ## 11. Commands
 
-These are the planned commands. M0 makes them real and keeps `CLAUDE.md` in sync. Packages: `culla-core` (`crates/core`), `culla-adapters` (`crates/adapters`), `culla-cli` (`crates/cli`, binary `culla`) and `culla-bench` (`crates/bench`), see [ADR 0020](adr/0020-headless-cli-and-bench-crates.md).
+These are the commands; the ones marked with a milestone land with it. `CLAUDE.md` is kept in sync. Packages: `culla-core` (`crates/core`), `culla-adapters` (`crates/adapters`), `culla-cli` (`crates/cli`, binary `culla`) and `culla-bench` (`crates/bench`), see [ADR 0020](adr/0020-headless-cli-and-bench-crates.md).
 
 | Purpose | Command |
 |---|---|
-| Fast check (Stop hook) | `cargo check -p culla-core -p culla-adapters --quiet`, `python3 scripts/ci/check_lint_allows.py` and, once `package.json` and `node_modules` exist, `pnpm check` (Biome + `tsc --noEmit`) |
+| Fast check (Stop hook) | `cargo check -p culla-core -p culla-adapters --quiet`, `python3 scripts/ci/check_lint_allows.py` and, when `node_modules` exists, `pnpm check` (Biome + `tsc --noEmit`) |
 | All Rust tests | `cargo test --workspace` |
 | One Rust test | `cargo test -p culla-core <name>` or `cargo test -p culla-adapters <name>` |
 | Property tests, long run | `PROPTEST_CASES=10000 cargo test -p culla-core prop_` |

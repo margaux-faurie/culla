@@ -21,7 +21,7 @@
         {
           "type": "toml",
           "path": "Cargo.lock",
-          "jsonpath": "$.package[?(@.name == 'culla-core' || @.name == 'culla-adapters' || @.name == 'culla-cli' || @.name == 'culla-bench' || @.name == 'culla-app')].version"
+          "jsonpath": "$.package[?(@.name == 'culla-core' || @.name == 'culla-adapters' || @.name == 'culla-cli' || @.name == 'culla-bench' || @.name == 'culla-app' || @.name == 'xtask')].version"
         }
       ]
     }

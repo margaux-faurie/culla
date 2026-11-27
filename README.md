@@ -166,6 +166,7 @@ What could go wrong and how each risk is handled is in the [threat model](docs/t
 | [File engine](docs/design/file-engine.md) | Data model, grouping, plan, apply, recovery, invariants |
 | [ADRs](docs/adr/README.md) | Decisions and their reasons |
 | [Threat model](docs/threat-model.md) | Threats and mitigations |
+| [Incident response](docs/incident-response.md) | What to do about a leaked key, a bad release or a vulnerability |
 | [Testing](docs/testing.md) | Test strategy and definition of done |
 | [Roadmap](docs/roadmap.md) | Milestones M0 to M6 |
 
@@ -184,7 +185,7 @@ The full list of commands is in [CLAUDE.md](CLAUDE.md).
 
 ## Contributing
 
-Issues and ideas are welcome: bug reports, Nikon files that do not behave, and suggestions. Outside pull requests are not merged for now, so that the project keeps a single author. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Issues and ideas are welcome: bug reports, Nikon files that do not behave, and suggestions. Outside pull requests are not merged for now, so that the project keeps a single author. See [CONTRIBUTING.md](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Security
 

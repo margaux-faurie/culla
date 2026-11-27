@@ -2,7 +2,7 @@
 //! Numbers are kept as text: the checks only need to know a value is well formed.
 
 #[derive(Debug, PartialEq)]
-pub enum Value {
+pub(crate) enum Value {
     Null,
     Bool(bool),
     Number(String),
@@ -12,7 +12,7 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn get(&self, key: &str) -> Option<&Value> {
+    pub(crate) fn get(&self, key: &str) -> Option<&Value> {
         match self {
             Value::Object(fields) => fields.iter().find(|(k, _)| k == key).map(|(_, v)| v),
             _ => None,
@@ -20,7 +20,7 @@ impl Value {
     }
 }
 
-pub fn parse(text: &str) -> Result<Value, String> {
+pub(crate) fn parse(text: &str) -> Result<Value, String> {
     let mut p = Parser {
         b: text.as_bytes(),
         i: 0,

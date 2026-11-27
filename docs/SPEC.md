@@ -10,6 +10,7 @@ Status: v1, 24 Nov 2026, updated 27 Nov 2026. This file is the record of the aut
 | Decisions and their reasons | [adr/](adr/README.md) |
 | File engine: data model, grouping, plan, apply, recovery, invariants | [design/file-engine.md](design/file-engine.md) |
 | Threats and mitigations | [threat-model.md](threat-model.md) |
+| Incident response (keys, bad releases, vulnerabilities) | [incident-response.md](incident-response.md) |
 | Tests and Definition of Done | [testing.md](testing.md) |
 | Performance measurement | [benchmarks.md](benchmarks.md) |
 | Milestones | [roadmap.md](roadmap.md) |
