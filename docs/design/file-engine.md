@@ -798,7 +798,9 @@ Each invariant has at least one test in [testing.md](../testing.md): property te
 - Free-space margin (P5).
 - "Retry failed" and "Finish moves" run in the same plan (§9.6), but §9.1 has no edge out of `completed` or `cancelled`: either the plan stays open while the report offers them, or they reopen it. To settle in M2.
 - Same-serial threshold on reopen (§6.2). Network shares: decided, refused (§6.2).
-- What `DriveKind` (removable or fixed, from `GetDriveTypeW`) is used for: reported in `VolumeInfo`, no rule uses it yet (many USB card readers report fixed).
+- What `DriveKind` (from `GetDriveTypeW`) is used for beyond refusing remote and no-root volumes (§6.2): whether removable or fixed drives any rule is open (many USB card readers report fixed).
+- Proposed in PR #25, to confirm: a chosen source folder that is itself a junction, link or volume mount point is refused (`check_chosen_folder`); a card mounted in a folder is chosen by a folder below the mount point or by its drive letter. Telling a mount point from other reparse points needs the reparse tag (M2).
+- Pending before M2 file operations in `winfs`: add the `windows-sys` removal, replace, rename, copy and link APIs to `clippy.toml` and `crates/core/clippy.toml` (approved by Margaux on 27 Nov 2026; protected-path edit, threat model T4).
 - WAL with `synchronous=FULL` (proposed in ADR 0009 and NFR-REL-10), and the 500 ms crash window.
 - BLAKE3 recommended over xxh3 (§9.3); to record when ADR 0010 is updated with the states of §9.2.
 - `_rejected` excluded at any depth (§3.2).
