@@ -29,6 +29,18 @@ export default defineConfig(({ mode }) => ({
   build: {
     outDir: mode === "demo" ? "dist-demo" : "dist",
     emptyOutDir: true,
+    // The demo site also has a download and install page (install.html, from docs/install.md;
+    // SPEC §2). The desktop build has only the app.
+    ...(mode === "demo"
+      ? {
+          rolldownOptions: {
+            input: {
+              main: fileURLToPath(new URL("./index.html", import.meta.url)),
+              install: fileURLToPath(new URL("./install.html", import.meta.url)),
+            },
+          },
+        }
+      : {}),
   },
   test: {
     include: ["src/**/*.test.{ts,tsx}", "tests/**/*.test.ts"],

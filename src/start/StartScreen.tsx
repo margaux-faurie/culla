@@ -206,6 +206,7 @@ export function StartScreen({ onStarted }: StartScreenProps) {
     <div className="start">
       <header className="start-header">
         <span className="brand">Culla</span>
+        {import.meta.env.MODE === "demo" && <a href="/install">Download and install</a>}
       </header>
       <main className="start-main">
         {notReady && (
