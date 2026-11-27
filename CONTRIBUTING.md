@@ -14,11 +14,7 @@ Outside pull requests are not merged for now, so Culla keeps a single author ([A
 
 ## Authorship
 
-All of Culla's code is written by or for its sole author, Margaux Faurie, who holds the copyright. No outside pull requests are merged ([ADR 0026](docs/adr/0026-gpl-3-0-only-licence-and-reserved-name.md)), so no one else holds rights in the code.
-
-## Conduct
-
-Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
+Culla has a single author, Margaux Faurie. Copyright © 2026 Margaux Faurie. Outside pull requests are not merged ([ADR 0026](docs/adr/0026-gpl-3-0-only-licence-and-reserved-name.md)).
 
 ## Forks
 

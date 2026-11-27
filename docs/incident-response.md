@@ -1,6 +1,6 @@
 # Incident response
 
-Status: draft, 27 Nov 2026. What to do when something goes wrong with a release, a key or a dependency. Threats and their mitigations are in [threat-model.md](threat-model.md); how to report a vulnerability is in [SECURITY.md](../SECURITY.md).
+Status: draft, proposed by an agent, not yet reviewed by Margaux; the updater, signing key, protected environment and releases arrive in M6. What to do when something goes wrong with a release, a key or a dependency. Threats and their mitigations are in [threat-model.md](threat-model.md); how to report a vulnerability is in [SECURITY.md](../SECURITY.md).
 
 ## Scope
 
@@ -21,7 +21,7 @@ Margaux is the sole maintainer. She decides, fixes, releases and writes the noti
 
 1. Stop releasing with the old key. Pull `latest.json` from the latest release so no client is offered an update in the meantime.
 2. Generate a new key pair offline. Store the private key in the protected GitHub environment and in the offline backup; remove the old secret.
-3. Rotate: ship one release signed with the old key that carries the new public key. Clients that update to it trust the new key from then on. Every later release is signed with the new key only.
+3. Rotate: ship one bridging release signed with the old key that carries the new public key. After pulling `latest.json`, this re-publishing with the old key is the one deliberate exception to step 1. Clients that update to it trust the new key from then on; clients that miss the bridging release must reinstall by hand from the releases page. Every later release is signed with the new key only.
 4. If the old key may have signed something else, say so in the advisory, with the versions and hashes of the genuine releases.
 5. If the old private key is lost rather than leaked, step 3 is not possible: tell users to install the next version by hand from the releases page.
 
@@ -33,7 +33,7 @@ Margaux is the sole maintainer. She decides, fixes, releases and writes the noti
 
 ### Security advisory in a dependency
 
-1. `cargo deny check`, Dependabot or CodeQL flags it. Check whether Culla uses the affected code path.
+1. `cargo deny check` (CI) or a Dependabot alert flags it. Check whether Culla uses the affected code path.
 2. Not affected: record why in the PR or in `deny.toml` (protected path, Margaux only) with a review date.
 3. Affected: update or replace the dependency, then ship a patch release and treat it as a vulnerability in Culla (below).
 

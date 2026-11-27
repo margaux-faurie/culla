@@ -185,7 +185,7 @@ The full list of commands is in [CLAUDE.md](CLAUDE.md).
 
 ## Contributing
 
-Issues and ideas are welcome: bug reports, Nikon files that do not behave, and suggestions. Outside pull requests are not merged for now, so that the project keeps a single author. See [CONTRIBUTING.md](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md).
+Issues and ideas are welcome: bug reports, Nikon files that do not behave, and suggestions. Outside pull requests are not merged for now, so that the project keeps a single author. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Security
 

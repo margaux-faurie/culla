@@ -150,7 +150,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
 - **Goal:** a first public release someone else can install and trust.
 - **Scope:**
   - NSIS per-user installer via `tauri-action` as a draft GitHub Release; `tauri-plugin-updater` with its signing key (backed up) and `latest.json`.
-  - README with GIF, SmartScreen note, Lightroom warning; CONTRIBUTING, CODE_OF_CONDUCT, SECURITY.md, PRIVACY.md, third-party licences file; `docs/releasing.md`.
+  - README with GIF, SmartScreen note, Lightroom warning; CONTRIBUTING, a code of conduct if adopted (SPEC §10), SECURITY.md, PRIVACY.md, third-party licences file; `docs/releasing.md`.
   - Code signing policy section in the README, then the SignPath Foundation application (it requires a released project).
   - Blog enablement guide material gathered from the ADRs ([research/practices.md](research/practices.md) section 4).
   - Uninstaller option "remove my Culla data" ([SPEC.md](SPEC.md) section 5.1), US-43.

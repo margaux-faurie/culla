@@ -28,7 +28,7 @@ Work now:
 - `xtask` — dev tasks, std only, under the workspace file rules: `fixtures` never overwrites, so delete `testdata/synthetic/` by hand to regenerate. `fuzz` — cargo-fuzz, own workspace. `testdata` — synthetic and golden fixtures.
 - `docs` — specs, ADRs, research.
 
-## Invariants (never break; tests and lints enforce them)
+## Invariants (never break; lints enforce the removal and rename rules now; tests for the rest arrive with M2 and M3)
 - Nothing touches the user's files before the user confirms Apply.
 - Never overwrite a file: renames are no-replace (an existing target is a hard error, never replaced; mechanism in design/file-engine.md §9.3, ADR 0022), copies use `create_new`.
 - Never remove a file, except in the audited module `culla-adapters::winfs::remove_verified` (`remove_verified_source`, `remove_own_partial`; design/file-engine.md §9.7, §11), which removes only the source of a cross-volume move whose destination and source were re-read and hash-verified, and Culla's own `*.culla-partial` files. The lint covers `culla-core`, `culla-adapters`, `culla-cli` and `src-tauri`; the lint can be switched off only in `winfs/`, `crates/bench/` and `crates/*/tests/` (temp dirs only); inline `#[cfg(test)]` code is not exempt.
@@ -50,7 +50,7 @@ Slice along the hexagon, one slice per PR, test first: core function + tests →
 - `culla-app` has no test targets: Windows test binaries lack the app manifest Tauri needs and fail to load.
 
 ## Review and merge
-Every PR gets an independent read-only reviewer agent (correctness, safety invariants, spec consistency; skip style) plus green CI. When both pass, the PR is squash-merged and work continues. Findings are fixed in the same PR and re-reviewed. Releases and anything irreversible outside the repo wait for Margaux. Margaux is a required code owner for every protected path (`.github/CODEOWNERS`, in effect once the ruleset requires code-owner review); the list matches the hook's, under Gotchas.
+Every PR gets an independent read-only reviewer agent (correctness, safety invariants, spec consistency; skip style) plus green CI. When both pass, the PR is squash-merged and work continues. Findings are fixed in the same PR and re-reviewed. Releases and anything irreversible outside the repo wait for Margaux. Margaux is a required code owner for every protected path (`.github/CODEOWNERS`); the main ruleset requires code-owner review, and PRs touching src-tauri, winfs, CI or dependencies wait for Margaux's OK in chat before merge (her decision of 27 Nov). The list matches the hook's, under Gotchas.
 Reviewers in `.claude/agents/` (read-only): `spec-reviewer` always, `safety-reviewer` for file operations, `security-reviewer` for src-tauri, IPC, deps and CI; pass them the diff. Skills: `add-command`, `new-adr`, `release` (Margaux only). Hooks in `.claude/hooks/` format each edit and run the fast check at Stop; they need Python 3, Git Bash on Windows and Claude Code ≥ 2.1.295 (see its README).
 
 ## Keeping this file current

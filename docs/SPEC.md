@@ -240,3 +240,5 @@ Screen designs (start, swipe, already decided, review, apply) live on the design
 - Which photos to publish in the demo.
 - The author's real sample files (Nikon Z series, see §2): 9 Z6III NEFs (8 pairs, 1 lone) used locally since 27 Nov 2026, outside the repo; the stripped Git LFS set is pending.
 - Preview cache when the source drive is encrypted and the system drive is not: keep previews in memory only (default) or warn before caching to disk; to decide (raised 27 Nov 2026).
+- Code of conduct: adopt one, with which text and which reporting channel.
+- Incident response: confirm the procedures in [incident-response.md](incident-response.md), drafted by an agent on 27 Nov 2026 and not yet reviewed.
