@@ -7,13 +7,14 @@
 //! file-engine INV-03): each preview is measured and dropped. Each row keeps only the numbers
 //! it prints, so memory does not grow with the number of photos.
 
-use std::fmt::Write as _;
+use std::fmt::{self, Write as _};
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use culla_adapters::pipeline::{
-    Config, FolderSource, Pipeline, PipelineError, Prepared, Stats, Status, Turbo,
+    Config, Decoder, FolderSource, PhotoId, Pipeline, PipelineError, Prepared, PreviewSource,
+    Stats, Status, Turbo,
 };
 use culla_adapters::preview::Timings;
 use culla_core::exif::Orientation;
@@ -46,6 +47,28 @@ impl Measured {
     }
 }
 
+/// How long `culla preview` waits for one photo before it reports the photo as timed out and
+/// moves on (provisional, SPEC §10). Far above any real read and decode: it only bounds a
+/// stall, so the command can never wait forever.
+pub(crate) const PHOTO_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Why a row has no preview.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum RowError {
+    Pipeline(PipelineError),
+    /// Not ready, failed or refused within the limit.
+    TimedOut(Duration),
+}
+
+impl fmt::Display for RowError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pipeline(e) => write!(f, "{e}"),
+            Self::TimedOut(d) => write!(f, "no preview after {} s (timed out)", d.as_secs()),
+        }
+    }
+}
+
 /// One photo's result.
 #[derive(Debug)]
 pub(crate) struct Row {
@@ -57,7 +80,7 @@ pub(crate) struct Row {
     pub source: &'static str,
     /// From asking for the photo to its preview being ready (prefetch hides part of it).
     pub wait: Duration,
-    pub result: Result<Measured, PipelineError>,
+    pub result: Result<Measured, RowError>,
 }
 
 /// Everything `culla preview` prints.
@@ -102,18 +125,7 @@ pub(crate) fn run(args: &PreviewArgs, progress: &mut Progress) -> Result<Report,
     for (pos, &i) in scanned.order.iter().enumerate() {
         let group = &groups[i];
         let asked = Instant::now();
-        pipeline.show(pos, Direction::Forward);
-        let result = loop {
-            match pipeline.wait(i, Duration::from_secs(60)) {
-                // Measure, then drop this handle: only the cache keeps the preview.
-                Status::Ready(p) => break Ok(Measured::of(&p)),
-                Status::Failed(e) => break Err(e),
-                Status::Pending => {}
-                // Not expected (the current photo leads the window and ranks first in the
-                // cache); ask again.
-                Status::NotWanted | Status::NotAdmitted => pipeline.show(pos, Direction::Forward),
-            }
-        };
+        let result = wait_for(&pipeline, pos, i, PHOTO_TIMEOUT);
         let wait = asked.elapsed();
         rows.push(Row {
             position: pos + 1,
@@ -138,6 +150,32 @@ pub(crate) fn run(args: &PreviewArgs, progress: &mut Progress) -> Result<Report,
         config,
         cached: pipeline.cached(),
     })
+}
+
+/// Shows the photo at `pos` (id `id`) and waits for its preview, for at most `limit` in all.
+fn wait_for<S: PreviewSource, D: Decoder>(
+    pipeline: &Pipeline<S, D>,
+    pos: usize,
+    id: PhotoId,
+    limit: Duration,
+) -> Result<Measured, RowError> {
+    let deadline = Instant::now().checked_add(limit);
+    pipeline.show(pos, Direction::Forward);
+    loop {
+        let left = deadline.map_or(limit, |d| d.saturating_duration_since(Instant::now()));
+        if left.is_zero() {
+            return Err(RowError::TimedOut(limit));
+        }
+        match pipeline.wait(id, left) {
+            // Measure, then drop this handle: only the cache keeps the preview.
+            Status::Ready(p) => return Ok(Measured::of(&p)),
+            Status::Failed(e) => return Err(RowError::Pipeline(e)),
+            Status::Pending => {}
+            // Not expected (the current photo leads the window and ranks first in the
+            // cache); ask again.
+            Status::NotWanted | Status::NotAdmitted => pipeline.show(pos, Direction::Forward),
+        }
+    }
 }
 
 fn progress_line(done: usize, total: usize) {
@@ -298,6 +336,52 @@ pub(crate) fn render(r: &Report) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use culla_adapters::pipeline::{ReadError, SourceJpeg};
+    use culla_adapters::preview::{Preview, PreviewError, PreviewOptions};
+
+    /// Takes longer than the test's limit, then fails.
+    struct Slow;
+
+    impl PreviewSource for Slow {
+        fn read(
+            &self,
+            _: PhotoId,
+            _: &mut dyn FnMut(u64) -> Result<(), ReadError>,
+        ) -> Result<SourceJpeg, ReadError> {
+            std::thread::sleep(Duration::from_millis(300));
+            Err(ReadError::Unknown)
+        }
+    }
+
+    struct NoDecode;
+
+    impl Decoder for NoDecode {
+        fn decode(
+            &self,
+            _: &[u8],
+            _: Orientation,
+            _: &PreviewOptions,
+        ) -> Result<Preview, PreviewError> {
+            unreachable!("nothing is ever read")
+        }
+    }
+
+    #[test]
+    fn a_photo_that_never_comes_is_reported_as_timed_out() {
+        let pipeline = Pipeline::start(Slow, NoDecode, vec![0], Config::default()).unwrap();
+        let limit = Duration::from_millis(20);
+        let started = Instant::now();
+        assert_eq!(
+            wait_for(&pipeline, 0, 0, limit),
+            Err(RowError::TimedOut(limit))
+        );
+        assert!(started.elapsed() < Duration::from_millis(250));
+        assert_eq!(
+            RowError::TimedOut(PHOTO_TIMEOUT).to_string(),
+            "no preview after 120 s (timed out)"
+        );
+    }
 
     #[test]
     fn quantiles_by_nearest_rank() {

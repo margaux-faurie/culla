@@ -27,8 +27,9 @@
 //! * **Isolation.** A panic in a source read, the frame check or the decoder fails that photo
 //!   only ([`PipelineError::Panicked`]); the thread carries on. A poisoned lock is recovered:
 //!   no foreign code runs while it is held. Each job also has a drop guard: should the thread
-//!   unwind anywhere else, the guard gives back the job's budgets and marks the photo failed
-//!   (that thread then ends; the others go on).
+//!   unwind anywhere else, the guard gives back the job's budgets and marks the photo failed,
+//!   and the thread's loop is started again (`supervise`), so the pipeline never loses a
+//!   reader or a worker.
 //!
 //! Nothing here writes a file. The disk cache (`%LOCALAPPDATA%\Culla\cache`) comes later.
 
@@ -414,14 +415,14 @@ impl<S: PreviewSource, D: Decoder> Pipeline<S, D> {
             let sh = Arc::clone(&pipeline.shared);
             let t = thread::Builder::new()
                 .name(format!("culla-reader-{i}"))
-                .spawn(move || reader(&sh))?;
+                .spawn(move || supervise(&sh, reader))?;
             pipeline.threads.push(t);
         }
         for i in 0..config.workers.max(1) {
             let sh = Arc::clone(&pipeline.shared);
             let t = thread::Builder::new()
                 .name(format!("culla-decode-{i}"))
-                .spawn(move || worker(&sh))?;
+                .spawn(move || supervise(&sh, worker))?;
             pipeline.threads.push(t);
         }
         Ok(pipeline)
@@ -614,7 +615,8 @@ impl<S: PreviewSource, D: Decoder> Drop for Pipeline<S, D> {
         self.shared.lock().shutdown = true;
         self.shared.changed.notify_all();
         for t in self.threads.drain(..) {
-            // A thread only ends by returning: panics are caught per photo.
+            // A thread only ends by returning on shutdown: `supervise` restarts its loop after
+            // any unwind, so a join error is not expected.
             let _ = t.join();
         }
     }
@@ -645,6 +647,18 @@ fn reserve_input<S, D>(
                     limit: st.input.limit(),
                 });
             }
+        }
+    }
+}
+
+/// Runs a thread's loop (`reader` or `worker`, which return only on shutdown) and starts it
+/// again after an unwind outside the per-photo `catch_unwind` regions. The job's drop guard
+/// has then already given back its budgets and failed its photo; the thread carries on with
+/// the next one, so a single reader cannot be lost and stall the pipeline.
+fn supervise<S, D>(sh: &Shared<S, D>, body: impl Fn(&Shared<S, D>)) {
+    loop {
+        if panic::catch_unwind(AssertUnwindSafe(|| body(sh))).is_ok() || sh.lock().shutdown {
+            return;
         }
     }
 }
@@ -1063,6 +1077,10 @@ mod tests {
     use super::*;
 
     fn shared() -> Shared<(), ()> {
+        shared_with((), (), vec![0])
+    }
+
+    fn shared_with<S, D>(source: S, decoder: D, order: Vec<PhotoId>) -> Shared<S, D> {
         let config = Config::default();
         Shared {
             state: Mutex::new(State {
@@ -1076,13 +1094,13 @@ mod tests {
                 decodes: 0,
                 multi_scan: 0,
                 waiting: Vec::new(),
-                order: vec![0],
+                order,
                 shutdown: false,
                 stats: Stats::default(),
             }),
             changed: Condvar::new(),
-            source: (),
-            decoder: (),
+            source,
+            decoder,
             config,
         }
     }
@@ -1116,6 +1134,77 @@ mod tests {
         assert!(!st.sched.in_flight(&0));
         assert_eq!(st.failed.get(&0), Some(&PipelineError::Panicked));
         assert_eq!(st.stats.panics, 1);
+    }
+
+    /// Ten bytes for any photo.
+    struct Tiny;
+
+    impl PreviewSource for Tiny {
+        fn read(
+            &self,
+            _: PhotoId,
+            reserve: &mut dyn FnMut(u64) -> Result<(), ReadError>,
+        ) -> Result<SourceJpeg, ReadError> {
+            reserve(10)?;
+            Ok(SourceJpeg {
+                jpeg: vec![0; 10],
+                orientation: Orientation::Normal,
+            })
+        }
+    }
+
+    /// Never called: only the reader runs in these tests.
+    struct NoDecode;
+
+    impl Decoder for NoDecode {
+        fn decode(
+            &self,
+            _: &[u8],
+            _: Orientation,
+            _: &PreviewOptions,
+        ) -> Result<Preview, PreviewError> {
+            unreachable!("no worker runs")
+        }
+    }
+
+    #[test]
+    fn a_thread_unwinding_outside_catch_unwind_goes_on_with_the_next_photo() {
+        let sh = shared_with(Tiny, NoDecode, vec![0, 1]);
+        sh.lock().sched.set_wanted([0, 1]);
+        let runs = std::sync::atomic::AtomicUsize::new(0);
+        thread::scope(|s| {
+            let t = s.spawn(|| {
+                supervise(&sh, |sh| {
+                    if runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                        // The first run takes photo 0 and unwinds while its job is held.
+                        let id = sh.lock().sched.next(|_| false);
+                        assert_eq!(id, Some(0));
+                        let _job = Job::new(sh, 0);
+                        panic!("outside the isolated regions");
+                    }
+                    reader(sh);
+                });
+            });
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut st = sh.lock();
+            while !st.loaded.iter().any(|l| l.id == 1) {
+                let now = Instant::now();
+                assert!(now < deadline, "photo 1 was never read");
+                st = sh
+                    .changed
+                    .wait_timeout(st, deadline - now)
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .0;
+            }
+            assert_eq!(st.failed.get(&0), Some(&PipelineError::Panicked));
+            assert_eq!(st.stats.panics, 1);
+            assert_eq!(st.input.used(), 10);
+            st.shutdown = true;
+            drop(st);
+            sh.changed.notify_all();
+            assert!(t.join().is_ok(), "the thread ends normally on shutdown");
+        });
+        assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
     #[test]
