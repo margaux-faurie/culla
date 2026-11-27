@@ -24,7 +24,10 @@
   --on-orange: #0c0b0a;
   --orange-ink: #a4461a;
   --keep: #8fd3a8; /* fill on Night only: 1.44:1 on cream */
-  /* TODO: define keep-ink (at least 4.5:1 on cream) for the "Kept" label (SPEC §5.6). */
+  /* keep-ink: proposed by the agent from the design canvas, awaiting Margaux (SPEC §10, NFR-A11Y-06):
+     5.9:1 on paper, 5.3:1 on paper-raised. */
+  --keep-ink: #2b6343;
+  --on-keep: #0c0b0a;
 
   /* Type */
   --font-sans: "Bricolage Grotesque", "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
