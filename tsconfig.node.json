@@ -1,5 +1,5 @@
 {
-  // Vite and Vitest config, and tests that run in Node (tests/).
+  // Vite, Vitest and Playwright config, tests that run in Node (tests/) and Playwright specs (e2e/).
   "compilerOptions": {
     "target": "es2023",
     "lib": ["es2023"],
@@ -20,5 +20,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["vite.config.ts", "tests"]
+  "include": ["vite.config.ts", "playwright.config.ts", "tests", "e2e"]
 }

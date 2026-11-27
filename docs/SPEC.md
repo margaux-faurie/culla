@@ -226,6 +226,7 @@ Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsm
 - Moving 2,000 pairs across volumes is about 140 GB of files, but about 280 GB read (the source is read twice for verification), so 50+ minutes from a UHS-I card. The review screen shows an estimate that includes the verification reads.
 
 ## 10. Open questions
+- `xtask`: ADR 0020 says it is outside the file rules, but it inherits the workspace lints and only creates new files. Proposed: keep it inside the rules and supersede ADR 0020 on that point.
 - Minimum WebView2 version and installer mode (the bootstrapper downloads WebView2 at install time if missing).
 - Demo subdomain and which photos to publish.
 - The author's real sample files (Nikon Z series, see §2) and their licence: pending.

@@ -1,0 +1,3 @@
+[alias]
+# Dev tasks (docs/testing.md §11). Same as `cargo run -p xtask -- <task>`.
+xtask = "run --package xtask --"

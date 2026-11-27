@@ -2,7 +2,8 @@ version: 2
 
 updates:
   - package-ecosystem: cargo
-    directory: /
+    # fuzz/ is its own Cargo workspace (docs/testing.md §7).
+    directories: [/, /fuzz]
     schedule:
       interval: weekly
     cooldown:

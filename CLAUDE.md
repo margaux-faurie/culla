@@ -7,14 +7,16 @@ M0 (repo and tooling) is landing; the app is an empty shell. Design docs drafted
 
 ## Commands
 Work now (M0):
-- `cargo test --workspace` · `cargo test -p culla-core <name>` · `cargo test -p culla-adapters` (Windows-specific tests from M2)
+- `cargo test --workspace` · `cargo test -p culla-core <name>` · `cargo test -p culla-adapters [--features windows-it]` (Windows integration tests from M2)
 - `cargo clippy --workspace --all-targets -- -D warnings` · `cargo fmt --all` · `cargo deny check` (`culla-app` needs WebView2 on Windows or libwebkit2gtk-4.1-dev on Linux)
 - `scripts/ci/check-conflict-markers.sh` · `scripts/ci/check_lint_allows.py`
 - `pwsh scripts/ci/vhdx.ps1 -Action mount|attach|detach|readonly|unmount` (Windows, admin; see `scripts/ci/README.md`)
 - `pnpm install` · `pnpm check` (Biome + tsc) · `pnpm test` · `pnpm test <file>`
 - `pnpm dev:demo` · `pnpm build:demo` (web demo, `dist-demo/`) · `pnpm tauri dev` · `pnpm tauri build` (Windows, NSIS)
-
+- `pnpm build:demo && pnpm e2e` (Playwright + axe on `dist-demo/`; first time `pnpm exec playwright install chromium`)
 - `pnpm gen:bindings` (placeholder until the first tauri-specta command in M1)
+- `cargo xtask fixtures [--check]` · `cargo xtask golden --check` · `cargo xtask crash-loop --iterations N` (M2)
+- `cargo llvm-cov -p culla-core -p culla-adapters --html` · `cargo +nightly fuzz run tiff_ifd_walk -- -max_total_time=60` (setup: testing.md §7, §10)
 
 ## Layout
 - `crates/core` (package `culla-core`) — domain, ports, pure logic. No I/O, no Tauri, `#![forbid(unsafe_code)]`.
@@ -23,6 +25,7 @@ Work now (M0):
 - `crates/bench` (package `culla-bench`) — benchmark harness. See ADR 0020.
 - `src-tauri` (package `culla-app`) — wiring only: commands, `culla://` image scheme, capabilities. New command: `build.rs` `AppManifest::commands` + `allow-<command>` in `capabilities/main.json`.
 - `src` — React UI, one Vite app, `--mode desktop` or `--mode demo`; `vite.config.ts` aliases `#backend-impl` to `backend/tauri.ts` or `backend/demo.ts` (ADR 0014).
+- `xtask` — dev tasks, std only, under the workspace file rules: `fixtures` never overwrites, so delete `testdata/synthetic/` by hand to regenerate. `fuzz` — cargo-fuzz, own workspace. `testdata` — synthetic and golden fixtures.
 - `docs` — specs, ADRs, research.
 
 ## Invariants (never break; tests and lints will enforce them from M0)
