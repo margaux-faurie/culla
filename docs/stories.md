@@ -296,8 +296,8 @@ As a photographer, I want the start screen to help me pick what to cull, so that
 - Given folders I culled before, then they are listed as recent folders with their session status (in progress, applied), and I can resume one.
 - Given I drag a folder onto the window, then it becomes the source.
 - Given a source is chosen, then a preview shows what was found (JPEG and NEF counts, lone NEFs, date range) before I start.
-- Given I prefer it, then the native folder dialog is still available.
-- Given any of these, then detection and paths stay in Rust: the webview only receives opaque source IDs and display data (CLAUDE.md invariant, threat model T7).
+- Given I prefer it, then the native folder dialog, opened from Rust, is still available.
+- Given any of these, then detection, dropped paths and folder reads stay in Rust: the webview only receives opaque source IDs and display data, never a path, and gets no filesystem or dialog permission (CLAUDE.md invariant, threat model T7). Detection and counting are read-only on the card (INV-03).
 
 Links: NFR-A11Y, NFR-PERF. Test: Vitest on the start screen with DemoBackend sources, Playwright, adapter test for removable-drive detection on Windows.
 

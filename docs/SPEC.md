@@ -106,7 +106,7 @@ Rules:
 - At the end of the list, a summary card offers "Jump to undecided (n)" and "Review".
 
 ### 4.2 Screens
-1. **Start:** choosing the folder is part of the experience (Margaux, 27 Nov 2026): detected SD cards and removable drives, recent folders, drag and drop and a preview of what was found are proposed in [stories.md](stories.md) US-44; the native dialog stays available. Then: source folder, include subfolders, RAW follows JPEG, keep = move/copy, destination. If a session already exists for the folder, offer to resume it (or start fresh).
+1. **Start:** choosing the folder is part of the experience (Margaux, 27 Nov 2026): detected SD cards and removable drives, recent folders, drag and drop and a preview of what was found are proposed in [stories.md](stories.md) US-44; the native dialog (opened from Rust) stays available, and the webview still gets only opaque source IDs and display data, never a path. Then: source folder, include subfolders, RAW follows JPEG, keep = move/copy, destination. If a session already exists for the folder, offer to resume it (or start fresh).
 2. **Swipe:** full-screen photo, progress bar (n / total, kept, rejected, undecided), decision badge, EXIF overlay, zoom, and visible **Keep** and **Reject** buttons (a single-click alternative to dragging, WCAG 2.5.7).
 3. **Review:** counts; kept / rejected grids (click to jump back); the full operation plan; preflight results; estimated time and size; "Apply" needs a confirm dialog that states the counts. Undecided photos are never touched.
 4. **Apply:** progress per file, can be paused or cancelled (cancel stops after the current file). Ends with a report and a log file (`%LOCALAPPDATA%\Culla\logs`, openable from the report).
