@@ -3,7 +3,7 @@
 Culla is a Windows desktop app (Tauri 2 + Rust + React/TS) that culls Nikon JPEG+NEF photos with a swipe UI, then applies keep/reject as safe, journaled file operations. Start at `docs/SPEC.md`: it records the author's decisions and maps each topic to its owning doc (PRD, nfr, architecture, ADRs, file-engine design, threat model, testing, roadmap). `docs/research/` is historical input: where it disagrees with the spec or an ADR, the spec and ADRs win.
 
 ## Status
-M0 (repo and tooling) is landing; the app is an empty shell. Design docs drafted (24 Nov); open decisions in SPEC §10 and file-engine §13. Next is M1 (core engine headless).
+M0 (repo and tooling) is landing; the app is an empty shell. Design docs drafted (24 Nov); author decisions recorded 27 Nov; what is still open is in SPEC §10 and file-engine §13. Next is M1 (core engine headless).
 
 ## Commands
 Work now (M0):
@@ -27,7 +27,7 @@ Work now (M0):
 
 ## Invariants (never break; tests and lints will enforce them from M0)
 - Nothing touches the user's files before the user confirms Apply.
-- Never overwrite a file: renames are no-replace (an existing target is a hard error, never replaced; mechanism in design/file-engine.md §9.3, ADR 0022 proposed), copies use `create_new`.
+- Never overwrite a file: renames are no-replace (an existing target is a hard error, never replaced; mechanism in design/file-engine.md §9.3, ADR 0022), copies use `create_new`.
 - Never remove a file, except in the audited module `culla-adapters::winfs::remove_verified` (`remove_verified_source`, `remove_own_partial`; design/file-engine.md §9.7, §11), which removes only the source of a cross-volume move whose destination and source were re-read and hash-verified, and Culla's own `*.culla-partial` files. The lint covers `culla-core`, `culla-adapters`, `culla-cli` and `src-tauri`; the lint can be switched off only in `winfs/`, `crates/bench/` and `crates/*/tests/` (temp dirs only); inline `#[cfg(test)]` code is not exempt.
 - Undecided photos are never touched.
 - The webview gets no filesystem permissions; it only knows opaque photo IDs.
@@ -47,7 +47,7 @@ Slice along the hexagon, one slice per PR, test first: core function + tests →
 - `culla-app` has no test targets: Windows test binaries lack the app manifest Tauri needs and fail to load.
 
 ## Review and merge
-Every PR gets an independent read-only reviewer agent (correctness, safety invariants, spec consistency; skip style) plus green CI. When both pass, the PR is squash-merged and work continues. Findings are fixed in the same PR and re-reviewed. Releases and anything irreversible outside the repo wait for Margaux.
+Every PR gets an independent read-only reviewer agent (correctness, safety invariants, spec consistency; skip style) plus green CI. When both pass, the PR is squash-merged and work continues. Findings are fixed in the same PR and re-reviewed. Releases and anything irreversible outside the repo wait for Margaux. She is a required reviewer (`.github/CODEOWNERS`) on the protected paths listed under Gotchas.
 Reviewers in `.claude/agents/` (read-only): `spec-reviewer` always, `safety-reviewer` for file operations, `security-reviewer` for src-tauri, IPC, deps and CI; pass them the diff. Skills: `add-command`, `new-adr`, `release` (Margaux only). Hooks in `.claude/hooks/` format each edit and run the fast check at Stop; they need Python 3, Git Bash on Windows and Claude Code ≥ 2.1.295 (see its README).
 
 ## Keeping this file current

@@ -60,9 +60,9 @@ Record for each run: Windows build, power source (plugged in), ASUS power mode (
 |---|---|---|
 | D-1 | 3,000 synthetic small files (from `cargo xtask fixtures --bench`) in a DCIM-like tree | scan overhead without I/O weight (B-01, B-02) |
 | D-2 | A real card: about 3,000 files, JPEG + NEF pairs, some lone NEFs, some sidecars, as they come off the camera | B-01 to B-03, B-05, B-08 to B-11 (M1); B-12 to B-14 on a copy (M2) |
-| D-3 | 24 MP and 45 MP sets (about 200 photos each) | B-06, B-07, B-09 to B-11 per resolution |
+| D-3 | 24 MP (Z6 class) and 45 MP (Z7, Z8, Z9 class) sets (about 200 photos each) | B-06, B-07, B-09 to B-11 per resolution |
 
-D-2 and D-3 depend on the author's Nikon body or bodies (open question in [SPEC.md](SPEC.md) section 10). If only one resolution is available from her bodies, the other one can come from public sample files (for example raw.pixls.us), used locally and never committed; check each file's licence. Benchmark data is never committed.
+D-2 and D-3 come from the author's Nikon Z bodies ([SPEC.md](SPEC.md) section 2): the 24 MP set is Z6 class, the 45 MP set Z7, Z8 or Z9 class; include HE/HE\* NEFs where the body writes them. Her sample files are still pending. If only one resolution is available from her bodies, the other one can come from public sample files (for example raw.pixls.us), used locally and never committed; check each file's licence. Benchmark data is never committed.
 
 ### 4.2 Cold and warm runs
 

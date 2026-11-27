@@ -5,6 +5,8 @@ date: 2026-11-24
 
 # Pair files by case-insensitive basename within the same folder only
 
+Refined by: [ADR 0023](0023-bare-xmp-follows-the-nef.md), for where a bare `X.xmp` goes.
+
 ## Context and problem statement
 
 A Nikon shot can produce a JPEG, a NEF and several sidecars. The user decides once per shot, so these files must be grouped. Nikon file counters roll over (DSC_9999 → DSC_0001), and second bodies use the same names, so the same basename can appear in several DCIM subfolders. How are files grouped, and which sidecars go where?

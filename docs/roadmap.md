@@ -18,7 +18,7 @@ flowchart LR
   M4 --> M6["M6<br/>Release v1.0"]
   M5 --> M6
 
-  A1(["Author: sample photos,<br/>body model"]) -.-> M1
+  A1(["Author: sample photos"]) -.-> M1
   A2(["Author: G14 benchmark<br/>and test runs"]) -.-> M1
   A2 -.-> M2
   A2 -.-> M4
@@ -71,7 +71,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
   - Every M1 benchmark in [benchmarks.md](benchmarks.md) has a recorded result on H-2 (UHS-I SD) and passes, or has an ADR that changes the design or the budget. In particular (all est.): first photo ≤ 1.5 s (B-01), scan of 3,000 files with EXIF ≤ 15 s (B-02 + B-03), next prefetched photo ≤ 50 ms at p95 (B-09), peak memory ≤ 1 GB while swiping (B-15).
   - ADRs recorded for preview source (camera JPEG vs NEF embedded), thread counts, prefetch window and LRU size.
   - Fuzz targets ran for at least a week of nightlies without an open crash.
-- **Author:** provide 5–10 real sample files and state their licence; name the Nikon body or bodies ([SPEC.md](SPEC.md) section 10); run the benchmarks on the G14 with a real SD card.
+- **Author:** provide 5–10 real sample files from her Nikon Z bodies ([SPEC.md](SPEC.md) section 2) and state their licence; run the benchmarks on the G14 with a real SD card.
 
 ### M2 — File engine proven by tests
 
@@ -80,8 +80,8 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
   - Session store and decision event log in SQLite (one database per source); reconcile on open (missing, new files).
   - `plan()`: reject to `_rejected/` mirrored, keep move or copy, RAW follows toggle, sidecars, group-consistent collision suffixes.
   - Preflight: writable source, free space, destination not inside `_rejected`, path length, locks, symlinks and junctions.
-  - Journal and apply (logic in `culla-core`, fs ops in `culla-adapters`): same-volume no-replace rename through the checked handle (ADR 0022, proposed; existing target is a hard error); cross-volume copy, fsync, re-read and hash of destination and source, rename, then removal of the source through the single audited function (which may only remove verified cross-volume sources and Culla's own `*.culla-partial` files); copy with `create_new` and mtime kept; sharing-violation retry.
-  - Sidecars follow the file they describe (`X.NEF.xmp` follows the NEF; `X.xmp` and `X.pp3` follow the primary), with the collision suffix inside sidecar names.
+  - Journal and apply (logic in `culla-core`, fs ops in `culla-adapters`): same-volume no-replace rename through the checked handle (ADR 0022; existing target is a hard error); cross-volume copy, fsync, re-read and hash of destination and source, rename, then removal of the source through the single audited function (which may only remove verified cross-volume sources and Culla's own `*.culla-partial` files); copy with `create_new` and mtime kept; sharing-violation retry.
+  - Sidecars follow the file they describe (`X.NEF.xmp` and `X.xmp` follow the NEF, ADR 0023; `X.pp3` follows the primary), with the collision suffix inside sidecar names.
   - "Nothing touches the disk before Apply" tests ([testing.md](testing.md) section 4).
   - Resume (roll forward) after crash or card pull. Plain-text log file of operations.
   - CLI: `culla plan`, `culla apply`, `culla resume` (used by the crash tests).
@@ -168,8 +168,6 @@ After v1.0: winget manifest, then the v2 candidates in [SPEC.md](SPEC.md) sectio
 
 | Task | Needed by |
 |---|---|
-| Name the Nikon body or bodies in use | M1 start |
-| Decide Windows 10 22H2 support: must, should or dropped ([SPEC.md](SPEC.md) section 10); sets the test matrix | M3 start |
 | Decide the minimum WebView2 version ([SPEC.md](SPEC.md) section 10) | M3 start |
 | Provide 5–10 real sample files and choose their licence | M1 start |
 | Run benchmarks on the G14 with a real UHS-I SD card | M1 exit |
@@ -177,6 +175,5 @@ After v1.0: winget manifest, then the v2 candidates in [SPEC.md](SPEC.md) sectio
 | Cull a real card and sign off on the swipe feel | M3 exit |
 | Run the full manual checklist | M4 exit, M6 exit |
 | Choose demo photos, confirm the subdomain, approve design system additions | M5 |
-| Decide the update check default (on or off) and frequency ([SPEC.md](SPEC.md) section 10) | M6 start |
 | Decide the WebView2 installer mode (bootstrapper download or embedded) ([SPEC.md](SPEC.md) section 10) | M6 start |
 | Updater key custody, release approval, SignPath application | M6 |

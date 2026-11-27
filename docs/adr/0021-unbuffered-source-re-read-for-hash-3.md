@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-24
 ---
 
@@ -21,7 +21,7 @@ ADR 0004 and SPEC §5.2 verify a cross-volume move or copy with three hashes: th
 
 Chosen option: the source re-read for hash 3 also opens the file with `FILE_FLAG_NO_BUFFERING`, as the destination read-back does. Reads use sector-aligned offsets, lengths and buffers, with the sector size queried per volume (`FileStorageInfo`), and handle a final partial sector.
 
-Decided by Claude during review on 24 Nov 2026, as the way to make the author's three-hash rule do what it is for. Margaux to confirm.
+Proposed by Claude during review on 24 Nov 2026, as the way to make the author's three-hash rule do what it is for. Accepted by Margaux on 27 Nov 2026.
 
 ### Consequences
 

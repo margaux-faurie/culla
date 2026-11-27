@@ -20,7 +20,7 @@ Links: NFR-PERF. Test: adapters unit, `culla-bench` B-01.
 ### US-02 Group a JPEG, its NEF and its sidecars
 As a photographer, I want a JPEG, its NEF and their sidecars treated as one photo, so that I decide once and the files never get split up.
 - Given `DSC_0001.JPG`, `dsc_0001.nef`, `DSC_0001.xmp`, `DSC_0001.NEF.xmp` and `NKSC_PARAM/DSC_0001.NEF.nksc` in one folder, when the folder is scanned, then they form one group with the JPEG as primary, the NEF as raw, and the three sidecars attached.
-- Given each sidecar, when it is attached, then it records the file it describes (`X.NEF.xmp` and the `.nksc` describe the NEF, `X.JPG.xmp` the JPEG, `X.xmp` the group).
+- Given each sidecar, when it is attached, then it records the file it describes (`X.NEF.xmp` and the `.nksc` describe the NEF, `X.JPG.xmp` the JPEG, `X.xmp` the NEF if the group has one and otherwise the JPEG, `X.pp3` the group).
 - Given `DSC_0001.JPG` in `100NIKON/` and `DSC_0001.NEF` in `101NIKON/`, when scanned, then they are two separate groups.
 
 Links: INV (grouping). Test: core unit, property.
@@ -93,6 +93,7 @@ As a photographer, I want my decisions saved as I go and checked against the fol
 - Given decisions made, when the app is killed and reopened on the same folder, then every decision made before the kill is restored.
 - Given a stored session, when a file it refers to is missing, then the group is flagged missing and excluded from the plan.
 - Given a stored session, when new files are present, then they are added as undecided.
+- Given a kept or rejected group, when a new file joins it on reopen (for example NX Studio wrote `NKSC_PARAM/X.NEF.nksc`), then the group becomes undecided, the review says why, and Ctrl+Z does not bring the old decision back ([ADR 0024](adr/0024-reconcile-event-for-a-file-joining-a-decided-group.md)).
 
 Links: NFR-REL. Test: adapters unit (SQLite), core unit.
 
@@ -114,8 +115,9 @@ Links: INV (undecided untouched, path containment). Test: property, snapshot.
 ### US-14 RAW follows JPEG toggle
 As a photographer, I want to choose per session whether the NEF follows its JPEG, so that I can cull JPEGs and leave RAWs for later.
 - Given RAW follows on, when a pair is kept or rejected, then the NEF and its sidecars get the same op as the JPEG.
-- Given RAW follows off, when a pair is kept or rejected, then the NEF, `X.NEF.xmp` and `NKSC_PARAM/X.NEF.nksc` are left untouched, and the JPEG with `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` gets the op.
-- Given `X.xmp` or `X.pp3` next to a pair, when the pair is decided, then they follow the group's primary (the JPEG), whether RAW follows is on or off ([SPEC.md](SPEC.md) section 3.1).
+- Given RAW follows off, when a pair is kept or rejected, then the NEF, `X.NEF.xmp`, `NKSC_PARAM/X.NEF.nksc` and a bare `X.xmp` are left untouched, and the JPEG with `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` gets the op ([ADR 0023](adr/0023-bare-xmp-follows-the-nef.md)).
+- Given `X.pp3` next to a pair, when the pair is decided, then it follows the group's primary (the JPEG), whether RAW follows is on or off ([SPEC.md](SPEC.md) section 3.1).
+- Given `X.xmp` next to a JPEG with no NEF, when the JPEG is decided, then `X.xmp` follows the JPEG.
 - Given a lone NEF, when it is decided, then it is moved like any primary, whatever the toggle.
 
 Links: INV (RAW pairing, group consistency). Test: property, unit.
@@ -131,7 +133,9 @@ Links: INV (no overwrite, group consistency). Test: property.
 
 ### US-16 Preflight before anything runs
 As a photographer, I want problems found before the first file moves, so that an apply does not stop halfway on something predictable.
-- Given a write-protected card or a read-only file in the plan, when preflight runs, then it reports it and apply cannot start.
+- Given a write-protected card, when preflight runs, then it reports it and apply cannot start.
+- Given a camera-protected (read-only) file in a kept or rejected group, when the plan is built, then the whole group is planned as a copy, the originals stay in place, and the review and report say so.
+- Given a destination inside a OneDrive or other cloud-synced folder, when preflight runs, then the review shows a warning and apply is still allowed.
 - Given less free space at the destination than the copy or cross-volume move needs, when preflight runs, then it reports the shortfall.
 - Given a destination inside `_rejected`, a path over the length limit without `\\?\`, a locked file, or a symlink or junction in the plan, when preflight runs, then each is reported.
 
@@ -139,7 +143,7 @@ Links: NFR-REL, INV (path containment). Test: core unit, Windows integration (re
 
 ### US-17 Same-volume move never overwrites
 As a photographer, I want moves on the same drive to be instant and safe, so that culling an internal folder is fast and loses nothing.
-- Given a same-volume move, when it executes, then it is a single no-replace rename through the checked handle (ADR 0022, proposed).
+- Given a same-volume move, when it executes, then it is a single no-replace rename through the checked handle (ADR 0022).
 - Given the target appeared after planning, when the move executes, then it fails as a hard error, the existing file is unchanged, the op is marked failed, and the apply continues with the next op.
 
 Links: INV (no overwrite). Test: Windows integration.
@@ -213,6 +217,7 @@ Links: NFR-PERF. Test: Vitest, Playwright.
 As a photographer, I want to drag the card left or right, so that culling feels physical when I use the trackpad.
 - Given I drag the card past the offset threshold, or flick past the velocity threshold, then it commits keep (right) or reject (left).
 - Given I release before either threshold, then the card springs back and nothing is recorded.
+- Given a photo already kept or rejected, when I drag past a threshold, then the card springs back, no event is recorded, and the "Press U to undo" toast shows ([ADR 0006](adr/0006-arrow-keys-do-not-change-an-existing-decision.md)).
 - Given a keyboard decision, then the same exit animation plays as for a drag.
 
 Links: NFR-A11Y (non-drag alternative exists). Test: Vitest (threshold logic), Playwright.
