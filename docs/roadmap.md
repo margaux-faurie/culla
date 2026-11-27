@@ -103,7 +103,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
   - Tauri 2 shell, one capability, no fs plugin, `AppManifest::commands`, strict CSP.
   - `culla://preview/<id>` async URI scheme from the in-memory LRU.
   - `Backend` interface with `TauriBackend` and `DemoBackend`; generated bindings.
-  - Start screen (source, subfolders, RAW follows, move or copy, destination).
+  - Start screen (source, subfolders, RAW follows, move or copy, destination). The richer folder choice of US-44 lands once docs/ux.md settles its elements; its drag and drop must keep dropped paths in Rust (Tauri hands them to the webview by default), so that PR goes to `security-reviewer`.
   - Swipe screen: Motion card (`drag="x"`, threshold on offset and velocity), at most 3 cards mounted, `img.decode()` before entry, Night theme, progress bar, decision badge, visible Keep and Reject buttons (WCAG 2.5.7).
   - Keyboard map from [SPEC.md](SPEC.md) section 4.1 except zoom (Z, Space) and EXIF overlay (I): decide, navigate, N, F, U, Ctrl+Z, Ctrl+Shift+Z, ?, Esc. Key repeat ignored. Shake and toast on a decided photo. End-of-list card.
   - TS reducer over the event log, checked against the golden fixtures from M2; autosaved to the backend (M2 session store) on each event.

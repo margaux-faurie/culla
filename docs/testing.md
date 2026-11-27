@@ -147,8 +147,8 @@ The card-pull case uses `Dismount-DiskImage` or `diskpart detach vdisk` in the m
 | Destination inside the source, `_rejected/` present | both excluded from the rescan | INV |
 | Volume remounted under another letter | session and cache found by volume serial | NFR-REL |
 | No `remove_*` outside `remove_verified` | enforced by clippy `disallowed-methods` on `culla-core`, `culla-adapters`, `culla-cli` and `src-tauri`, plus a CI grep that `remove_verified` is the only caller of the underlying call | INV never delete |
-| `X.NEF.xmp` with RAW follows off | NEF and its `.NEF.xmp`, `.nksc`, `X.xmp` and `X.pp3` stay; JPEG, `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` move |
-| Bare `X.xmp` and `X.pp3` in a JPEG-only group | both follow the JPEG | INV group consistency | INV group consistency |
+| `X.NEF.xmp` with RAW follows off | NEF and its `.NEF.xmp`, `.nksc`, `X.xmp` and `X.pp3` stay; JPEG, `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` move | INV group consistency |
+| Bare `X.xmp` and `X.pp3` in a JPEG-only group | both follow the JPEG | INV group consistency |
 
 ### 5.3 Installer and uninstaller (from M6)
 
