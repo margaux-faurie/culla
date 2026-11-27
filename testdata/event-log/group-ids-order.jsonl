@@ -1,0 +1,3 @@
+{"seq":1,"ts":1764201601000,"cause":"user","type":"decided","group_id":10,"verdict":"keep"}
+{"seq":2,"ts":1764201602000,"cause":"user","type":"decided","group_id":9,"verdict":"reject"}
+{"seq":3,"ts":1764201603000,"cause":"user","type":"decided","group_id":100,"verdict":"keep"}

@@ -1,0 +1,10 @@
+{
+  "state": {
+    "1": "rejected",
+    "2": "kept",
+    "3": "kept",
+    "5": "rejected"
+  },
+  "done": [11, 18, 31, 32],
+  "undone": []
+}
