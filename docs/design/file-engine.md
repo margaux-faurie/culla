@@ -190,7 +190,7 @@ CREATE TABLE operation (
   member_id     INTEGER NOT NULL REFERENCES member(id),
   ord           INTEGER NOT NULL,
   action        TEXT NOT NULL CHECK (action IN ('keep','reject')),
-  kind          TEXT NOT NULL CHECK (kind IN ('rename','copy','xmove')),
+  kind          TEXT NOT NULL CHECK (kind IN ('rename','copy','xmove','finish')),  -- finish: redo plan only (§9.6)
   src_rel       TEXT NOT NULL,              -- from source root
   dst_root      TEXT NOT NULL CHECK (dst_root IN ('dest','rejected')),
   dst_rel       TEXT NOT NULL,              -- from dst root
@@ -204,7 +204,7 @@ CREATE TABLE operation (
                   'copied_source_kept','failed')),
   attempts      INTEGER NOT NULL DEFAULT 0,
   last_error    TEXT,
-  CHECK ((kind = 'rename') = (partial_rel IS NULL)),
+  CHECK ((kind IN ('rename','finish')) = (partial_rel IS NULL)),
   CHECK (action = 'keep' OR (kind IN ('rename','copy') AND dst_root = 'rejected')),  -- copy: camera-protected (§7.2)
   UNIQUE (plan_id, ord),
   UNIQUE (plan_id, member_id),
@@ -376,7 +376,7 @@ Members are matched by (`folder_key`, file name folded). For each stored member:
 |---|---|
 | Present, same size and mtime | `present = 1` |
 | Present, size or mtime differs | `present = 1`, `changed = 1`; listed as "changed since scan" |
-| Present, but a `done` `rename` or `xmove` operation had moved it away | `rename`: the file system reverted an unflushed rename after a crash (§9.3). `xmove`: the unflushed source removal was lost, so the file is now at both S and F. Listed as `reverted_move`; the group stays applied. `rename`: offered for redo after the user confirms (§9.6, "Redo reverted moves"). `xmove`: listed, not touched in v1 (§13). Holding renames at `committed` until the plan closes (§9.3) keeps this case to a crash in the seconds after the plan closes. Never applies to `copy`, whose source is meant to stay |
+| Present, but a `done` `rename` or `xmove` operation had moved it away | `rename`: the file system reverted an unflushed rename after a crash (§9.3). `xmove`: the unflushed source removal was lost, so the file is now at both S and F. Listed as `reverted_move`; the group stays applied. `rename`: offered for redo after the user confirms (§9.6, "Redo reverted moves"). `xmove`: offered as "Finish moves" after the user confirms (decided by Margaux, 27 Nov 2026): F is re-verified from scratch (H2 from F and H3 from S, both unbuffered, equal to the journal's H1), then S is removed through `remove_verified_source`; any mismatch keeps both and is reported. Holding renames at `committed` until the plan closes (§9.3) keeps this case to a crash in the seconds after the plan closes. Never applies to `copy`, whose source is meant to stay |
 | Absent, and a `done` or `source_removed` operation moved it | Expected; not reported |
 | Absent otherwise | `present = 0`; listed as missing; no operation for it |
 
@@ -526,8 +526,9 @@ Edges by kind (seeded into `op_transition`):
 | `rename` | pending→renaming, renaming→committed, renaming→pending, committed→done, committed→pending, {pending, renaming, committed}→failed, failed→pending |
 | `copy` | pending→copying, copying→verifying, copying→pending, verifying→committed, verifying→pending, committed→done, committed→pending, {pending, copying, verifying, committed}→failed, failed→pending |
 | `xmove` | as `copy`, but without committed→done; plus committed→source_removed, committed→copied_source_kept, copied_source_kept→committed (Finish moves, §9.6), source_removed→done, source_removed→pending, source_removed→failed |
+| `finish` (proposed, redo plan only, §9.6) | pending→verifying, verifying→committed, verifying→pending, committed→source_removed, committed→pending, source_removed→done, source_removed→pending, {pending, verifying, committed, source_removed}→failed, failed→pending |
 
-A state is written *before* the step it names starts (`renaming`, `copying`) or *after* the step it names has returned (`verifying`, `committed`, `source_removed`, `done`). So the journal is never ahead of the disk, and recovery decides from the disk how far behind it is. The one exception is a user-file rename, which may be undone by the file system after `committed` (§9.3); recovery and reconciliation detect it.
+A state is written *before* the step it names starts (`renaming`, `copying`) or *after* the step it names has returned (`verifying`, `committed`, `source_removed`, `done`). So the journal is never ahead of the disk, and recovery decides from the disk how far behind it is. The exceptions are a user-file rename, which may be undone by the file system after `committed` (§9.3), and an `xmove` source removal lost after `done` (§9.6); recovery and reconciliation detect both.
 
 ### 9.3 Steps per kind
 
@@ -574,7 +575,7 @@ Durability points:
 | Flush 1 (`hP`) | Partial's data, size and times on the destination media |
 | Flush 2 (`hP`, after the rename) | The renamed file's metadata: the rename survives power loss on NTFS (log flush) and FAT/exFAT (directory entry). Windows has no directory fsync; if a file system still loses the rename, recovery finds the verified partial and renames it again (§10) |
 | User-file rename | Not flushed (see above). The operation stays `committed` until the plan closes, so recovery redoes a revert; after that, the next launch detects it and offers a redo (§9.6) |
-| Source removal | Not flushed: if it is lost, recovery sees the source again and removes it again after re-verifying |
+| Source removal | Not flushed: if it is lost while the plan is open, recovery sees the source again and removes it again after re-verifying; after the plan closes, see §9.6 "Finish a lost source removal" |
 
 These depend on the device honouring flush requests. A device that acknowledges writes it has not stored defeats any software (out of scope in [threat-model.md](../threat-model.md)).
 
@@ -615,7 +616,8 @@ The report lists per group: done, split, copied with source kept, failed with re
 - **Apply remaining** (after a cancel, or when the report shows unstarted groups): the plan is closed and a new plan is built from the current decisions and disk state. Groups that are applied (§5.4) are not in it; their remaining files are listed. Neither action finishes a group with `copied_source_kept` members; "Finish moves" does.
 - **Finish moves** (from the report; decided by Margaux, 27 Nov 2026), for an `xmove` group with `copied_source_kept` members, once the user has fixed what failed (for example closed Lightroom). Like "Retry failed", it runs in the same plan. The group's `failed` operations go `failed → pending` and run again (§9.3). Each `copied_source_kept` operation is re-verified from scratch: R1 and P9/P10 on S, `hS = open_source_verify`, H3 from S and H2 from F (both unbuffered) equal to the journal's H1, and F still a regular file at its target with `expected_size`; only then is it journaled `copied_source_kept → committed`, holding a fresh `VerifiedMove`. When every member is `committed`, the sources are removed through `remove_verified_source` as in §9.3 step 6. If a check fails, that operation stays `copied_source_kept` with both files kept and the report says why; if a member fails again, the group fails as in §9.5. Recovery never starts Finish moves on its own; a crash during it lands in the recovery table's `committed` rows.
 
-- **Redo reverted moves** (decided by Margaux, 27 Nov 2026): a `done` `rename` whose file the file system put back after the plan closed (S present with the planned size and mtime, F absent) is detected at the next launch, where the app checks the `done` renames of each session's most recently closed plan (read-only), and again by reconciliation whenever the folder is opened (§6.2). The review lists these files as `reverted_move` and offers "Redo moves (n)". Nothing runs until the user confirms. Confirming builds a new small plan (`purpose = 'redo'`) holding one `rename` per reverted member, with the same source and the same target (suffix included) as the `done` operation, so a group that was partly reverted ends together again. It is preflighted (P1, P3, P9 to P12) and executed and journaled like any other plan (§9.3), its renames held at `committed` until it closes, and recovered like any other plan (§10). A target now taken is a hard error for that group (`failed (conflict)`), reported, never replaced. S1F1 or S0F0 (torn) is reported and not offered. This is the only plan that may hold operations for applied groups (INV-04).
+- **Redo reverted moves** (decided by Margaux, 27 Nov 2026): a `done` `rename` whose file the file system put back after the plan closed (S present with the planned size and mtime, F absent) is detected at the next launch, where the app checks the `done` `rename` and `xmove` operations of each session's most recently closed plan (read-only), and again by reconciliation whenever the folder is opened (§6.2). The review lists these files as `reverted_move` and offers "Redo moves (n)". Nothing runs until the user confirms. Confirming builds a new small plan (`purpose = 'redo'`) holding one `rename` per reverted member, with the same source and the same target (suffix included) as the `done` operation, so a group that was partly reverted ends together again. It is preflighted (P1, P3, P9 to P12) and executed and journaled like any other plan (§9.3), its renames held at `committed` until it closes, and recovered like any other plan (§10). A target now taken is a hard error for that group (`failed (conflict)`), reported, never replaced. S1F1 or S0F0 (torn) is reported and not offered. This is the only plan that may hold operations for applied groups (INV-04).
+- **Finish a lost source removal** (behaviour decided by Margaux, 27 Nov 2026; mechanism proposed): a `done` `xmove` whose source is present again after the plan closed (S and F both present, F with the planned size) is found by the same launch check and reconciliation, listed as `reverted_move`, and offered as "Finish moves (n)". Nothing runs until the user confirms. Confirming builds a redo plan (`purpose = 'redo'`) holding one `finish` operation per member: `pending → verifying → committed → source_removed → done`. `verifying` reopens S with `open_source_verify` and F unbuffered, and requires H3 from S and H2 from F both equal to the journal's H1 for the `done` operation; then `remove_verified_source` removes S as in §9.3 step 6. Any mismatch ends `failed (verify_mismatch)` with both files kept and reported. It is preflighted (P1, P3, P9 to P12), journaled and recovered like any other plan; the recovery rows are the `xmove` rows from `verifying` on.
 
 To decide: whether a session continues after a completed apply (cull the remaining undecided photos, apply again) or closes.
 
@@ -728,7 +730,7 @@ Each invariant has at least one test in [testing.md](../testing.md): property te
 | INV-01 | No file is removed except by `remove_verified_source` with a valid `VerifiedMove`, or by `remove_own_partial` with a valid `OwnPartial` and the source present. No folder is ever removed. |
 | INV-02 | The content of a user file is never written. Culla opens no user file with write access, never replaces an existing file (renames are no-replace through a handle, new files are created with create-new semantics (`FILE_CREATE`)), and writes only to its own partials. |
 | INV-03 | Nothing on a user volume is written, renamed or created before the user confirms a plan. Scan, reconcile, preview, plan and preflight are read-only on user volumes. |
-| INV-04 | Undecided, ambiguous, held-back, missing, locked-elsewhere and applied groups get no operations, except the `rename` operations of a redo plan for members listed as `reverted_move` (§9.6). |
+| INV-04 | Undecided, ambiguous, held-back, missing, locked-elsewhere and applied groups get no operations, except the `rename` and `finish` operations of a redo plan for members listed as `reverted_move` (§9.6). |
 | INV-05 | Every target and partial lies under its root (destination root for keep, `<source>\_rejected` for reject) and equals no source path. |
 | INV-06 | No two operations in a plan share a folded target or partial path. |
 | INV-07 | All members of a group in a plan share one suffix `n`, applied to the stem inside every name, sidecars included. |
@@ -737,7 +739,7 @@ Each invariant has at least one test in [testing.md](../testing.md): property te
 | INV-10 | No reparse point or cloud placeholder is followed, grouped or operated on. |
 | INV-11 | Under the durability model (unflushed changes may revert), at every instant the content of every planned file exists completely and durably in at least one of: S; F; or P with hash H1 and state ≥ `verifying`. A torn FAT rename of a user file is the only exception; the engine then touches nothing and reports it. |
 | INV-12 | No source is removed after any member of its group has failed. A source is removed only through a `VerifiedMove` whose `hS` was opened before H3 and held until removal, after every member of its group is `committed`, and with H1 = H2 = H3. |
-| INV-13 | The journal state of an operation is never ahead of the disk, except for a user-file rename that the file system reverts after `committed`, which recovery and reconciliation detect. |
+| INV-13 | The journal state of an operation is never ahead of the disk, except for a user-file rename that the file system reverts after `committed`, and an `xmove` source removal lost after `done`; recovery and reconciliation detect both. |
 | INV-14 | Interrupting execution or recovery at any point, any number of times, then recovering, ends with the same files at the same paths with the same content as one uninterrupted apply, and no stray files. The only partials left are those kept because their source vanished or changed, or because recovery found the volume inconsistent; all are reported. |
 | INV-15 | Decision state and undo/redo stacks are a pure function of the event log, identical in Rust and TS for every golden fixture. |
 | INV-16 | The event log and the journal are append-only, and `operation.state` always equals the last journal entry's `to_state` (enforced by triggers). |
@@ -760,6 +762,7 @@ Each invariant has at least one test in [testing.md](../testing.md): property te
 | Power cut after flush 2, before the journal says `committed` | Recovery finds F = H1, marks `committed`, continues |
 | Power cut after the source removal, before the journal says so | Recovery sees S absent and F = H1, marks `source_removed`, then `done` |
 | Power cut right after a reject rename on a FAT card | The rename may be reverted: the op is still `committed` (the plan has not closed), so recovery redoes it. After the plan closes, the next launch shows it as `reverted_move` and redoes it once the user confirms (a redo plan, §9.6). Nothing lost |
+| Power cut right after a source removal on a FAT card, after the plan closed | The source comes back: listed as `reverted_move`, "Finish moves" offered; after confirmation both files are re-verified and the source removed; nothing lost |
 | Card pulled mid-copy | Plan pauses with "Insert the card"; resumes on the same serial, under any drive letter |
 | Card returns as another drive letter | Same session and plan found by serial, bound to the new GUID path; apply resumes |
 | Two mounted cards with the same serial | Plan pauses; the user picks the volume |
@@ -788,10 +791,10 @@ Each invariant has at least one test in [testing.md](../testing.md): property te
 | Two Culla processes on one source | Single instance and the lock file prevent a second apply |
 
 ## 13. Open questions
+- The `finish` operation kind for a lost `xmove` source removal (§9.6): proposed mechanism, to confirm in the M2 implementation PR (the behaviour is decided).
 
 - Destination inside a cloud-synced folder (allowed with a warning, P17): folders under a OneDrive sync root can carry cloud reparse tags, which P6 and P9 refuse; how the destination's folders are told apart from placeholders is to check in adapter tests on a real OneDrive folder.
 - Free-space margin (P5).
-- A reverted `xmove` source removal (the file at both S and F after the plan closed, §6.2) is listed and not touched in v1; whether it gets a redo like renames (re-verify, then `remove_verified_source`) is open.
 - "Retry failed" and "Finish moves" run in the same plan (§9.6), but §9.1 has no edge out of `completed` or `cancelled`: either the plan stays open while the report offers them, or they reopen it. To settle in M2.
 - Same-serial threshold on reopen, and network shares (§6.2).
 - WAL with `synchronous=FULL` (proposed in ADR 0009 and NFR-REL-10), and the 500 ms crash window.

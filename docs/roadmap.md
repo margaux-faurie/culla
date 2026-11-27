@@ -71,7 +71,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
   - Every M1 benchmark in [benchmarks.md](benchmarks.md) has a recorded result on H-2 (UHS-I SD) and passes, or has an ADR that changes the design or the budget. In particular (all est.): first photo ≤ 1.5 s (B-01), scan of 3,000 files with EXIF ≤ 15 s (B-02 + B-03), next prefetched photo ≤ 50 ms at p95 (B-09), peak memory ≤ 1 GB while swiping (B-15).
   - ADRs recorded for preview source (camera JPEG vs NEF embedded), thread counts, prefetch window and LRU size.
   - Fuzz targets ran for at least a week of nightlies without an open crash.
-- **Author:** provide 5–10 real sample files from her Nikon Z bodies ([SPEC.md](SPEC.md) section 2) and state their licence; run the benchmarks on the G14 with a real SD card.
+- **Author:** provide 5–10 real sample files from her Nikon Z bodies ([SPEC.md](SPEC.md) section 2); run the benchmarks on the G14 with a real SD card.
 
 ### M2 — File engine proven by tests
 
@@ -103,7 +103,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
   - Tauri 2 shell, one capability, no fs plugin, `AppManifest::commands`, strict CSP.
   - `culla://preview/<id>` async URI scheme from the in-memory LRU.
   - `Backend` interface with `TauriBackend` and `DemoBackend`; generated bindings.
-  - Start screen (source, subfolders, RAW follows, move or copy, destination). The richer folder choice of US-44 lands once docs/ux.md settles its elements; its drag and drop must keep dropped paths in Rust (Tauri hands them to the webview by default), so that PR goes to `security-reviewer`.
+  - Start screen (source, subfolders, RAW follows, move or copy, destination). Plus recent folders with their session status (US-44, v1 part); detected drives, the found-photos preview and drag and drop are v2.
   - Swipe screen: Motion card (`drag="x"`, threshold on offset and velocity), at most 3 cards mounted, `img.decode()` before entry, Night theme, progress bar, decision badge, visible Keep and Reject buttons (WCAG 2.5.7).
   - Keyboard map from [SPEC.md](SPEC.md) section 4.1 except zoom (Z, Space) and EXIF overlay (I): decide, navigate, N, F, U, Ctrl+Z, Ctrl+Shift+Z, ?, Esc. Key repeat ignored. Shake and toast on a decided photo. End-of-list card.
   - TS reducer over the event log, checked against the golden fixtures from M2; autosaved to the backend (M2 session store) on each event.
@@ -169,7 +169,7 @@ After v1.0: winget manifest, then the v2 candidates in [SPEC.md](SPEC.md) sectio
 | Task | Needed by |
 |---|---|
 | Decide the minimum WebView2 version ([SPEC.md](SPEC.md) section 10) | M3 start |
-| Provide 5–10 real sample files and choose their licence | M1 start |
+| Provide 5–10 real sample files | M1 start |
 | Run benchmarks on the G14 with a real UHS-I SD card | M1 exit |
 | Real apply and card-pull run on the G14 | M2 exit |
 | Cull a real card and sign off on the swipe feel | M3 exit |

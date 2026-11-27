@@ -42,7 +42,8 @@ A Windows desktop app that culls a folder of Nikon photos (JPEG + NEF) one photo
 | Camera-protected files | A source file with the read-only attribute (camera "protect") is copied, never moved: its group is planned as a copy (for a reject, a copy into `_rejected`), the original stays in place, and the review and report say so (decided 27 Nov 2026) |
 | Cloud-synced destination | A destination inside a OneDrive or other cloud-synced folder is allowed, with a warning in the review screen (decided 27 Nov 2026) |
 | Reconcile | A new file that joins an already decided group makes that group undecided again (decided 27 Nov 2026, ADR 0024) |
-| Interrupted moves | A group left "copied, source kept" can be finished from the report with "Finish moves", which re-verifies each copy from scratch and removes its source through `remove_verified` (decided 27 Nov 2026, design/file-engine.md §9.6) |
+| Interrupted moves | A group left "copied, source kept" can be finished from the report with "Finish moves", which re-verifies each copy from scratch and removes its source through `remove_verified` (decided 27 Nov 2026, design/file-engine.md §9.6). The same is offered when a move's source removal was lost after the plan closed (file at both places) |
+| Sample photos | The author's real samples are licensed CC BY 4.0 (tests and web demo) and stored in Git LFS (`testdata/real/`), GPS and body serial stripped (decided 27 Nov 2026) |
 | File engine | ADR 0021 (unbuffered source re-read for hash 3) and ADR 0022 (rename through the checked handle) accepted. A same-volume rename stays `committed` until the plan ends, so recovery can redo a rename the file system reverted; one reverted after the plan closed is shown at the next launch and redone after the user confirms (decided 27 Nov 2026, §5.2) |
 | Update check | On by default, once a day; can be turned off in settings (decided 27 Nov 2026) |
 | Success criteria | The PRD §7 targets are confirmed: 1,000 pairs from SD with zero lost files, recovery after a card pull, 30 minutes or less of swiping for 1,000 pairs (decided 27 Nov 2026) |
@@ -106,7 +107,7 @@ Rules:
 - At the end of the list, a summary card offers "Jump to undecided (n)" and "Review".
 
 ### 4.2 Screens
-1. **Start:** choosing the folder is part of the experience (Margaux, 27 Nov 2026): detected SD cards and removable drives, recent folders, drag and drop and a preview of what was found are proposed in [stories.md](stories.md) US-44; the native dialog (opened from Rust) stays available, and the webview still gets only opaque source IDs and display data, never a path. Then: source folder, include subfolders, RAW follows JPEG, keep = move/copy, destination. If a session already exists for the folder, offer to resume it (or start fresh).
+1. **Start:** choosing the folder is part of the experience (Margaux, 27 Nov 2026). v1: recent folders with their session status (in progress, applied) and the native folder dialog opened from Rust; detected drives, a found-photos preview and drag and drop are v2 ([stories.md](stories.md) US-44). The webview only gets opaque source IDs and display data, never a path. Then: source folder, include subfolders, RAW follows JPEG, keep = move/copy, destination. If a session already exists for the folder, offer to resume it (or start fresh).
 2. **Swipe:** full-screen photo, progress bar (n / total, kept, rejected, undecided), decision badge, EXIF overlay, zoom, and visible **Keep** and **Reject** buttons (a single-click alternative to dragging, WCAG 2.5.7).
 3. **Review:** counts; kept / rejected grids (click to jump back); the full operation plan; preflight results; estimated time and size; "Apply" needs a confirm dialog that states the counts. Undecided photos are never touched.
 4. **Apply:** progress per file, can be paused or cancelled (cancel stops after the current file). Ends with a report and a log file (`%LOCALAPPDATA%\Culla\logs`, openable from the report).
@@ -229,4 +230,4 @@ Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsm
 - `xtask`: ADR 0020 says it is outside the file rules, but it inherits the workspace lints and only creates new files. Proposed: keep it inside the rules and supersede ADR 0020 on that point.
 - Minimum WebView2 version and installer mode (the bootstrapper downloads WebView2 at install time if missing).
 - Demo subdomain and which photos to publish.
-- The author's real sample files (Nikon Z series, see §2) and their licence: pending.
+- The author's real sample files (Nikon Z series, see §2): pending.
