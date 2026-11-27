@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-24
 ---
 
@@ -20,11 +20,11 @@ ADR 0004 renames with `MoveFileExW` and only `MOVEFILE_WRITE_THROUGH`. The adver
 
 Chosen option: rename through the handle that was checked. The target folder is opened with `FILE_FLAG_OPEN_REPARSE_POINT`, checked to be a real directory, held without delete sharing, and passed as `RootDirectory`; only the leaf name is resolved at rename time, and the OS refuses it if it is taken. A partial is held with `GENERIC_READ | GENERIC_WRITE | DELETE`, renamed through that handle and flushed through it. A user file (same-volume keep or reject) is renamed through a `DELETE | GENERIC_READ` handle; Culla never opens a user file for writing, so that rename may be unflushed, and recovery detects a reverted rename. Details: [design/file-engine.md](../design/file-engine.md).
 
-A technical refinement made during review on 24 Nov 2026. It changes how the rule is enforced, not what the user sees.
+A technical refinement proposed during review on 24 Nov 2026 and accepted by Margaux on 27 Nov 2026. It changes how the rule is enforced, not what the user sees.
 
 ### Consequences
 
 - Good: the file renamed is the file that was checked (source side), and the target folder cannot be swapped for a junction between the check and the rename (target side). The leaf name itself is not checked in advance; the no-replace rename makes the OS refuse it if it exists.
 - Good: partials, and their rename into place, are flushed through the same handle before `committed` is journaled, as far as the device honours flushes.
-- Bad: a same-volume rename of a user file is not flushed, so the file system can revert it after a crash; recovery and reconciliation detect it, and when `done` is written is an open author decision (file-engine §13).
+- Bad: a same-volume rename of a user file is not flushed, so the file system can revert it after a crash; recovery and reconciliation detect it. Margaux decided on 27 Nov 2026 that such an operation stays `committed` until the end of the plan, so recovery redoes a reverted rename (file-engine §9.3).
 - Bad: more Win32 code in `culla-adapters`; `FileRenameInfoEx` support, and relative names with `RootDirectory`, on FAT32 and exFAT must be proven in adapter tests (fallback above).

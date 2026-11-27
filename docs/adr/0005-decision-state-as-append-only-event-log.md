@@ -5,6 +5,8 @@ date: 2026-11-24
 
 # Store decision state as an append-only event log
 
+Refined by: [ADR 0024](0024-reconcile-event-for-a-file-joining-a-decided-group.md), for the reconcile event (`cause`).
+
 ## Context and problem statement
 
 Culla needs global undo and redo that jump back to the photo, a per-photo undo (U), autosave on every decision, and resume after a restart. How is decision state stored?

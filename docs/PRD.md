@@ -86,7 +86,7 @@ Also out, by design rather than for later: more than two choices (keep / reject 
 
 ## 7. Success criteria
 
-v1 is a success when all of the following hold. The numbers are proposed targets; the benchmark method is in [benchmarks.md](benchmarks.md) and the matching requirements in [nfr.md](nfr.md).
+v1 is a success when all of the following hold. The targets were confirmed by Margaux on 27 Nov 2026; the benchmark method is in [benchmarks.md](benchmarks.md) and the matching requirements in [nfr.md](nfr.md).
 
 | # | Criterion | Target | How it is checked |
 |---|---|---|---|
@@ -97,8 +97,6 @@ v1 is a success when all of the following hold. The numbers are proposed targets
 | S5 | Keyboard only | Every flow (start, swipe, review, apply) can be done without a mouse | Manual pass + Playwright on the demo |
 | S6 | Web demo live | Demo published on a margauxfaurie.com subdomain (to confirm), loads and runs the full swipe-review-apply flow on sample photos | Playwright in CI against the deployed URL |
 | S7 | Portfolio-ready repository | README with GIF, ADRs for the main decisions, green CI, OpenSSF Scorecard published | Repository check before the v1 release |
-
-To decide: whether S3's 30-minute target is right for the author's real shooting, after the first M2 session.
 
 ## 8. Portfolio and blog goals
 
@@ -113,14 +111,11 @@ To decide: whether the guide is one post or a series, and whether it ships with 
 
 From [SPEC §10](SPEC.md#10-open-questions):
 
-- Windows 10 22H2 support (out of mainstream support since October 2025): must, should or dropped.
-- Update check: on or off by default, and how often.
 - Minimum WebView2 version and installer mode (the bootstrapper downloads WebView2 at install time if missing).
 - Demo subdomain, and which photos to publish in the demo.
-- Which Nikon body or bodies the author uses, which sets the NEF variants (lossless, HE, HE\*) in the test corpus.
+- The author's real sample files (Nikon Z series, SPEC §2) and their licence: pending.
 
 Raised by this pitch:
 
 - Calendar time budget for v1 (section 3).
-- Confirm the S3 speed target (section 7).
 - Form and timing of the blog guide (section 8).

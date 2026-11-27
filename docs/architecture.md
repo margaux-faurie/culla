@@ -32,7 +32,7 @@ Top quality goals, in priority order. Measurable targets are in [nfr.md](nfr.md)
 
 | Constraint | Consequence |
 |---|---|
-| Windows 11 first; Windows 10 22H2 to decide. Target machine ROG Zephyrus G14 2024 (2880×1800 OLED) | WebView2 (evergreen Chromium). Windows file semantics drive the file engine (`rename` overwrites, sharing violations, `\\?\` paths). |
+| Windows 11 only; Windows 10 dropped (decided by Margaux, 27 Nov 2026). Target machine ROG Zephyrus G14 2024 (2880×1800 OLED) | WebView2 (evergreen Chromium). Windows file semantics drive the file engine (`rename` overwrites, sharing violations, `\\?\` paths). |
 | Source folders often on SD cards or external drives | Storage is the bottleneck. No memory-mapping of removable media. Identity cannot depend on the drive letter. |
 | MIT licence for the app binary | Dependencies must be permissive. LGPL and GPL crates (rawler, exiv2, exiftool-rs, libraw) are out. See [ADR 0017](adr/0017-mit-licence-and-cargo-deny-licence-allowlist.md). |
 | Solo maintainer, open source | Small doc set, small dependency set, automated checks over manual process. |
@@ -171,7 +171,7 @@ flowchart LR
 | `plan`, `preflight` | core | Expand decisions into operations, apply group-consistent suffixes, run preflight checks through the ports, estimate bytes and time. | Details in [file-engine.md](design/file-engine.md) |
 | journal state machine, apply executor | core | Legal transitions per operation; drive the operations through `FileSystem`, write each state through `SessionStore`, pause and cancel, roll forward on resume. | [ADR 0010](adr/0010-journaled-apply-with-roll-forward-only.md) |
 | `scan`, `session` | core | Drive the walk (exclude `_rejected/` and an in-source destination), stream groups in filename order, request capture-time order, reconcile with the stored session, append events. | [ADR 0008](adr/0008-key-sessions-and-caches-by-volume-serial-and-relative-path.md) |
-| `winfs` | adapters | Walk with `follow_links(false)`, skip reparse points, read into buffers (never mmap). Rename through the checked handle with no-replace semantics ([ADR 0022](adr/0022-rename-through-the-checked-handle.md), proposed): an existing target is a hard error, and a cross-volume rename fails with `ERROR_NOT_SAME_DEVICE`. Copy with `create_new`; both verify reads (destination and source) use `FILE_FLAG_NO_BUFFERING` ([ADR 0021](adr/0021-unbuffered-source-re-read-for-hash-3.md), proposed); hash the source while copying, fsync, read the destination back unbuffered, hash the source again. Owns `remove_verified`, the single audited removal function. | [ADR 0004](adr/0004-never-delete-or-overwrite.md). `unsafe` for Win32 calls is confined here. |
+| `winfs` | adapters | Walk with `follow_links(false)`, skip reparse points, read into buffers (never mmap). Rename through the checked handle with no-replace semantics ([ADR 0022](adr/0022-rename-through-the-checked-handle.md)): an existing target is a hard error, and a cross-volume rename fails with `ERROR_NOT_SAME_DEVICE`. Copy with `create_new`; both verify reads (destination and source) use `FILE_FLAG_NO_BUFFERING` ([ADR 0021](adr/0021-unbuffered-source-re-read-for-hash-3.md)); hash the source while copying, fsync, read the destination back unbuffered, hash the source again. Owns `remove_verified`, the single audited removal function. | [ADR 0004](adr/0004-never-delete-or-overwrite.md). `unsafe` for Win32 calls is confined here. |
 | `metadata` | adapters | `kamadak-exif` tags (first ~128 KB). Own TIFF/IFD walker finds the largest embedded JPEG in a NEF. Fuzz targets. | [ADR 0011](adr/0011-own-ifd-walker-for-nef-previews-and-kamadak-exif.md) |
 | preview pipeline | adapters | 1–2 reader threads, 2–4 decode workers, prefetch 5 ahead and 2 behind, memory LRU of about 12 screen previews, disk cache, orientation. | [ADR 0012](adr/0012-turbojpeg-scaled-decode-preview-pipeline.md) |
 | `store` | adapters | One SQLite database per source: sessions, events, plans, journal. | [ADR 0009](adr/0009-sqlite-per-source-for-sessions-and-journal.md) |
@@ -270,7 +270,7 @@ sequenceDiagram
   K->>R: decide(groupId, kept)
   alt Group already decided
     R-->>CS: shake + toast "Press U to undo"
-    Note over K,R: SPEC states this for ←/→. Same rule for drag and the Keep/Reject buttons is an extension, to confirm with the author
+    Note over K,R: Same rule for ←/→, drag and the Keep/Reject buttons (ADR 0006, confirmed 27 Nov 2026)
   else Undecided
     R->>R: append Decided {groupId, verdict}, clear redo stack, advance index
     R-->>CS: start exit animation (does not block input)
@@ -352,7 +352,7 @@ sequenceDiagram
       C->>DB: renaming
       C->>FS: no-replace rename via checked file and folder handles
       Note right of FS: existing target = hard error for the whole group
-      C->>DB: committed, then done
+      C->>DB: committed (done when the plan closes)
     else Move across volumes, or copy
       C->>DB: copying (attempt, partial path)
       C->>FS: copy to *.culla-partial (create_new), hash source while copying, set times, fsync
@@ -499,8 +499,8 @@ Full analysis in [threat-model.md](threat-model.md). The main controls:
 - Strict CSP, nothing remote. `img-src` allows only `'self'` and the `culla` scheme origin (`http://culla.localhost` on Windows).
 - The scheme handler serves only IDs from the current scan.
 - Every destination comes from `plan()` and is checked to sit under its root. No link following at scan time or at apply time; links on the path are refused at apply time too.
-- No overwrite: renames go through the checked handle with no-replace semantics ([ADR 0022](adr/0022-rename-through-the-checked-handle.md), proposed), so the OS refuses an existing target; copies use `create_new`. There is no check-then-rename step.
-- `remove_verified` in `culla-adapters` is the single audited removal function. It removes only the source of a verified cross-volume move and Culla's own `*.culla-partial` files. `std::fs::remove_*` is banned outside `remove_verified`; `std::fs::rename` is banned everywhere (the adapters rename through the checked handle, ADR 0022, proposed). Both through clippy `disallowed-methods`.
+- No overwrite: renames go through the checked handle with no-replace semantics ([ADR 0022](adr/0022-rename-through-the-checked-handle.md)), so the OS refuses an existing target; copies use `create_new`. There is no check-then-rename step.
+- `remove_verified` in `culla-adapters` is the single audited removal function. It removes only the source of a verified cross-volume move and Culla's own `*.culla-partial` files. `std::fs::remove_*` is banned outside `remove_verified`; `std::fs::rename` is banned everywhere (the adapters rename through the checked handle, ADR 0022). Both through clippy `disallowed-methods`.
 - Parsers (EXIF, IFD walker, embedded JPEG) are fuzzed with `cargo-fuzz`, with decode size limits.
 - Supply chain: cargo-deny, pnpm hardening, CodeQL, pinned or locked actions, Scorecard.
 - Updater artefacts are signed and served over HTTPS.
@@ -548,6 +548,11 @@ ADR 0000 records how decisions are written. Index with status: [adr/README.md](a
 | [0017](adr/0017-mit-licence-and-cargo-deny-licence-allowlist.md) | MIT licence + cargo-deny licence allowlist |
 | [0018](adr/0018-conventional-commits-and-release-please.md) | Conventional Commits + release-please |
 | [0019](adr/0019-generate-typescript-bindings-with-tauri-specta.md) | TS bindings with tauri-specta pinned RC, ts-rs as fallback |
+| [0020](adr/0020-headless-cli-and-bench-crates.md) | Headless CLI and bench crates |
+| [0021](adr/0021-unbuffered-source-re-read-for-hash-3.md) | Unbuffered source re-read for hash 3 |
+| [0022](adr/0022-rename-through-the-checked-handle.md) | Rename through the checked handle, with no-replace semantics |
+| [0023](adr/0023-bare-sidecars-follow-the-nef.md) | Bare `X.xmp` and `X.pp3` follow the NEF |
+| [0024](adr/0024-reconcile-event-for-a-file-joining-a-decided-group.md) | A new file joining a decided group makes it undecided (reconcile event) |
 
 Candidates not yet written: Tauri isolation pattern (8.5), Biome instead of ESLint + Prettier.
 
@@ -571,7 +576,7 @@ Brief. Targets and measurement live in [nfr.md](nfr.md) and [benchmarks.md](benc
 | Risk or debt | Impact | Mitigation |
 |---|---|---|
 | A raw `std::fs::rename` slips in (it replaces the target on Windows) | Overwrite, the worst failure | `std::fs::rename` banned by `disallowed-methods`; collision tests on `windows-latest`. |
-| Verification re-reads each cross-volume file twice (destination unbuffered, source again; see ADR 0021, proposed) | Long applies get longer | The review estimate includes the extra reads; measure in [benchmarks.md](benchmarks.md). |
+| Verification re-reads each cross-volume file twice (destination unbuffered, source again; see ADR 0021) | Long applies get longer | The review estimate includes the extra reads; measure in [benchmarks.md](benchmarks.md). |
 | Widening `remove_verified` beyond its two cases | Data loss | One function, two cases, property and integration tests, reviewer agent checks the invariant. |
 | Performance numbers are estimates | Budgets may not hold on real SD cards | Benchmark on the G14 with a real card in M1 ([benchmarks.md](benchmarks.md)). Test whether the NEF's JpgFromRaw is a faster preview source. |
 | tauri-specta v2 is still an RC | Breaking changes, abandonment | Exact pin, CI diff check, `ts-rs` fallback ([ADR 0019](adr/0019-generate-typescript-bindings-with-tauri-specta.md)) |
@@ -596,7 +601,7 @@ Brief. Targets and measurement live in [nfr.md](nfr.md) and [benchmarks.md](benc
 | Primary | The file shown for a group: the JPEG if there is one, otherwise the NEF (via its embedded JPEG). |
 | Raw | The NEF of a group, if any. Moves with the group only when "RAW follows JPEG" is on. |
 | Lone NEF | A group with a NEF and no JPEG. |
-| Sidecar | A file that follows the file it describes. `X.xmp` and `X.pp3` follow the group. `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` follow the JPEG. `X.NEF.xmp` and `NKSC_PARAM/X.NEF.nksc` follow the NEF, so they stay put when "RAW follows JPEG" is off. A collision suffix is applied inside sidecar names too. |
+| Sidecar | A file that follows the file it describes. Bare `X.xmp` and `X.pp3` follow the NEF if the group has one, otherwise the primary (ADR 0023). `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` follow the JPEG. `X.NEF.xmp` and `NKSC_PARAM/X.NEF.nksc` follow the NEF, so they and the bare sidecars stay put when "RAW follows JPEG" is off. A collision suffix is applied inside sidecar names too. |
 | Session | The stored state of one source: options, groups, decision events, plans and journal. Keyed by volume identity. |
 | Volume identity | Volume serial number + path relative to the volume root. Independent of the drive letter. |
 | Decision event | One appended record with a `seq`: `Decided {groupId, verdict}`, `Cleared {groupId}` (U), `Undo {targetSeq}` or `Redo {targetSeq}`. The current state is the fold of all events. |
@@ -609,7 +614,7 @@ Brief. Targets and measurement live in [nfr.md](nfr.md) and [benchmarks.md](benc
 | Resume (apply) | Rolling an interrupted apply forward from the journal. No rollback in v1. |
 | Partial file | `*.culla-partial`, the temporary target of a copy until it is verified. |
 | `remove_verified` | The single audited removal function, in `culla-adapters`. Removes only the source of a verified cross-volume move, or Culla's own partial file. |
-| Verified | A copy whose destination was fsynced and read back unbuffered, and whose source was hashed a second time, with all three hashes equal (see ADR 0021, proposed). |
+| Verified | A copy whose destination was fsynced and read back unbuffered, and whose source was hashed a second time, with all three hashes equal (see ADR 0021). |
 | `_rejected/` | Folder at the source root that receives rejected groups, mirroring subfolders. Excluded from scans. |
 | Destination | Folder chosen per session for kept groups. Excluded from scans when it sits inside the source. |
 | Preview | Screen-sized JPEG made by the preview pipeline and served by `culla://`. |

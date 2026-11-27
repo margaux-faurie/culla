@@ -5,6 +5,8 @@ date: 2026-11-24
 
 # Arrow keys don't change an existing decision (undo first)
 
+Confirmed 27 Nov 2026 by Margaux: the same rule applies to the Keep and Reject buttons and to drag.
+
 ## Context and problem statement
 
 When the user comes back to a photo that already has a decision, what should ← and → do?

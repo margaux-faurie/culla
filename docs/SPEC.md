@@ -1,6 +1,6 @@
 # Culla — Specification and document map
 
-Status: v1, 24 Nov 2026. This file is the record of the author's product decisions and the map of the design docs. Each topic below has an owning document: where a section here and its owner disagree, the owner wins, and this file is updated to match.
+Status: v1, 24 Nov 2026, updated 27 Nov 2026. This file is the record of the author's product decisions and the map of the design docs. Each topic below has an owning document: where a section here and its owner disagree, the owner wins, and this file is updated to match.
 
 | Topic | Owner |
 |---|---|
@@ -17,7 +17,7 @@ Status: v1, 24 Nov 2026. This file is the record of the author's product decisio
 | Agent instructions | [../CLAUDE.md](../CLAUDE.md) |
 | Background research (historical) | [research/](research/) |
 
-On file-engine topics (journal states, how renames are issued, verification), `design/file-engine.md` wins over ADRs 0004 and 0010 until ADRs 0021 and 0022 are accepted. Open decisions for the author are collected in §10 here and in §13 of the file-engine design.
+On file-engine topics (journal states, how renames are issued, verification), `design/file-engine.md` wins over ADRs 0004 and 0010; ADRs 0021 and 0022 (accepted 27 Nov 2026) record how it refines them. Open decisions for the author are collected in §10 here and in §13 of the file-engine design.
 
 ## 1. What Culla is
 
@@ -29,14 +29,23 @@ A Windows desktop app that culls a folder of Nikon photos (JPEG + NEF) one photo
 
 | Topic | Decision |
 |---|---|
-| Platform | Windows 11 first; Windows 10 22H2 to decide (target machine: ROG Zephyrus G14 2024, 2880×1800 OLED) |
+| App identifier | `com.margauxfaurie.culla` (reverse-DNS; Tauri bundle identifier, used by the installer and the WebView2 data folder; Culla's own data stays in `%LOCALAPPDATA%\Culla`, architecture §8.7; decided 27 Nov 2026) |
+| Platform | Windows 11 only; Windows 10 is dropped (decided 27 Nov 2026). Target machine: ROG Zephyrus G14 2024, 2880×1800 OLED |
+| Camera | Nikon Z series (Z6, Z7, Z8, Z9 family), so lossless, lossy, uncompressed and HE/HE\* NEFs are all possible; test resolutions 24 MP (Z6 class) and 45 MP (Z7, Z8, Z9 class) (decided 27 Nov 2026) |
 | Choices | Binary: keep / reject |
 | Reject | Move to `<source>/_rejected/`, mirroring subfolders. The app never deletes a photo; the only removals are listed in §5.2 step 5. |
 | Keep | Move or copy, chosen per session; destination folder chosen per session (last one remembered); subfolder structure mirrored |
 | Apply | Queue → review screen → explicit confirm → apply |
 | RAW pairing | Per-session toggle "RAW follows JPEG". When off, the NEF is left untouched. |
 | Lone NEF | Shown via its embedded JPEG preview, sorted like any photo |
-| Sidecars | Always follow the file they describe (`.xmp`, `.NEF.xmp`, `.pp3`, NX Studio `NKSC_PARAM/*.nksc`), see §3.1 |
+| Sidecars | Always follow the file they describe (`.xmp`, `.NEF.xmp`, `.pp3`, NX Studio `NKSC_PARAM/*.nksc`), see §3.1. A bare `X.xmp` or `X.pp3` describes the RAW (Lightroom's and RawTherapee's convention): when "RAW follows JPEG" is off, it stays with the NEF (decided 27 Nov 2026, ADR 0023) |
+| Camera-protected files | A source file with the read-only attribute (camera "protect") is copied, never moved: its group is planned as a copy (for a reject, a copy into `_rejected`), the original stays in place, and the review and report say so (decided 27 Nov 2026) |
+| Cloud-synced destination | A destination inside a OneDrive or other cloud-synced folder is allowed, with a warning in the review screen (decided 27 Nov 2026) |
+| Reconcile | A new file that joins an already decided group makes that group undecided again (decided 27 Nov 2026, ADR 0024) |
+| Interrupted moves | A group left "copied, source kept" can be finished from the report with "Finish moves", which re-verifies each copy from scratch and removes its source through `remove_verified` (decided 27 Nov 2026, design/file-engine.md §9.6) |
+| File engine | ADR 0021 (unbuffered source re-read for hash 3) and ADR 0022 (rename through the checked handle) accepted. A same-volume rename stays `committed` until the plan ends, so recovery can redo a rename the file system reverted; one reverted after the plan closed is shown at the next launch and redone after the user confirms (decided 27 Nov 2026, §5.2) |
+| Update check | On by default, once a day; can be turned off in settings (decided 27 Nov 2026) |
+| Success criteria | The PRD §7 targets are confirmed: 1,000 pairs from SD with zero lost files, recovery after a card pull, 30 minutes or less of swiping for 1,000 pairs (decided 27 Nov 2026) |
 | Subfolders | Included (recursive scan) |
 | Volume | Thousands of photos, often on SD card or external drive |
 | v1 extras | Zoom to 100%, EXIF overlay, resume a session later |
@@ -53,8 +62,8 @@ A **group** is the unit the user decides on. It holds:
 Pairing is by case-insensitive basename **within the same folder only**. Nikon file counters roll over, so the same name can appear in two folders. Unknown extensions are ignored and listed in the review screen.
 
 Sidecar matching (case-insensitive, same folder):
-- `X.xmp`, `X.pp3` describe the group: they follow the group's primary.
-- `X.NEF.xmp`, `X.JPG.xmp` and `NKSC_PARAM/X.NEF.nksc` / `NKSC_PARAM/X.JPG.nksc` describe one file: they follow that file. So when "RAW follows JPEG" is off, the NEF's sidecars stay with the NEF.
+- A bare `X.xmp` or `X.pp3` describes the RAW, as Lightroom and RawTherapee write them: it follows the NEF when the group has one, otherwise the primary (a JPEG-only group). With "RAW follows JPEG" on, it moves with the whole group; with it off, it stays with the NEF (decided by Margaux, 27 Nov 2026, ADR 0023).
+- `X.NEF.xmp`, `X.JPG.xmp` and `NKSC_PARAM/X.NEF.nksc` / `NKSC_PARAM/X.JPG.nksc` describe one file: they follow that file. So when "RAW follows JPEG" is off, the NEF's sidecars (bare `X.xmp` and `X.pp3` included) stay with the NEF.
 - A collision suffix is applied inside sidecar names too (`X_1.NEF.xmp`, `NKSC_PARAM/X_1.NEF.nksc`).
 
 ### 3.2 Decisions and history
@@ -64,11 +73,11 @@ Sidecar matching (case-insensitive, same folder):
 - **Ctrl+Z** appends `Undo` for the most recent decision event (`Decided` or `Cleared`) that is not already undone, restores that photo's previous state, and jumps to it. Repeated Ctrl+Z walks further back.
 - **Ctrl+Shift+Z** appends `Redo` for the most recently undone event. Any new `Decided` or `Cleared` empties the redo stack.
 - **U** appends `Cleared` for the photo shown (it becomes undecided). It is itself undoable with Ctrl+Z.
-- ←/→ on a photo that already has a decision do nothing. A short shake animation and a toast saying "Press U to undo" explain why. This is the author's choice: undo first, then re-decide.
+- ←/→ on a photo that already has a decision do nothing. A short shake animation and a toast saying "Press U to undo" explain why. This is the author's choice: undo first, then re-decide. The same rule applies to the Keep and Reject buttons and to drag (decided by Margaux, 27 Nov 2026; ADR 0006).
 
 ### 3.3 Identity and resume
 - Sessions and caches are keyed by **volume serial + relative path**, never by drive letter. An SD card that comes back as `F:` instead of `E:` still resumes its session.
-- When a folder is opened, the app reconciles it against the stored session. Missing files are flagged. New files are added as undecided; a new file that joins an already decided group makes that group undecided again (proposed, see design/file-engine.md §13). Renamed files cannot be detected in v1: they show as one missing file plus one new file.
+- When a folder is opened, the app reconciles it against the stored session. Missing files are flagged. New files are added as undecided; a new file that joins an already decided group makes that group undecided again (decided by Margaux, 27 Nov 2026; ADR 0024, design/file-engine.md §6.2). Renamed files cannot be detected in v1: they show as one missing file plus one new file.
 - `_rejected/` and the destination folder (if it sits inside the source) are excluded from scans.
 
 ## 4. Interaction
@@ -97,7 +106,7 @@ Rules:
 - At the end of the list, a summary card offers "Jump to undecided (n)" and "Review".
 
 ### 4.2 Screens
-1. **Start:** source folder, include subfolders, RAW follows JPEG, keep = move/copy, destination. If a session already exists for the folder, offer to resume it (or start fresh).
+1. **Start:** choosing the folder is part of the experience (Margaux, 27 Nov 2026): detected SD cards and removable drives, recent folders, drag and drop and a preview of what was found are proposed in [stories.md](stories.md) US-44; the native dialog (opened from Rust) stays available, and the webview still gets only opaque source IDs and display data, never a path. Then: source folder, include subfolders, RAW follows JPEG, keep = move/copy, destination. If a session already exists for the folder, offer to resume it (or start fresh).
 2. **Swipe:** full-screen photo, progress bar (n / total, kept, rejected, undecided), decision badge, EXIF overlay, zoom, and visible **Keep** and **Reject** buttons (a single-click alternative to dragging, WCAG 2.5.7).
 3. **Review:** counts; kept / rejected grids (click to jump back); the full operation plan; preflight results; estimated time and size; "Apply" needs a confirm dialog that states the counts. Undecided photos are never touched.
 4. **Apply:** progress per file, can be paused or cancelled (cancel stops after the current file). Ends with a report and a log file (`%LOCALAPPDATA%\Culla\logs`, openable from the report).
@@ -130,17 +139,20 @@ The items below describe behaviour; the pure parts live in `culla-core` and the 
 1. **Plan:** each group expands to a list of operations (primary + raw if "RAW follows" + sidecars). Every member of a group gets the same target name. If a target name is taken, the whole group gets `_1`, `_2`… Nothing is ever overwritten.
 2. **Preflight:** before any operation, check:
    - the source is writable, from the volume's read-only flag (SD card lock); preflight itself is read-only and writes no probe file;
+   - source files with the read-only attribute (camera "protect") are planned as copies, so the original stays in place; the review lists them;
+   - a destination inside a cloud-synced folder (OneDrive and the like) gets a warning in the review screen, not a block;
    - free space at the destination, for moves across drives as well as copies;
    - the destination path is not inside `_rejected`;
    - paths fit within the length limit (use the `\\?\` prefix);
    - no files are locked;
    - there are no symlinks or junctions (refuse to follow them).
 3. **Execute,** journalled with one row per file. The states and recovery rules are owned by [design/file-engine.md](design/file-engine.md) (`pending, renaming, copying, verifying, committed, source_removed, done, copied_source_kept, failed`):
-   - Every rename is no-replace: never `MOVEFILE_REPLACE_EXISTING` / `FILE_RENAME_FLAG_REPLACE_IF_EXISTS`, never `MOVEFILE_COPY_ALLOWED`. The mechanism (rename through the checked handle) is ADR 0022, proposed. An existing target makes it fail atomically (no check-then-rename race), and a rename across volumes fails with `ERROR_NOT_SAME_DEVICE` instead of silently copying and deleting. Copies open their target with `create_new`. "Target exists" is a hard error for that group.
+   - Every rename is no-replace: never `MOVEFILE_REPLACE_EXISTING` / `FILE_RENAME_FLAG_REPLACE_IF_EXISTS`, never `MOVEFILE_COPY_ALLOWED`. The mechanism (rename through the checked handle) is ADR 0022. An existing target makes it fail atomically (no check-then-rename race), and a rename across volumes fails with `ERROR_NOT_SAME_DEVICE` instead of silently copying and deleting. Copies open their target with `create_new`. "Target exists" is a hard error for that group.
    - Move on the same volume: a single such rename.
-   - Move across volumes: copy to `*.culla-partial` while hashing the source (xxh3/blake3), fsync, then verify: read the destination back with `FILE_FLAG_NO_BUFFERING` (so the OS cache can't answer for the disk) and **re-read the source with `FILE_FLAG_NO_BUFFERING` for a second hash (ADR 0021, proposed)**; all three hashes must match (this catches a flaky card reader, which would corrupt the copy and the first hash alike). Then rename into place and remove the source.
+   - Move across volumes: copy to `*.culla-partial` while hashing the source (xxh3/blake3), fsync, then verify: read the destination back with `FILE_FLAG_NO_BUFFERING` (so the OS cache can't answer for the disk) and **re-read the source with `FILE_FLAG_NO_BUFFERING` for a second hash (ADR 0021)**; all three hashes must match (this catches a flaky card reader, which would corrupt the copy and the first hash alike). Then rename into place and remove the source.
    - Copy: same as across volumes, but the source is kept. Modification and creation times are preserved.
-   - A group's sources are removed only after every member of the group is committed. If any member fails, the group fails before any of its sources is removed; members already copied are reported as "copied, source kept".
+   - A group's sources are removed only after every member of the group is committed. If any member fails, the group fails before any of its sources is removed; members already copied are reported as "copied, source kept". Once the cause is fixed, "Finish moves" in the report completes such a group: it re-verifies each copy from scratch and removes its source through `remove_verified` (decided by Margaux, 27 Nov 2026).
+   - A same-volume rename of a user file cannot be flushed, so it stays `committed` until the end of the plan and is only then marked `done`; recovery redoes a rename the file system reverted after a crash. A rename reverted after the plan closed is detected at the next launch, shown, and redone in a small new plan once the user confirms (decided by Margaux, 27 Nov 2026; design/file-engine.md §9.3, §9.6).
    - Sharing violations (Explorer, Defender, Lightroom): retry with backoff, then mark the file failed and continue.
 4. **Resume:** if an apply is interrupted (crash, card pulled), it rolls forward from the journal the next time the app opens. There is no rollback in v1.
 5. **Removal:** one audited function, `remove_verified`, is the only code allowed to remove a file. It removes only (a) the source of a cross-volume move whose verification passed, and (b) Culla's own `*.culla-partial` files (for example when resuming from `copying`). `std::fs::remove_*` is banned elsewhere by clippy `disallowed-methods`.
@@ -180,7 +192,7 @@ Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsm
 
 ## 6. Distribution
 - `tauri-action` builds an NSIS installer (per-user, no admin rights) as a draft GitHub Release.
-- `tauri-plugin-updater` with its own signing key, which works on unsigned builds. The update check can be turned off in settings; its default and frequency are to decide. No telemetry of any kind.
+- `tauri-plugin-updater` with its own signing key, which works on unsigned builds. The update check is on by default, runs once a day and can be turned off in settings (decided by Margaux, 27 Nov 2026). No telemetry of any kind.
 - Windows code signing is postponed. Azure Artifact Signing is not open to individuals in the EU. Once v1 is out, apply to SignPath Foundation (free for OSS). The README explains the SmartScreen warning.
 - winget manifest after v1.
 
@@ -190,11 +202,11 @@ Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsm
 - CI on PRs: lint, test, build. Release via release-please with Conventional Commits. Dependabot (grouped). Action SHAs pinned. OpenSSF Scorecard.
 - MIT license, README with GIF, CONTRIBUTING, SECURITY.md, third-party licences file.
 - Decisions recorded as ADRs in `docs/adr/` (these also feed the blog enablement guide).
-- Agent practices, security and architecture conventions: see `docs/research/practices.md`. Key rules: removal lives only in `remove_verified` (§5.2 step 5); `std::fs::remove_*` is banned outside `remove_verified`; `std::fs::rename` is banned everywhere (the adapters rename only through the checked handle with no-replace semantics, ADR 0022, proposed), both via clippy `disallowed-methods`; copies open targets with `create_new`; Tauri commands restricted with `AppManifest::commands`; the webview gets no fs plugin permissions; cargo-deny (no cargo-audit), CodeQL (JS/TS + Rust), workflow lockfiles, pnpm supply-chain settings; tauri-specta pinned (still RC), `ts-rs` as fallback; cargo-fuzz targets on the EXIF/NEF parsers.
+- Agent practices, security and architecture conventions: see `docs/research/practices.md`. Key rules: removal lives only in `remove_verified` (§5.2 step 5); `std::fs::remove_*` is banned outside `remove_verified`; `std::fs::rename` is banned everywhere (the adapters rename only through the checked handle with no-replace semantics, ADR 0022), both via clippy `disallowed-methods`; copies open targets with `create_new`; Tauri commands restricted with `AppManifest::commands`; the webview gets no fs plugin permissions; cargo-deny (no cargo-audit), CodeQL (JS/TS + Rust), workflow lockfiles, pnpm supply-chain settings; tauri-specta pinned (still RC), `ts-rs` as fallback; cargo-fuzz targets on the EXIF/NEF parsers.
 
 ## 8. Scope
 
-**v1:** everything above, Windows only.
+**v1:** everything above, Windows 11 only.
 
 **v2 candidates:**
 - Undo an apply (reverse plan), with the log file already in v1.
@@ -215,9 +227,6 @@ Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsm
 
 ## 10. Open questions
 - `xtask`: ADR 0020 says it is outside the file rules, but it inherits the workspace lints and only creates new files. Proposed: keep it inside the rules and supersede ADR 0020 on that point.
-- App identifier: `com.margauxfaurie.culla` is used in `src-tauri/tauri.conf.json` (proposed). It sets the AppData paths, the installer's registry key and the updater identity, so it should be confirmed before the first release.
-- Windows 10 22H2 support (out of mainstream support since Oct 2025): must, should, or dropped.
-- Update check: on or off by default, and how often.
 - Minimum WebView2 version and installer mode (the bootstrapper downloads WebView2 at install time if missing).
 - Demo subdomain and which photos to publish.
-- Nikon body(ies) used, which determines the NEF variants to test with.
+- The author's real sample files (Nikon Z series, see §2) and their licence: pending.

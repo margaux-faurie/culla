@@ -5,9 +5,9 @@ date: 2026-11-24
 
 # Never delete or overwrite: rejects go to `_rejected/`, collisions get a suffix per group
 
-Refined by: [ADR 0022](0022-rename-through-the-checked-handle.md) (proposed), for how renames are issued.
+Refined by: [ADR 0022](0022-rename-through-the-checked-handle.md) (accepted 27 Nov 2026), for how renames are issued.
 
-Refined by: [ADR 0021](0021-unbuffered-source-re-read-for-hash-3.md) (proposed), for the source re-read.
+Refined by: [ADR 0021](0021-unbuffered-source-re-read-for-hash-3.md) (accepted 27 Nov 2026), for the source re-read.
 
 ## Context and problem statement
 

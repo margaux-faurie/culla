@@ -56,7 +56,7 @@ Properties, each linked to its invariant in [design/file-engine.md](design/file-
 | All members of a group get the same target stem (same suffix `_1`, `_2`…). | group consistency |
 | Undecided groups produce no operation. | undecided untouched |
 | With RAW follows off, no operation touches a NEF that has a JPEG primary. | RAW pairing |
-| Each sidecar follows the file it describes ([SPEC.md](SPEC.md) section 3.1): `X.NEF.xmp` and `NKSC_PARAM/X.NEF.nksc` follow the NEF, `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` follow the JPEG, `X.xmp` and `X.pp3` follow the group's primary. With RAW follows off, the NEF's sidecars stay with the NEF. | group consistency |
+| Each sidecar follows the file it describes ([SPEC.md](SPEC.md) section 3.1): `X.NEF.xmp` and `NKSC_PARAM/X.NEF.nksc` follow the NEF, `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` follow the JPEG, bare `X.xmp` and `X.pp3` follow the NEF if the group has one and otherwise the primary ([ADR 0023](adr/0023-bare-sidecars-follow-the-nef.md)). With RAW follows off, the NEF's sidecars, bare `X.xmp` and `X.pp3` included, stay with the NEF. | group consistency |
 | A collision suffix is applied inside sidecar names too (`X_1.NEF.xmp`, `NKSC_PARAM/X_1.NEF.nksc`). | group consistency |
 | Every removal in a plan targets either a verified cross-volume source or a Culla `*.culla-partial` file. | never delete |
 | Subfolder structure is mirrored (relative path preserved). | path containment |
@@ -130,14 +130,16 @@ The card-pull case uses `Dismount-DiskImage` or `diskpart detach vdisk` in the m
 | Read-back mismatch (test adapter flips a byte in the destination after fsync, or the source changes during the copy) | verify fails, source is kept, the op is marked failed, the bad partial is cleaned up | INV never delete |
 | `remove_verified`, direct calls | refuses a path that is not a journalled, verified cross-volume source and not a Culla `*.culla-partial`: an unverified source, a kept original, a file in `_rejected/`, a user file named `*.culla-partial` outside the journal, a junction target | INV never delete |
 | Copy across volumes | source kept, mtime kept (±2 s on FAT32, 10 ms on exFAT, exact on NTFS) | INV |
-| Target appears between plan and execute (same volume) | the rename goes through the checked handle without replace-if-exists (ADR 0022, proposed); the existing target is a hard error, the op is marked failed, the existing file is byte-identical afterwards | INV no overwrite |
+| Target appears between plan and execute (same volume) | the rename goes through the checked handle without replace-if-exists (ADR 0022); the existing target is a hard error, the op is marked failed, the existing file is byte-identical afterwards | INV no overwrite |
 | Target appears between plan and execute (cross volume or copy, at the final rename of the partial) | same hard error; the partial is removed through `remove_verified`, the op ends `failed`, the source is kept, and the file that appeared is byte-identical afterwards | INV no overwrite, never delete |
 | Rename across volumes with the checked rename | fails with `ERROR_NOT_SAME_DEVICE` (no silent copy, since copy-allowed is not set); the operation ends `failed (plan_stale)` and is never turned into a copy (the kind is fixed at plan time, [file-engine §7.2](design/file-engine.md)) | INV no overwrite |
 | Raw `std::fs::rename` not used | enforced by clippy `disallowed-methods`; the checked rename is the only path | INV no overwrite |
 | `create_new` on copy target | fails if target exists | INV no overwrite |
 | File held open with no sharing by another process | retries with backoff, then marked failed, apply continues | NFR-REL |
 | Transient sharing violation (handle released after 300 ms) | retry succeeds | NFR-REL |
-| Read-only file attribute, read-only volume | caught by preflight, nothing executes | NFR-REL |
+| Read-only volume | caught by preflight, nothing executes | NFR-REL |
+| Read-only file attribute (camera protect) in a kept or rejected group | the whole group is planned as `copy`; after apply the originals are at their source, unchanged and still read-only, and verified copies are at the targets | INV never delete, NFR-REL |
+| Destination inside a OneDrive sync root (manual, on the G14) | preflight shows the cloud-sync warning; apply runs and every file verifies | NFR-REL |
 | Not enough free space on `U:` | caught by preflight for copy and for cross-volume move | NFR-REL |
 | Junction and symlink inside the source (`mklink /J`, `mklink`) | not followed by scan, refused by preflight | INV path containment |
 | Path longer than 260 characters after mirroring | works with `\\?\` | NFR-REL |
@@ -146,7 +148,8 @@ The card-pull case uses `Dismount-DiskImage` or `diskpart detach vdisk` in the m
 | Destination inside the source, `_rejected/` present | both excluded from the rescan | INV |
 | Volume remounted under another letter | session and cache found by volume serial | NFR-REL |
 | No `remove_*` outside `remove_verified` | enforced by clippy `disallowed-methods` on `culla-core`, `culla-adapters`, `culla-cli` and `src-tauri`, plus a CI grep that `remove_verified` is the only caller of the underlying call | INV never delete |
-| `X.NEF.xmp` with RAW follows off | NEF and its `.NEF.xmp` and `.nksc` stay; JPEG, `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` move; `X.xmp` and `X.pp3` follow the primary (the JPEG) | INV group consistency |
+| `X.NEF.xmp` with RAW follows off | NEF and its `.NEF.xmp`, `.nksc`, `X.xmp` and `X.pp3` stay; JPEG, `X.JPG.xmp` and `NKSC_PARAM/X.JPG.nksc` move | INV group consistency |
+| Bare `X.xmp` and `X.pp3` in a JPEG-only group | both follow the JPEG | INV group consistency |
 
 ### 5.3 Installer and uninstaller (from M6)
 
@@ -183,11 +186,12 @@ For every op, in every case:
 - no file outside the plan was touched (hash and listing of both trees before and after);
 - running resume a second time changes nothing (idempotent).
 
-### 6.2 Roll forward past `verified`
+### 6.2 Roll forward past `verifying`
 
-- An op whose journal row was `verified` at the time of the crash ends `done` after resume: the rename into place and, for a cross-volume move, the source removal are completed. It is never rolled back and never re-copied (asserted with the recording port: no copy call for that op during resume).
+- An op whose journal row was `verifying` (with a partial matching H1) or `committed` at the time of the crash ends `done` after resume: the rename into place and, for a cross-volume move, the source removal are completed. It is never rolled back and never re-copied (asserted with the recording port: no copy call for that op during resume).
 - An op that was `pending` or `copying` is started again from its beginning; its leftover partial is removed through `remove_verified`.
 - If the destination is not what the journal expects (missing, or a different hash), the op ends `failed` and the source is kept.
+- A `done` rename that the durability-modelling fake reverts after the plan closed: the next launch lists it as `reverted_move` and changes nothing; after a simulated confirm, a redo plan (`purpose = 'redo'`) with one `rename` per reverted member, same targets, runs and is journaled; a crash during it recovers like any plan; a target taken meanwhile ends `failed (conflict)` with both files intact.
 - If the final target name was taken by another file in the meantime, the partial is removed through `remove_verified` and the op ends `failed` (the same rule as during a normal apply).
 
 The exact transitions and resume rules are owned by [design/file-engine.md](design/file-engine.md); the checker reads them from there.
@@ -210,7 +214,7 @@ The exact transitions and resume rules are owned by [design/file-engine.md](desi
 Run on the ROG Zephyrus G14 2024 before each release, and once at the end of M1, M2 and M3. The author does this.
 
 - [ ] `pnpm tauri dev` starts the app with hot reload, and styles load under the dev CSP (if Tauri adds hashes to `style-src`, `'unsafe-inline'` stops working). First time: end of M0.
-- [ ] Real SD card (UHS-I) in a USB reader, and a microSD in the built-in reader, with real Nikon JPEG + NEF files (body or bodies: see open question in [SPEC.md](SPEC.md) section 10).
+- [ ] Real SD card (UHS-I) in a USB reader, and a microSD in the built-in reader, with real Nikon Z JPEG + NEF files (Z6/Z7/Z8/Z9 family, [SPEC.md](SPEC.md) section 2).
 - [ ] First photo appears in 1.5 s or less (est., `NFR-PERF`) on a cold UHS-I card (card freshly inserted), 3,000-file folder.
 - [ ] Next photo appears in 50 ms or less at p95 (est.) when prefetched. Memory stays at 1 GB or less (est.) during a 200-photo cull.
 - [ ] Swipe 200 photos at full speed by keyboard. No dropped or doubled decisions. Holding → decides one photo only.
@@ -233,7 +237,7 @@ Run on the ROG Zephyrus G14 2024 before each release, and once at the end of M1,
 | Set | Content | Where | Licence |
 |---|---|---|---|
 | Synthetic | Small JPEGs (64–512 px) with chosen EXIF (each Orientation value, DateTimeOriginal, LensModel present or absent), and minimal NEF-shaped TIFFs: IFD0 + SubIFDs + MakerNote PreviewIFD with embedded JPEGs of different sizes, plus broken variants (bad offsets, IFD loops, truncated files). Sidecars of each kind. Folder trees for pairing and collision cases. | Generated by `cargo xtask fixtures` into `testdata/synthetic/`, committed (small, a few MB in total). CI runs `cargo xtask fixtures --check`, which rebuilds them in memory and compares them byte for byte with the committed files (stale extra files fail too). | MIT, same as the code. |
-| Real samples | 5–10 of the author's own files: JPEG + NEF pairs from her body or bodies, one lone NEF, one HE/HE\* NEF if the body supports it, one portrait, one NX Studio edit with `NKSC_PARAM`. | `testdata/real/` in Git LFS, or a release asset fetched by `cargo xtask fetch-samples`. To decide: which of the two. | **To decide:** an image licence (for example CC BY 4.0 or CC0). MIT does not fit photos well. State it in `testdata/real/LICENSE`. |
+| Real samples | 5–10 of the author's own files (pending): JPEG + NEF pairs from her Nikon Z bodies (24 MP Z6 class and 45 MP Z7/Z8/Z9 class), one lossless and one lossy NEF, one lone NEF, one HE/HE\* NEF, one portrait, one NX Studio edit with `NKSC_PARAM`. | `testdata/real/` in Git LFS, or a release asset fetched by `cargo xtask fetch-samples`. To decide: which of the two. | **To decide:** an image licence (for example CC BY 4.0 or CC0). MIT does not fit photos well. State it in `testdata/real/LICENSE`. |
 | Benchmark sets | Full cards of real photos (thousands). | Never committed. Local only. See [benchmarks.md](benchmarks.md). | n/a |
 
 The generator writes TIFF and EXIF structures with its own minimal writer, not with the parser under test, so a parser bug cannot hide in the fixtures.
