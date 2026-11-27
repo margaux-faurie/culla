@@ -91,6 +91,7 @@ impl TempTree {
         path
     }
 
+    #[cfg(unix)]
     fn dir(&self, rel: &str) -> PathBuf {
         let path = self.0.join(rel);
         fs::create_dir_all(&path).unwrap();
