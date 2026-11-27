@@ -16,6 +16,7 @@ Work now (M0):
 - `pnpm build:demo && pnpm e2e` (Playwright + axe on `dist-demo/`; first time `pnpm exec playwright install chromium`)
 - `pnpm gen:bindings` (placeholder until the first tauri-specta command in M1)
 - `cargo xtask fixtures [--check]` · `cargo xtask golden --check` · `cargo xtask crash-loop --iterations N` (M2)
+- Dependencies changed: run the `Refresh lockfiles` workflow on the PR branch (`gh api -X POST repos/margaux-faurie/culla/actions/workflows/lockfile-refresh.yml/dispatches -f ref=main -f inputs[branch]=<branch>`), then push any commit to rerun CI
 - `cargo llvm-cov -p culla-core -p culla-adapters --html` · `cargo +nightly fuzz run tiff_ifd_walk -- -max_total_time=60` (setup: testing.md §7, §10)
 
 ## Layout
