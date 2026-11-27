@@ -340,6 +340,8 @@ Events as in [ADR 0005](../adr/0005-decision-state-as-append-only-event-log.md).
 
 "The state before a `Cleared`" is recomputed by folding up to that event; it is well defined because each group's history is a strict alternation of decided and undecided, enforced by the preconditions. A reconcile `Cleared` keeps the alternation (it needs a decided group and leaves it undecided). Because it also drops the group's earlier events from both stacks, `Undo` and `Redo` never target an event that a reconcile `Cleared` has overtaken, and the stacks hold no event for `g` older than it. A precondition failure means no event is appended. `fold` treats a log that breaks a precondition as corrupt and stops at that event (it cannot happen through the core; it is tested with fixtures).
 
+In `culla_core::decisions` (M2 slice A). The command methods of `Decisions` (`decide`, `clear`, `undo`, `redo`, `reconcile_clear`) take a lock predicate (§5.4), check the preconditions above and return the event to append or a refusal (`Refused`); the store assigns `seq` and `ts`, writes the event, then folds it with `Decisions::apply`. `fold` checks every precondition but the locks, which it cannot see, and on the first event that breaks one returns `CorruptLog`: the event, the reason (`seq_not_increasing`, `decided_on_decided`, `cleared_on_undecided`, `reconcile_not_cleared`, `undo_not_top`, `redo_not_top`) and the fold of the events before it. Seqs must strictly increase; gaps are allowed; `ts` is ignored by the fold. A locked group is refused before any other check. The text form (JSON Lines with the `decision_event` columns as keys, and the expected fold) is in the `decisions::codec` docs. Proposed by the agent, awaiting Margaux: the text form, the corrupt reasons and their order of checks, the lock reported first, and what a resume does with a corrupt log (SPEC §10).
+
 ### 5.2 Key behaviour
 
 - ←/→ (and drag, and the Keep/Reject buttons) on a decided group append nothing. The UI plays the shake and shows "Press U to undo" ([ADR 0006](../adr/0006-arrow-keys-do-not-change-an-existing-decision.md); the extension to drag and the buttons was confirmed by Margaux, 27 Nov 2026). The core also rejects such a `Decided`, so the rule holds even if the UI has a bug.
@@ -350,7 +352,7 @@ Events as in [ADR 0005](../adr/0005-decision-state-as-append-only-event-log.md).
 
 ### 5.3 Persistence
 
-Each event is one `INSERT` in its own transaction. The TS reducer and the Rust `fold` run the same golden fixtures. On resume, `fold` of the stored log gives the same state and the same undo/redo stacks.
+Each event is one `INSERT` in its own transaction. The TS reducer and the Rust `fold` run the same golden fixtures (`testdata/event-log/`, written by `cargo xtask golden`, [testing.md](../testing.md) §3.3). On resume, `fold` of the stored log gives the same state and the same undo/redo stacks.
 
 ### 5.4 Locked and applied groups
 
@@ -809,3 +811,4 @@ Each invariant has at least one test in [testing.md](../testing.md): property te
 - `FileRenameInfoEx` support on FAT32 and exFAT, and the path form it accepts, to check in adapter tests.
 - NX Studio `.nksc` naming and `NKSC_PARAM` attributes, to verify on real files. If NX Studio also marks the `.nksc` files hidden, the hidden rule (§3.2) skips them and they no longer follow their photo; the code exempts only the folder, as written.
 - Decided 27 Nov 2026 in [ADR 0027](../adr/0027-scan-edge-cases-left-out-of-grouping.md): ambiguous groups for case-variant members, for a JPEG or NEF excluded by its own attributes, and for case-colliding folders; held-back folders (an entry that cannot be described, a broken `NKSC_PARAM`, over the entry cap); depth and entry caps (32, 100,000); the scan issue kinds `too_deep`, `too_large`, `held_back`; and the walk living in `culla_adapters::scan` over `std::fs` until it moves behind the `FileSystem` port in `winfs` (M2), so the recording fake covers it.
+- A file joining an undecided group that still has stack entries (decided then U, or decided then Ctrl+Z) gets no reconcile event (§5.1 needs a decided group, ADR 0024), so undo or redo can restore a decision made before the file existed. Should reconcile also drop that group's stack entries? Raised in review of PR #32; behaviour unchanged, SPEC §10.

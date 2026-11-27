@@ -1,0 +1,8 @@
+{
+  "state": {
+    "1": "kept"
+  },
+  "done": [5],
+  "undone": [],
+  "corrupt": {"seq": 3, "reason": "seq_not_increasing"}
+}

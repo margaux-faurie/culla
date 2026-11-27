@@ -77,7 +77,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
 
 - **Goal:** an apply that cannot lose or overwrite a photo, shown by tests rather than by argument.
 - **Scope:**
-  - Session store and decision event log in SQLite (one database per source); reconcile on open (missing, new files).
+  - Session store and decision event log in SQLite (one database per source); reconcile on open (missing, new files). The pure decision log is in (slice A: `culla_core::decisions`, events, fold, undo and redo, reconcile clears, the text form and the golden fixtures); the SQLite store and reconcile on open come later in M2.
   - `plan()`: reject to `_rejected/` mirrored, keep move or copy, RAW follows toggle, sidecars, group-consistent collision suffixes.
   - Preflight: writable source, free space, destination not inside `_rejected`, path length, locks, symlinks and junctions.
   - Journal and apply (logic in `culla-core`, fs ops in `culla-adapters`): same-volume no-replace rename through the checked handle (ADR 0022; existing target is a hard error); cross-volume copy, fsync, re-read and hash of destination and source, rename, then removal of the source through the single audited function (which may only remove verified cross-volume sources and Culla's own `*.culla-partial` files); copy with `create_new` and mtime kept; sharing-violation retry.
