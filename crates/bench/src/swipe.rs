@@ -270,8 +270,11 @@ pub(crate) fn run(a: &SwipeArgs) -> Result<Run, Failure> {
             // An advance that was not shown can sit in the last, unfinished block: the ramp
             // then did not stay within budget, so say so instead of claiming it did.
             let not_shown = failed + refused;
-            notes.push(if not_shown == 0 {
+            notes.push(if not_shown == 0 && ramp.unfinished_within_budget() {
                 "the ramp ran out of photos before p95 went over budget".to_owned()
+            } else if not_shown == 0 {
+                "the ramp ran out of photos in an unfinished block whose p95 was over budget"
+                    .to_owned()
             } else {
                 format!(
                     "the ramp ran out of photos with {not_shown} advances not shown, so it did \

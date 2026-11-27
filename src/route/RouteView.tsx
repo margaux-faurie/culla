@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { DestinationSummary, KeepMode, RouteExample, SourceSummary } from "../backend/types";
-import { stayVerb } from "./staying";
+import { protectedNote, stayVerb } from "./staying";
 
 export interface RouteViewProps {
   readonly source: SourceSummary;
@@ -52,7 +52,11 @@ export function RouteView(props: RouteViewProps) {
           )}
           <span className="route-note">Subfolders are kept as they are.</span>
           {example !== null && (
-            <Example example={example} to={example.route.keptTo ?? "the destination you choose"} />
+            <Example
+              example={example}
+              to={example.route.keptTo ?? "the destination you choose"}
+              mode={keepMode}
+            />
           )}
         </div>
       </li>
@@ -75,7 +79,9 @@ export function RouteView(props: RouteViewProps) {
           <span className="route-note">
             One folder, inside the folder you sort. Nothing is deleted.
           </span>
-          {example !== null && <Example example={example} to={example.route.rejectedTo} />}
+          {example !== null && (
+            <Example example={example} to={example.route.rejectedTo} mode="move" />
+          )}
         </div>
       </li>
 
@@ -105,17 +111,23 @@ function keptPlace(destination: DestinationSummary | null, keepMode: KeepMode | 
 interface ExampleProps {
   readonly example: RouteExample;
   readonly to: string;
+  /** The branch's kind before camera protection: the keep mode for Kept, "move" for Rejected. */
+  readonly mode: KeepMode | null;
 }
 
-/** One real example path: the files that go, where they go, and the files that stay. */
-function Example({ example, to }: ExampleProps) {
+/**
+ * One real example path: the files that go, where they go, and the files that stay. The
+ * camera-protected note shows only where the read-only attribute changed the kind, so not on a
+ * keep by copy.
+ */
+function Example({ example, to, mode }: ExampleProps) {
   const { route } = example;
   return (
     <span className="route-example">
       <span>
         <span className="visually-hidden">Example: </span>
         {route.origin} <b>{route.going.extensions}</b> → {to}
-        {route.cameraProtected && " (camera-protected: copied, original kept)"}
+        {protectedNote(route.cameraProtected, mode)}
       </span>
       {route.staying !== null && (
         <span>

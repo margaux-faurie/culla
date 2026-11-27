@@ -201,12 +201,13 @@ New-Item -ItemType Directory -Path $out | Out-Null
 
 # A failed run's file is renamed to .failed (never deleted), so a rerun can write the run again
 # A run counts as failed when the bench exits non-zero, does not start (the exit code set
-# beforehand stays) or writes nothing
+# beforehand stays) or writes nothing (Out-File still writes a 3-byte BOM, or only whitespace)
 function Save-Run([string]$file, [string[]]$benchArgs, [string]$label) {
   $global:LASTEXITCODE = 1
   & $bench @benchArgs --json --label "$label $commit" | Out-File -Encoding utf8 -NoClobber $file
   $code = $LASTEXITCODE
-  $empty = -not (Test-Path -LiteralPath $file) -or (Get-Item -LiteralPath $file).Length -eq 0
+  $empty = -not (Test-Path -LiteralPath $file) -or (Get-Item -LiteralPath $file).Length -le 3 -or
+    [string]::IsNullOrWhiteSpace((Get-Content -LiteralPath $file -Raw))
   if ($code -ne 0 -or $empty) {
     if (Test-Path -LiteralPath $file) {
       $kept = "$file.$(Get-Date -Format yyyyMMdd-HHmmss).failed"

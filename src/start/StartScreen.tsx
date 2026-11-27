@@ -29,6 +29,9 @@ type Details =
 
 type LastDetails = { readonly sourceId: string; readonly value: SourceDetails };
 
+/** The alert shown when describing the folder fails; cleared once a later describe succeeds. */
+const READ_FAILED = "Could not read this folder.";
+
 /**
  * Start (SPEC §4.2, US-21, US-44): pick the folder, the options and the destination on one screen,
  * with the route view showing where kept and rejected photos go as the options are set. Move or
@@ -122,12 +125,14 @@ export function StartScreen({ onStarted }: StartScreenProps) {
         if (active) {
           setDetails({ kind: "ready", value });
           setLastDetails({ sourceId, value });
+          // A folder read that failed before (toggling subfolders, say) no longer applies.
+          setError((shown) => (shown === READ_FAILED ? null : shown));
         }
       },
       (cause: unknown) => {
         if (active) {
           setDetails({ kind: "failed" });
-          failRef.current(cause, "Could not read this folder.");
+          failRef.current(cause, READ_FAILED);
         }
       },
     );

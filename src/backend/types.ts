@@ -111,7 +111,9 @@ export interface PhotoRoute {
   readonly rejectedTo: string;
   /**
    * A file that goes with the decision is read-only (camera "protect"), so the group is copied, not
-   * moved (SPEC §2). A read-only NEF that stays because RAW does not follow does not count.
+   * moved (SPEC §2). A read-only NEF that stays because RAW does not follow does not count. The
+   * route's Kept example notes it only when moved is chosen or not yet chosen: a keep by copy is a
+   * copy anyway, as with the core's `protected`.
    */
   readonly cameraProtected: boolean;
 }
