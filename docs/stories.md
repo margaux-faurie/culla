@@ -69,7 +69,7 @@ As a photographer, I want the next photo already prepared when I advance, so tha
 - Given a folder culled before, when it is opened again from the same card, then previews come from the disk cache in `%LOCALAPPDATA%\Culla\cache`.
 - Given a file on removable media, when it is read, then it is read into buffers and never memory-mapped.
 
-Links: NFR-PERF, NFR-REL. Test: `culla-bench` B-08 to B-10, code review for mmap (lint if possible).
+Links: NFR-PERF, NFR-REL. Test: `culla-bench` B-08 to B-10, core unit (`prefetch`), adapters integration (`tests/pipeline.rs`: prefetch, cancellation, cache capacity, memory budgets), code review for mmap (lint if possible).
 
 ### US-09 Identity survives a drive letter change
 As a photographer, I want my session found again when the card comes back under another letter, so that I can stop and resume freely.

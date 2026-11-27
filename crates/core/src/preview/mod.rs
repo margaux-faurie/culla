@@ -272,6 +272,64 @@ impl Plan {
     pub fn needs_resize(&self) -> bool {
         self.decoded != self.resized
     }
+
+    /// The most memory one preview call holds at once for this plan, besides its input and a
+    /// multi-scan JPEG's coefficients ([`coefficient_bytes`]): the larger of its steps (decode;
+    /// resize, holding the decoded and the resized buffer; orient, holding the resized and the
+    /// turned buffer; encode, holding the turned buffer and the encoder's output buffer of up
+    /// to 3 bytes per pixel, MCU-padded, plus 2 KiB), plus [`DECODER_SLACK_BYTES`] for
+    /// libjpeg-turbo's own working memory. The preview pipeline reserves this before the call
+    /// (`prefetch::Budgets::working`). Saturates at `u64::MAX`.
+    #[must_use]
+    pub fn working_bytes(&self) -> u64 {
+        let rgb = |s: Size| s.pixels().saturating_mul(CHANNELS as u64);
+        let decoded = rgb(self.decoded);
+        let resized = if self.needs_resize() {
+            rgb(self.resized)
+        } else {
+            0
+        };
+        let after_resize = if self.needs_resize() {
+            resized
+        } else {
+            decoded
+        };
+        let turned = if self.orientation == Orientation::Normal {
+            0
+        } else {
+            rgb(self.output)
+        };
+        let upright = if turned == 0 { after_resize } else { turned };
+        let pad16 = |n: u32| u64::from(n).div_ceil(16) * 16;
+        let encoded = (pad16(self.output.width) * pad16(self.output.height))
+            .saturating_mul(CHANNELS as u64)
+            .saturating_add(2048);
+        let peak = decoded
+            .max(decoded.saturating_add(resized))
+            .max(after_resize.saturating_add(turned))
+            .max(upright.saturating_add(encoded));
+        peak.saturating_add(DECODER_SLACK_BYTES)
+    }
+}
+
+/// Allowance for libjpeg-turbo's working memory in a single-scan decode or an encode (a few
+/// MCU rows, Huffman tables, the handles), counted in [`Plan::working_bytes`].
+pub const DECODER_SLACK_BYTES: u64 = 8 * 1024 * 1024;
+
+/// An upper bound of the coefficient buffer libjpeg-turbo holds for a multi-scan JPEG
+/// ([`JpegFrame::multi_scan`]): 2 bytes per coefficient, every component at full resolution
+/// (no subsampling assumed), the frame padded to 32-pixel blocks (the largest MCU). 0 for a
+/// single-scan frame, which keeps only a few MCU rows. At the 25 MP multi-scan cap a 3-component
+/// frame comes to about 150 MB.
+#[must_use]
+pub fn coefficient_bytes(frame: &JpegFrame) -> u64 {
+    if !frame.multi_scan {
+        return 0;
+    }
+    let pad = |n: u32| u64::from(n).div_ceil(32) * 32;
+    (pad(frame.width) * pad(frame.height))
+        .saturating_mul(u64::from(frame.components))
+        .saturating_mul(2)
 }
 
 /// The largest size with the aspect ratio of `upright` that fits `target`, never larger than

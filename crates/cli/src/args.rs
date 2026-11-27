@@ -1,5 +1,6 @@
 //! Command line parsing, std only: `culla scan <folder> [--no-subfolders] [--json]`,
-//! `culla help [scan]`, `culla --version`.
+//! `culla preview <folder> [--no-subfolders] [--out <dir>]`, `culla help [scan|preview]`,
+//! `culla --version`.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -14,6 +15,8 @@ pub(crate) enum Command {
     Version,
     /// Scan a folder.
     Scan(ScanArgs),
+    /// Scan a folder and build its previews.
+    Preview(PreviewArgs),
 }
 
 /// A help page.
@@ -23,6 +26,8 @@ pub(crate) enum Topic {
     Overview,
     /// `culla scan`.
     Scan,
+    /// `culla preview`.
+    Preview,
 }
 
 /// The arguments of `culla scan`.
@@ -34,6 +39,18 @@ pub(crate) struct ScanArgs {
     pub include_subfolders: bool,
     /// Print JSON instead of text.
     pub json: bool,
+}
+
+/// The arguments of `culla preview`.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct PreviewArgs {
+    /// The folder to scan, as given.
+    pub folder: PathBuf,
+    /// Scan subfolders too (default on, off with `--no-subfolders`).
+    pub include_subfolders: bool,
+    /// Where to write the previews: a new or empty folder outside the scanned one. `None`
+    /// writes nothing.
+    pub out: Option<PathBuf>,
 }
 
 /// The command line is not valid. The text says why; usage follows it on stderr.
@@ -82,6 +99,7 @@ pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command,
             Ok(Command::Version)
         }
         Some("scan") => parse_scan(rest),
+        Some("preview") => parse_preview(rest),
         _ => Err(usage(
             Topic::Overview,
             format!("unknown command {}", quoted(&first)),
@@ -93,6 +111,7 @@ fn parse_help(rest: &[OsString]) -> Result<Command, UsageError> {
     match rest {
         [] => Ok(Command::Help(Topic::Overview)),
         [topic] if topic == "scan" => Ok(Command::Help(Topic::Scan)),
+        [topic] if topic == "preview" => Ok(Command::Help(Topic::Preview)),
         [topic] => Err(usage(
             Topic::Overview,
             format!("no help for {}", quoted(topic)),
@@ -152,6 +171,67 @@ fn parse_scan(rest: Vec<OsString>) -> Result<Command, UsageError> {
     }))
 }
 
+fn parse_preview(rest: Vec<OsString>) -> Result<Command, UsageError> {
+    let mut folder: Option<OsString> = None;
+    let mut no_subfolders = false;
+    let mut out: Option<OsString> = None;
+    let mut options_done = false;
+    let mut rest = rest.into_iter();
+    while let Some(arg) = rest.next() {
+        let is_option = !options_done && arg.to_str().is_some_and(|s| s.starts_with('-'));
+        if is_option {
+            match arg.to_str() {
+                Some("--") => options_done = true,
+                Some("--help" | "-h") => return Ok(Command::Help(Topic::Preview)),
+                Some("--no-subfolders") => {
+                    if no_subfolders {
+                        return Err(usage(
+                            Topic::Preview,
+                            format!("{} given twice", quoted(&arg)),
+                        ));
+                    }
+                    no_subfolders = true;
+                }
+                Some("--out") => {
+                    if out.is_some() {
+                        return Err(usage(
+                            Topic::Preview,
+                            format!("{} given twice", quoted(&arg)),
+                        ));
+                    }
+                    match rest.next() {
+                        Some(dir) if !dir.is_empty() => out = Some(dir),
+                        _ => return Err(usage(Topic::Preview, "'--out' needs a folder")),
+                    }
+                }
+                _ => {
+                    return Err(usage(
+                        Topic::Preview,
+                        format!("unknown option {}", quoted(&arg)),
+                    ));
+                }
+            }
+        } else if folder.is_some() {
+            return Err(usage(
+                Topic::Preview,
+                format!("unexpected argument {}", quoted(&arg)),
+            ));
+        } else if arg.is_empty() {
+            return Err(usage(Topic::Preview, "the folder is empty"));
+        } else {
+            folder = Some(arg);
+        }
+    }
+    let Some(folder) = folder else {
+        return Err(usage(Topic::Preview, "no folder given"));
+    };
+    Ok(Command::Preview(PreviewArgs {
+        folder: PathBuf::from(folder),
+        include_subfolders: !no_subfolders,
+        out: out.map(PathBuf::from),
+    }))
+}
+
 /// An argument for an error message, quoted and with control characters escaped.
 fn quoted(arg: &OsString) -> String {
     format!("'{}'", crate::text::shown(&arg.to_string_lossy()))
@@ -163,19 +243,23 @@ pub(crate) fn help(topic: Topic) -> &'static str {
     match topic {
         Topic::Overview => OVERVIEW,
         Topic::Scan => SCAN,
+        Topic::Preview => PREVIEW,
     }
 }
 
 const OVERVIEW: &str = "\
-Culla, headless. Reads only: nothing is written anywhere.
+Culla, headless. Reads only: nothing is written anywhere, except the previews
+`culla preview --out` writes into a new or empty folder you name.
 
 Usage:
   culla scan <folder> [--no-subfolders] [--json]
-  culla help [scan]
+  culla preview <folder> [--no-subfolders] [--out <dir>]
+  culla help [scan|preview]
   culla --version
 
 Commands:
   scan       list the photos of a folder, grouped and in capture-time order
+  preview    build the screen preview of every photo of a folder and time each step
   help       show this help, or the help of a command
 
 Exit codes:
@@ -184,6 +268,7 @@ Exit codes:
   2  the folder is refused (a link, a cloud placeholder, not a folder, too large,
      a path or volume Culla does not support)
   3  the folder cannot be read
+  4  the output folder is refused or cannot be written (preview --out)
 ";
 
 const SCAN: &str = "\
@@ -207,6 +292,29 @@ The JSON fields are unstable until M2 and may change: the object says so with
 \"schema\": \"unstable\".
 
 Exit codes: 0 done, 1 usage error, 2 folder refused, 3 folder unreadable.
+";
+
+const PREVIEW: &str = "\
+Usage: culla preview <folder> [--no-subfolders] [--out <dir>]
+
+Scans the folder like culla scan, then builds the screen preview of each group in
+capture-time order (the camera JPEG, or a lone NEF's embedded JPEG; 2880x1800 box,
+upright) on the preview pipeline: reader thread, decode workers, prefetch of 5 ahead
+and 2 behind, in-memory cache. Prints the time of each step per photo and the totals.
+Progress goes to stderr. A photo that fails is listed and the others go on.
+
+Options:
+  --no-subfolders  scan the folder itself only
+  --out <dir>      write each preview as a JPEG into <dir>: a new folder (its parent
+                   must exist) or an empty one, outside the scanned folder. Files are
+                   only ever created, never replaced. Without --out nothing is written.
+  -h, --help       show this help
+  --               treat what follows as the folder, even if it starts with '-'
+
+The output is unstable until M2 and may change.
+
+Exit codes: 0 done (failed previews are listed), 1 usage error, 2 folder refused,
+3 folder unreadable, 4 output folder refused or not writable.
 ";
 
 #[cfg(test)]
@@ -240,6 +348,30 @@ mod tests {
     }
 
     #[test]
+    fn preview_with_options() {
+        let pv = |folder: &str, include_subfolders, out: Option<&str>| {
+            Command::Preview(PreviewArgs {
+                folder: PathBuf::from(folder),
+                include_subfolders,
+                out: out.map(PathBuf::from),
+            })
+        };
+        assert_eq!(p(&["preview", "d"]), Ok(pv("d", true, None)));
+        assert_eq!(
+            p(&["preview", "--out", "o", "d", "--no-subfolders"]),
+            Ok(pv("d", false, Some("o")))
+        );
+        // The folder after --out is taken as is, even when it starts with '-'.
+        assert_eq!(
+            p(&["preview", "d", "--out", "-o"]),
+            Ok(pv("d", true, Some("-o")))
+        );
+        assert_eq!(p(&["preview", "--", "-d"]), Ok(pv("-d", true, None)));
+        assert_eq!(p(&["help", "preview"]), Ok(Command::Help(Topic::Preview)));
+        assert_eq!(p(&["preview", "-h"]), Ok(Command::Help(Topic::Preview)));
+    }
+
+    #[test]
     fn help_and_version() {
         for h in [&["help"][..], &["--help"], &["-h"]] {
             assert_eq!(p(h), Ok(Command::Help(Topic::Overview)));
@@ -265,6 +397,24 @@ mod tests {
             "'--json' given twice"
         );
         assert_eq!(msg(&["help", "apply"]), "no help for 'apply'");
+        assert_eq!(msg(&["preview"]), "no folder given");
+        assert_eq!(msg(&["preview", "a", "--out"]), "'--out' needs a folder");
+        assert_eq!(
+            msg(&["preview", "a", "--out", ""]),
+            "'--out' needs a folder"
+        );
+        assert_eq!(
+            msg(&["preview", "a", "--out", "o", "--out", "p"]),
+            "'--out' given twice"
+        );
+        assert_eq!(msg(&["preview", "a", "--json"]), "unknown option '--json'");
+        assert_eq!(msg(&["preview", "a", "b"]), "unexpected argument 'b'");
+        assert_eq!(
+            p(&["preview", "a", "--no-subfolders", "--no-subfolders"])
+                .unwrap_err()
+                .topic,
+            Topic::Preview
+        );
         assert_eq!(msg(&["help", "scan", "x"]), "unexpected argument 'x'");
         assert_eq!(msg(&["--version", "x"]), "unexpected argument 'x'");
         assert_eq!(msg(&["scan\u{1b}[2J"]), "unknown command 'scan\\u{1b}[2J'");

@@ -1,13 +1,15 @@
 //! `culla`: headless Culla (ADR 0020). Wiring only: every read goes through
 //! `culla-adapters`, every rule is in `culla-core`. Nothing is written anywhere but stdout and
-//! stderr; `plan`, `apply` and `resume` come with M2, `preview` later in M1.
+//! stderr, except the previews `culla preview --out <dir>` creates in a new or empty folder
+//! outside the scanned one; `plan`, `apply` and `resume` come with M2.
 //!
 //! Exit codes (provisional, SPEC §10): 0 done, 1 usage error, 2 the folder is refused, 3 the
-//! folder cannot be read.
+//! folder cannot be read, 4 the output folder is refused or cannot be written.
 
 mod args;
 mod json;
 mod labels;
+mod preview;
 mod scan;
 mod text;
 
@@ -26,6 +28,8 @@ const EXIT_USAGE: u8 = 1;
 const EXIT_REFUSED: u8 = 2;
 /// Exit code: the folder cannot be read.
 const EXIT_IO: u8 = 3;
+/// Exit code: the output folder of `culla preview --out` is refused or cannot be written.
+const EXIT_OUT: u8 = 4;
 
 fn main() -> ExitCode {
     ExitCode::from(run())
@@ -61,6 +65,27 @@ fn run() -> u8 {
                 Err(Failure::Io(why)) => {
                     let _ = writeln!(io::stderr(), "culla: {shown}: {why}");
                     EXIT_IO
+                }
+            }
+        }
+        Command::Preview(a) => {
+            let shown = text::shown(&a.folder.to_string_lossy()).into_owned();
+            match preview::run(&a, &mut Progress::stderr()) {
+                Ok(report) => out(&preview::render(&report)),
+                Err(preview::PreviewFailure::Scan(Failure::Refused(why))) => {
+                    let _ = writeln!(io::stderr(), "culla: {shown}: {why}");
+                    EXIT_REFUSED
+                }
+                Err(preview::PreviewFailure::Scan(Failure::Io(why))) => {
+                    let _ = writeln!(io::stderr(), "culla: {shown}: {why}");
+                    EXIT_IO
+                }
+                Err(preview::PreviewFailure::Out(why)) => {
+                    let dir = a.out.as_deref().map_or_else(String::new, |d| {
+                        text::shown(&d.to_string_lossy()).into_owned()
+                    });
+                    let _ = writeln!(io::stderr(), "culla: {dir}: {why}");
+                    EXIT_OUT
                 }
             }
         }
