@@ -192,6 +192,7 @@ For every op, in every case:
 - An op that was `pending` or `copying` is started again from its beginning; its leftover partial is removed through `remove_verified`.
 - If the destination is not what the journal expects (missing, or a different hash), the op ends `failed` and the source is kept.
 - A `done` rename that the durability-modelling fake reverts after the plan closed: the next launch lists it as `reverted_move` and changes nothing; after a simulated confirm, a redo plan (`purpose = 'redo'`) with one `rename` per reverted member, same targets, runs and is journaled; a crash during it recovers like any plan; a target taken meanwhile ends `failed (conflict)` with both files intact.
+- A `done` `xmove` whose source removal the fake reverts after the plan closed: the next launch lists it as `reverted_move`; after confirmation the redo plan's `finish` op re-verifies (H2, H3 = H1) and removes the source; with a corrupted F it ends `failed (verify_mismatch)` and both files stay.
 - If the final target name was taken by another file in the meantime, the partial is removed through `remove_verified` and the op ends `failed` (the same rule as during a normal apply).
 
 The exact transitions and resume rules are owned by [design/file-engine.md](design/file-engine.md); the checker reads them from there.

@@ -170,6 +170,7 @@ As a photographer, I want an apply that was cut off by a crash or a pulled card 
 - Given an apply killed at a random point, when the app starts, then resume rolls the journal forward and every op ends in the end state for its kind ([testing.md](testing.md) section 6.1): a move leaves the file at exactly one place, a copy leaves it at both, always with its original hash.
 - Given an op that had reached `verifying` with a matching partial, or `committed`, when resume runs, then it completes the rename into place (and, cross-volume, the source removal once the group is committed) and ends `done` (a same-volume rename ends `done` when the plan closes); it is never rolled back or re-copied.
 - Given a same-volume rename that the file system reverted after the plan closed (the file is back at its source), when the app next launches, then it shows the file as a reverted move and offers "Redo moves"; nothing runs until I confirm, and the redo is a new small plan journaled like any other.
+- Given a move between volumes whose source removal was lost after the plan closed (the file is at both places), when I next open Culla, then it is listed and "Finish moves" is offered; confirming re-verifies both files and then removes the source; a mismatch keeps both and says why.
 - Given the card was pulled and comes back under another letter, when resume runs, then it identifies the volume by serial before touching anything.
 - Given resume finished, when it runs again, then it does nothing.
 - Given any apply, when it ends, then a plain-text log of operations is written.
@@ -299,7 +300,7 @@ As a photographer, I want the start screen to help me pick what to cull, so that
 - Given I prefer it, then the native folder dialog, opened from Rust, is still available.
 - Given any of these, then detection, dropped paths and folder reads stay in Rust: the webview only receives opaque source IDs and display data, never a path, and gets no filesystem or dialog permission (CLAUDE.md invariant, threat model T7). Detection and counting are read-only on the card (INV-03).
 
-Links: NFR-A11Y, NFR-PERF. Test: Vitest on the start screen with DemoBackend sources, Playwright, adapter test for removable-drive detection on Windows.
+Links: NFR-A11Y, NFR-PERF. Test: Vitest on the start screen with DemoBackend sources, Playwright, adapter test for removable-drive detection on Windows (v2).
 
 ## M4 — Headline stories
 

@@ -71,7 +71,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
   - Every M1 benchmark in [benchmarks.md](benchmarks.md) has a recorded result on H-2 (UHS-I SD) and passes, or has an ADR that changes the design or the budget. In particular (all est.): first photo ≤ 1.5 s (B-01), scan of 3,000 files with EXIF ≤ 15 s (B-02 + B-03), next prefetched photo ≤ 50 ms at p95 (B-09), peak memory ≤ 1 GB while swiping (B-15).
   - ADRs recorded for preview source (camera JPEG vs NEF embedded), thread counts, prefetch window and LRU size.
   - Fuzz targets ran for at least a week of nightlies without an open crash.
-- **Author:** provide 5–10 real sample files from her Nikon Z bodies ([SPEC.md](SPEC.md) section 2) and state their licence; run the benchmarks on the G14 with a real SD card.
+- **Author:** provide 5–10 real sample files from her Nikon Z bodies ([SPEC.md](SPEC.md) section 2); run the benchmarks on the G14 with a real SD card.
 
 ### M2 — File engine proven by tests
 
@@ -169,7 +169,7 @@ After v1.0: winget manifest, then the v2 candidates in [SPEC.md](SPEC.md) sectio
 | Task | Needed by |
 |---|---|
 | Decide the minimum WebView2 version ([SPEC.md](SPEC.md) section 10) | M3 start |
-| Provide 5–10 real sample files and choose their licence | M1 start |
+| Provide 5–10 real sample files | M1 start |
 | Run benchmarks on the G14 with a real UHS-I SD card | M1 exit |
 | Real apply and card-pull run on the G14 | M2 exit |
 | Cull a real card and sign off on the swipe feel | M3 exit |
