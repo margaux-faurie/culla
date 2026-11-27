@@ -190,7 +190,8 @@ Links: INV (nothing before Apply), NFR-REL. Test: core unit (recording port), Wi
 ### US-21 Start a session
 As a photographer, I want to pick a folder and my options on one screen, so that I can start culling in a few seconds.
 - Given the start screen, when I choose a source folder, include subfolders, RAW follows, move or copy, and a destination, then the swipe screen opens on the first photo.
-- Given a previous session, when the start screen opens, then the last destination is pre-filled.
+- Given a previous session, when the start screen opens, then the last destination is pre-filled and labelled "same as last time", and neither move nor copy is selected until I choose one.
+- Given the start screen, then it shows where kept, rejected and undecided photos will go as one route, with one real example path per branch.
 
 Links: NFR-A11Y. Test: Vitest, Playwright.
 
