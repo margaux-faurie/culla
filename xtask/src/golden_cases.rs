@@ -36,6 +36,10 @@ enum Ev {
     Redo(i64, i64),
     /// `Decided` with the reconcile cause, which no valid log has: seq, group.
     ReconcileDecided(i64, i64),
+    /// `Undo` with the reconcile cause, which no valid log has: seq, target seq.
+    ReconcileUndo(i64, i64),
+    /// `Redo` with the reconcile cause, which no valid log has: seq, target seq.
+    ReconcileRedo(i64, i64),
 }
 
 fn line(e: Ev) -> String {
@@ -58,6 +62,12 @@ fn line(e: Ev) -> String {
         Ev::Reconcile(s, g) => format!("{},\"group_id\":{g}}}", head(s, "reconcile", "cleared")),
         Ev::Undo(s, t) => format!("{},\"target_seq\":{t}}}", head(s, "user", "undo")),
         Ev::Redo(s, t) => format!("{},\"target_seq\":{t}}}", head(s, "user", "redo")),
+        Ev::ReconcileUndo(s, t) => {
+            format!("{},\"target_seq\":{t}}}", head(s, "reconcile", "undo"))
+        }
+        Ev::ReconcileRedo(s, t) => {
+            format!("{},\"target_seq\":{t}}}", head(s, "reconcile", "redo"))
+        }
     }
 }
 
@@ -267,6 +277,56 @@ pub(crate) fn all() -> Vec<Case> {
             &[Decided(2, 1, K), Decided(2, 2, K)],
             &bad(&[(1, "kept")], &[2], &[], 2, "seq_not_increasing"),
         ),
+        case(
+            "corrupt-seq-decreasing",
+            &[Decided(5, 1, K), Decided(3, 2, K)],
+            &bad(&[(1, "kept")], &[5], &[], 3, "seq_not_increasing"),
+        ),
+        // The order of checks: the seq first, then the cause, then the body's precondition.
+        case(
+            "corrupt-order-seq-before-body",
+            &[Decided(1, 1, K), Decided(1, 1, R)],
+            &bad(&[(1, "kept")], &[1], &[], 1, "seq_not_increasing"),
+        ),
+        case(
+            "corrupt-order-cause-before-body",
+            &[Decided(1, 1, K), ReconcileDecided(2, 1)],
+            &bad(&[(1, "kept")], &[1], &[], 2, "reconcile_not_cleared"),
+        ),
+        // The reconcile cause belongs to `cleared` only, undo and redo included.
+        case(
+            "corrupt-reconcile-undo",
+            &[Decided(1, 1, K), ReconcileUndo(2, 1)],
+            &bad(&[(1, "kept")], &[1], &[], 2, "reconcile_not_cleared"),
+        ),
+        case(
+            "corrupt-reconcile-redo",
+            &[Decided(1, 1, K), Undo(2, 1), ReconcileRedo(3, 1)],
+            &bad(&[], &[], &[1], 3, "reconcile_not_cleared"),
+        ),
+        // A redo must target the top of a non-empty undone stack, not an event below it.
+        case(
+            "corrupt-redo-below-top",
+            &[
+                Decided(1, 1, K),
+                Decided(2, 2, R),
+                Undo(3, 2),
+                Undo(4, 1),
+                Redo(5, 2),
+            ],
+            &bad(&[], &[], &[2, 1], 5, "redo_not_top"),
+        ),
+        // U is a new user step: it empties the redo stack like a new decision.
+        case(
+            "clear-empties-redo",
+            &[
+                Decided(1, 1, K),
+                Decided(2, 2, R),
+                Undo(3, 2),
+                Cleared(4, 1),
+            ],
+            &ok(&[], &[1, 4], &[]),
+        ),
     ];
     for seed in 1..=4 {
         cases.push(generated(seed));
@@ -390,5 +450,16 @@ mod tests {
                 );
             }
         }
+        // The reconcile clear (ADR 0024) is in the generated set, so the TS reducer meets it
+        // after a long random history, not only in the hand-written cases.
+        let reconciles = (1..=4)
+            .map(|seed| {
+                generated(seed)
+                    .log
+                    .matches("\"cause\":\"reconcile\"")
+                    .count()
+            })
+            .sum::<usize>();
+        assert!(reconciles >= 1, "no reconcile event in the generated cases");
     }
 }

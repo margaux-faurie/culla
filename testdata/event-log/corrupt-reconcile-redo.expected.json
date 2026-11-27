@@ -1,0 +1,6 @@
+{
+  "state": {},
+  "done": [],
+  "undone": [1],
+  "corrupt": {"seq": 3, "reason": "reconcile_not_cleared"}
+}

@@ -33,7 +33,14 @@ pub(crate) fn check(root: &Path) -> Result<(), String> {
     let mut logs = BTreeSet::new();
     let mut expected = BTreeSet::new();
     let mut problems = Vec::new();
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                problems.push(format!("{DIR}/: cannot read a directory entry: {e}"));
+                continue;
+            }
+        };
         let name = entry.file_name().to_string_lossy().into_owned();
         if let Some(case) = name.strip_suffix(EXPECTED) {
             expected.insert(case.to_owned());
@@ -96,10 +103,20 @@ fn check_listed(root: &Path, known: &BTreeSet<&str>) -> Vec<String> {
         Ok(t) => t,
         Err(e) => return vec![format!("{RUST_TEST}: {e}")],
     };
+    let listed = listed_cases(&text);
     known
         .iter()
-        .filter(|name| !text.contains(&format!("case!(\"{name}\")")))
+        .filter(|name| !listed.contains(**name))
         .map(|name| format!("{RUST_TEST}: case {name} is not listed in CASES"))
+        .collect()
+}
+
+/// The names listed as `case!("<name>")`: only where a trimmed line starts with it, so a
+/// comment, a doc line or text in the middle of a line does not count as listed.
+fn listed_cases(text: &str) -> BTreeSet<&str> {
+    text.lines()
+        .filter_map(|line| line.trim().strip_prefix("case!(\""))
+        .filter_map(|rest| rest.split_once("\")").map(|(name, _)| name))
         .collect()
 }
 
@@ -237,6 +254,13 @@ mod tests {
         assert!(corrupt("{\"seq\":\"2\",\"reason\":\"x\"}").is_err());
         assert!(corrupt("{\"seq\":2,\"reason\":\"x\",\"more\":1}").is_err());
         assert!(corrupt("[]").is_err());
+    }
+
+    #[test]
+    fn listed_cases_start_a_line() {
+        let text = "const CASES = &[\n    case!(\"a\"),\n\tcase!(\"b\")\n    // case!(\"c\"),\n    \
+                    /// case!(\"d\")\n    x(case!(\"e\")),\n    case!(\"f\n];\n";
+        assert_eq!(listed_cases(text), BTreeSet::from(["a", "b"]));
     }
 
     #[test]

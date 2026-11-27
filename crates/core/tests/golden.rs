@@ -27,14 +27,21 @@ macro_rules! case {
 
 /// (name, log, expected fold), in name order.
 const CASES: &[(&str, &str, &str)] = &[
+    case!("clear-empties-redo"),
     case!("clear-then-decide-again"),
     case!("clear-undo-redo"),
     case!("clear-undo-restores-reject"),
     case!("corrupt-cleared-on-undecided"),
     case!("corrupt-decided-on-decided"),
+    case!("corrupt-order-cause-before-body"),
+    case!("corrupt-order-seq-before-body"),
     case!("corrupt-reconcile-decided"),
     case!("corrupt-reconcile-on-undecided"),
+    case!("corrupt-reconcile-redo"),
+    case!("corrupt-reconcile-undo"),
+    case!("corrupt-redo-below-top"),
     case!("corrupt-redo-not-top"),
+    case!("corrupt-seq-decreasing"),
     case!("corrupt-seq-not-increasing"),
     case!("corrupt-undo-after-reconcile"),
     case!("corrupt-undo-not-top"),

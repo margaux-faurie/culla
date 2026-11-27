@@ -951,6 +951,33 @@ fn prop_undo_redo_and_reconcile() {
     }
 }
 
+/// "The state before a `Cleared`" (file-engine §5.1) is the fold of the log up to that event:
+/// the step a user `Cleared` stacks remembers exactly the state that refolding the prefix
+/// gives, and undoing it restores that state.
+#[test]
+fn prop_cleared_remembers_the_refolded_state() {
+    for case in 0..cases() {
+        let mut rng = Rng::new(case ^ 0xC1EA);
+        let (events, after_each) = random_session(&mut rng);
+        for (i, e) in events.iter().enumerate() {
+            let EventBody::Cleared { group } = e.body else {
+                continue;
+            };
+            if e.cause != Cause::User {
+                continue;
+            }
+            let refolded = fold(&events[..i]).unwrap().state(group);
+            assert!(refolded.is_decided(), "case {case}");
+            let d = &after_each[i];
+            assert_eq!(d.steps[&e.seq].before, refolded, "case {case}");
+            let mut x = d.clone();
+            x.apply(&d.undo(NO_LOCKS).unwrap().at(e.seq + 1, 0))
+                .unwrap();
+            assert_eq!(x.state(group), refolded, "case {case}");
+        }
+    }
+}
+
 /// A valid log with one bad event inserted stops at it, with the fold of what came before.
 #[test]
 fn prop_corrupt_logs_stop_at_the_bad_event() {
