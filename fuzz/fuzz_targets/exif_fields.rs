@@ -1,9 +1,10 @@
 //! Fuzz target: EXIF fields (docs/testing.md §7, target 3).
 //!
 //! Runs the adapter's EXIF path on arbitrary bytes, as the first bytes of a file:
-//! `kamadak-exif` on a JPEG, TIFF/NEF or anything else, then the core interpretation
-//! (`culla_core::exif`), and the core value parsers directly. cargo-fuzz builds with
-//! `panic=abort`, so the adapter's `catch_unwind` does not hide a parser panic from the fuzzer.
+//! container recognition and Culla's JPEG APP1 extraction, `kamadak-exif`'s `read_raw` on
+//! the TIFF data, then the core interpretation (`culla_core::exif`), and the core value
+//! parsers directly. cargo-fuzz builds with `panic=abort`, so the adapter's `catch_unwind`
+//! does not hide a parser panic from the fuzzer.
 //! Pass bar: no panic, no timeout, bounded memory; text values stay within the cap.
 //! Seed corpus: `testdata/synthetic/` (the JPEGs and NEFs).
 #![no_main]

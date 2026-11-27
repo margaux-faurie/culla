@@ -410,6 +410,48 @@ fn text_is_cleaned_and_capped() {
     assert_eq!(clean_text(b"a\x07b\nc\x1b[31m").as_deref(), Some("abc[31m"));
     assert_eq!(clean_text(b"caf\xe9").as_deref(), Some("caf\u{fffd}"));
     assert_eq!(clean_text(b"<script>").as_deref(), Some("<script>"));
+    // Bidi overrides and isolates, zero-width characters, BOM, soft hyphen, tags, separators.
+    for c in [
+        '\u{202A}',
+        '\u{202B}',
+        '\u{202C}',
+        '\u{202D}',
+        '\u{202E}',
+        '\u{2066}',
+        '\u{2067}',
+        '\u{2068}',
+        '\u{2069}',
+        '\u{200B}',
+        '\u{200C}',
+        '\u{200D}',
+        '\u{200E}',
+        '\u{200F}',
+        '\u{FEFF}',
+        '\u{00AD}',
+        '\u{2060}',
+        '\u{061C}',
+        '\u{E0041}',
+        '\u{2028}',
+        '\u{2029}',
+    ] {
+        let s = format!("NIK{c}KOR");
+        assert_eq!(
+            clean_text(s.as_bytes()).as_deref(),
+            Some("NIKKOR"),
+            "{:04X}",
+            u32::from(c)
+        );
+        assert_eq!(clean_text(c.to_string().as_bytes()), None);
+    }
+    assert_eq!(
+        clean_text("lens \u{202E}gnp.exe".as_bytes()).as_deref(),
+        Some("lens gnp.exe")
+    );
+    // Ordinary letters and symbols around those ranges stay.
+    assert_eq!(
+        clean_text("Ø 24–70 ƒ/2.8 µ".as_bytes()).as_deref(),
+        Some("Ø 24–70 ƒ/2.8 µ")
+    );
     assert_eq!(clean_text(b""), None);
     assert_eq!(clean_text(b" \0 \t"), None);
     let long = "x".repeat(1000);
@@ -623,7 +665,8 @@ fn groups_without_a_time_keep_their_filename_place() {
         stems(&g, &capture_order(&g, &times[..2])),
         ["DSC_0001", "DSC_0002", "DSC_0003", "DSC_0004", "DSC_0005"]
     );
-    // An undated group goes after every group with its predecessor's time.
+    // An undated group goes right after its dated predecessor, even when another group shares
+    // that predecessor's time.
     let tie = [
         at("2025:02:15 10:00:00"),
         None,
@@ -633,7 +676,7 @@ fn groups_without_a_time_keep_their_filename_place() {
     ];
     assert_eq!(
         stems(&g, &capture_order(&g, &tie)),
-        ["DSC_0004", "DSC_0005", "DSC_0001", "DSC_0003", "DSC_0002"]
+        ["DSC_0004", "DSC_0005", "DSC_0001", "DSC_0002", "DSC_0003"]
     );
 }
 

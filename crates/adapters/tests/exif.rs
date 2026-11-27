@@ -1,7 +1,10 @@
 //! EXIF on the synthetic fixtures (testdata/synthetic, `cargo xtask fixtures`), through
 //! kamadak-exif. Read-only: the tests open the committed fixtures and never write.
 
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use culla_adapters::metadata::exif::{
     EXIF_HEAD_BYTES, meta_from_head, read_group_meta, read_head, read_photo_meta,
@@ -27,6 +30,72 @@ fn local_ms(s: &str) -> i64 {
 }
 
 const MTIME_NS: i64 = 1_700_000_000_000_000_000;
+
+/// A uniquely named folder under the system temp folder, removed with everything in it on drop.
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn new(test: &str) -> Self {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let dir =
+            std::env::temp_dir().join(format!("culla-exif-{test}-{}-{nanos}", std::process::id()));
+        fs::create_dir(&dir).unwrap();
+        Self(dir)
+    }
+
+    /// Creates a new file (never an existing one) with `bytes`.
+    fn file(&self, name: &str, bytes: &[u8]) -> PathBuf {
+        let path = self.0.join(name);
+        let mut f = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        f.write_all(bytes).unwrap();
+        path
+    }
+}
+
+impl Drop for TempDir {
+    #[allow(clippy::disallowed_methods, reason = "test temp folder only")]
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn other_containers_never_reach_the_parser() {
+    // A PNG (even one with an eXIf chunk), a HEIF and a WebP named like camera files: only
+    // TIFF and JPEG magic bytes are parsed, the rest has no EXIF for Culla.
+    let tmp = TempDir::new("containers");
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    png.extend_from_slice(&[0, 0, 0, 8]);
+    png.extend_from_slice(b"eXIfMM\0*\0\0\0\x08");
+    png.extend_from_slice(&[0; 4]);
+    let mut heif = b"\0\0\0\x18ftypheic\0\0\0\0mif1heic".to_vec();
+    heif.extend_from_slice(&[0; 32]);
+    let webp = b"RIFF\x1a\0\0\0WEBPEXIF\x0e\0\0\0MM\0*\0\0\0\x08\0\0\0\0\0\0".to_vec();
+    for (name, bytes) in [("a.JPG", png), ("b.NEF", heif), ("c.JPG", webp)] {
+        let path = tmp.file(name, &bytes);
+        let m = read_photo_meta(&path, Some(MTIME_NS)).unwrap();
+        assert_eq!(m.issues, [MetaIssue::NoExif], "{name}");
+        assert_eq!(
+            m.captured.unwrap().source,
+            TimeSource::FileModified,
+            "{name}"
+        );
+    }
+    // A JPEG whose only Exif APP1 comes after SOS: none either.
+    let jpeg = fs::read(fixture("exif/DSC_0101.JPG")).unwrap();
+    let mut late = fs::read(fixture("exif/DSC_0103.JPG")).unwrap();
+    late.truncate(late.len() - 2); // drop EOI
+    late.extend_from_slice(&jpeg[2..]);
+    let path = tmp.file("late.JPG", &late);
+    let m = read_photo_meta(&path, None).unwrap();
+    assert_eq!(m.issues, [MetaIssue::NoExif]);
+}
 
 #[test]
 fn full_jpeg_yields_every_field() {

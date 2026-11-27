@@ -16,12 +16,23 @@
 //!   The parser therefore runs with `continue_on_error`: a field that runs past the buffer is
 //!   skipped (counted in [`MetaIssue::SkippedFields`]) and the others are kept.
 //!
+//! # Only TIFF data reaches the parser
+//!
+//! The container is recognised here, from its magic bytes, so a crafted file never reaches
+//! `kamadak-exif`'s PNG, WebP or HEIF code (threat model T5):
+//!
+//! - `II*\0` or `MM\0*` (TIFF, NEF): the whole buffer is the TIFF.
+//! - `FF D8` (JPEG): [`jpeg_exif_payload`] walks the marker segments inside the buffer and
+//!   returns the payload of the first APP1 `Exif\0\0` segment before SOS, which is a TIFF.
+//! - Anything else: [`MetaIssue::NoExif`].
+//!
 //! # kamadak-exif API used
 //!
-//! `Reader::new().continue_on_error(true).read_from_container(&mut Cursor<Vec<u8>>)`, then
+//! `Reader::new().continue_on_error(true).read_raw(Vec<u8>)` on that TIFF, then
 //! `Error::distill_partial_result`; `Exif::get_field(Tag, In::PRIMARY)` and the field's
 //! `Value` (`Ascii`, `Rational`, `get_uint`). Fields of the Exif IFD carry `In::PRIMARY`, the
-//! number of the IFD that points to them. Stable across 0.6.x.
+//! number of the IFD that points to them. Stable across 0.6.x. `read_from_container` is not
+//! used: it would dispatch on the format itself.
 //!
 //! # What becomes an error
 //!
@@ -31,7 +42,7 @@
 //! threat model T5).
 
 use std::fs::File;
-use std::io::{self, Cursor, Read};
+use std::io::{self, Read};
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
@@ -122,13 +133,75 @@ pub fn meta_from_head(head: Vec<u8>, mtime_ns: Option<i64>) -> PhotoMeta {
     }
 }
 
+/// TIFF magic: little-endian, big-endian.
+const TIFF_MAGIC: [&[u8; 4]; 2] = [b"II*\0", b"MM\0*"];
+/// Identifier at the start of an APP1 Exif segment's payload.
+const EXIF_ID: &[u8; 6] = b"Exif\0\0";
+
+/// The TIFF data of `head`: see the module docs.
+fn tiff_data(head: Vec<u8>) -> Result<Vec<u8>, MetaIssue> {
+    if TIFF_MAGIC.iter().any(|m| head.starts_with(*m)) {
+        Ok(head)
+    } else if head.starts_with(&[0xFF, 0xD8]) {
+        jpeg_exif_payload(&head).map(<[u8]>::to_vec)
+    } else {
+        Err(MetaIssue::NoExif)
+    }
+}
+
+/// The TIFF payload of the first APP1 `Exif\0\0` segment of the JPEG in `jpeg`, which starts
+/// with SOI. Every read stays inside `jpeg`.
+///
+/// # Errors
+///
+/// [`MetaIssue::NoExif`] when SOS or EOI comes first; [`MetaIssue::UnreadableExif`] when the
+/// segments are malformed or run past the end of `jpeg` (a truncated head) before one is found.
+pub fn jpeg_exif_payload(jpeg: &[u8]) -> Result<&[u8], MetaIssue> {
+    let mut p = 2usize;
+    loop {
+        // A marker: one or more 0xFF fill bytes, then the code.
+        if *jpeg.get(p).ok_or(MetaIssue::UnreadableExif)? != 0xFF {
+            return Err(MetaIssue::UnreadableExif);
+        }
+        while jpeg.get(p) == Some(&0xFF) {
+            p += 1;
+        }
+        let code = *jpeg.get(p).ok_or(MetaIssue::UnreadableExif)?;
+        p += 1;
+        match code {
+            // SOS: the entropy-coded data starts; Exif must come before it. EOI: the end.
+            0xDA | 0xD9 => return Err(MetaIssue::NoExif),
+            // Stand-alone markers without a length: TEM, RST0-7.
+            0x01 | 0xD0..=0xD7 => continue,
+            // A second SOI or a zero code is not a valid segment.
+            0x00 | 0xD8 => return Err(MetaIssue::UnreadableExif),
+            _ => {}
+        }
+        let len = match jpeg.get(p..p + 2) {
+            Some(&[hi, lo]) => usize::from(u16::from_be_bytes([hi, lo])),
+            _ => return Err(MetaIssue::UnreadableExif),
+        };
+        // The length counts its own two bytes.
+        let payload = len
+            .checked_sub(2)
+            .and_then(|n| jpeg.get(p + 2..p + 2 + n))
+            .ok_or(MetaIssue::UnreadableExif)?;
+        if code == 0xE1
+            && let Some(tiff) = payload.strip_prefix(EXIF_ID)
+        {
+            return Ok(tiff);
+        }
+        p += len;
+    }
+}
+
 /// The tags Culla reads, and how many fields the parser skipped.
 fn raw_exif(head: Vec<u8>) -> Result<(RawExif, u32), MetaIssue> {
-    let mut cursor = Cursor::new(head);
+    let tiff = tiff_data(head)?;
     let mut skipped = 0u32;
     let parsed = ::exif::Reader::new()
         .continue_on_error(true)
-        .read_from_container(&mut cursor)
+        .read_raw(tiff)
         .or_else(|e| {
             e.distill_partial_result(|errors| {
                 skipped = u32::try_from(errors.len()).unwrap_or(u32::MAX);
@@ -203,6 +276,87 @@ mod tests {
             &["100NIKON".into(), "DSC_0001.JPG".into()],
         );
         assert_eq!(p, Path::new("root").join("100NIKON").join("DSC_0001.JPG"));
+    }
+
+    /// A JPEG: SOI, then `segments` as (marker code, payload), then SOS and EOI.
+    fn jpeg(segments: &[(u8, &[u8])]) -> Vec<u8> {
+        let mut out = vec![0xFF, 0xD8];
+        for (code, payload) in segments {
+            out.extend_from_slice(&[0xFF, *code]);
+            out.extend_from_slice(&u16::try_from(payload.len() + 2).unwrap().to_be_bytes());
+            out.extend_from_slice(payload);
+        }
+        out.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x02, 0x12, 0x34, 0xFF, 0xD9]);
+        out
+    }
+
+    #[test]
+    fn jpeg_payload_is_the_first_exif_app1_before_sos() {
+        let exif = b"Exif\0\0II*\0rest";
+        let j = jpeg(&[
+            (0xE0, b"JFIF\0"),
+            (0xE1, b"http://ns.adobe.com/xap/1.0/\0"),
+            (0xE1, exif),
+        ]);
+        assert_eq!(jpeg_exif_payload(&j), Ok(&b"II*\0rest"[..]));
+        // Fill bytes before a marker and stand-alone markers are skipped.
+        let mut j = vec![0xFF, 0xD8, 0xFF, 0xFF, 0xD0, 0xFF, 0x01];
+        j.extend_from_slice(&jpeg(&[(0xE1, exif)])[2..]);
+        assert_eq!(jpeg_exif_payload(&j), Ok(&b"II*\0rest"[..]));
+        // Nothing before SOS, or an Exif APP1 after it: none.
+        assert_eq!(
+            jpeg_exif_payload(&jpeg(&[(0xDB, &[0; 65])])),
+            Err(MetaIssue::NoExif)
+        );
+        let mut late = jpeg(&[]);
+        late.extend_from_slice(&jpeg(&[(0xE1, exif)])[2..]);
+        assert_eq!(jpeg_exif_payload(&late), Err(MetaIssue::NoExif));
+    }
+
+    #[test]
+    fn jpeg_payload_rejects_malformed_or_truncated_segments() {
+        let exif = b"Exif\0\0II*\0rest";
+        let full = jpeg(&[(0xE0, b"JFIF\0"), (0xE1, exif)]);
+        // Cut anywhere before the Exif payload ends: unreadable, never a read past the end.
+        let app1_end = 2 + 9 + 4 + exif.len();
+        for cut in 0..app1_end {
+            assert_eq!(
+                jpeg_exif_payload(&full[..cut]),
+                Err(MetaIssue::UnreadableExif),
+                "{cut}"
+            );
+        }
+        assert!(jpeg_exif_payload(&full[..app1_end]).is_ok());
+        for bad in [
+            vec![0xFF, 0xD8, 0x00, 0xE1],             // not a marker
+            vec![0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x01], // length below 2
+            vec![0xFF, 0xD8, 0xFF, 0xE1, 0xFF, 0xFF], // length past the end
+            vec![0xFF, 0xD8, 0xFF, 0xD8],             // a second SOI
+            vec![0xFF, 0xD8, 0xFF, 0x00],             // a stuffed zero
+        ] {
+            assert_eq!(
+                jpeg_exif_payload(&bad),
+                Err(MetaIssue::UnreadableExif),
+                "{bad:x?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_tiff_and_jpeg_reach_the_parser() {
+        let png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+        let mut heif = b"\0\0\0\x18ftypheic".to_vec();
+        heif.extend_from_slice(&[0; 16]);
+        let webp = b"RIFF\x10\0\0\0WEBPVP8 ".to_vec();
+        for head in [png, heif, webp, Vec::new(), b"II*".to_vec()] {
+            assert_eq!(tiff_data(head.clone()), Err(MetaIssue::NoExif), "{head:x?}");
+            let meta = meta_from_head(head, None);
+            assert_eq!(meta.issues, [MetaIssue::NoExif]);
+        }
+        let tiff = b"MM\0*\0\0\0\x08".to_vec();
+        assert_eq!(tiff_data(tiff.clone()), Ok(tiff));
+        let j = jpeg(&[(0xE1, b"Exif\0\0MM\0*")]);
+        assert_eq!(tiff_data(j), Ok(b"MM\0*".to_vec()));
     }
 
     #[test]

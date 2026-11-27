@@ -32,9 +32,9 @@ pub fn filename_order(groups: &[Group]) -> Vec<usize> {
 /// - Groups with a time are ordered by [`CaptureTime::local_ms`], the camera's clock as
 ///   written; equal times by the primary's folded relative path, then as written.
 /// - A group with no time at all keeps its place in filename order: it goes right after the
-///   group that precedes it in filename order (after the last group with that group's time),
-///   or first when nothing with a time precedes it. Several such groups in a row keep their
-///   filename order.
+///   dated group that precedes it in filename order, even when other groups share that
+///   group's time, or first when nothing with a time precedes it. Several such groups in a row
+///   keep their filename order.
 ///
 /// The result is a permutation of `0..groups.len()` and depends only on the groups' paths
 /// and times, not on the input order. Once the user has decided a photo the list is not
@@ -44,22 +44,22 @@ pub fn capture_order(groups: &[Group], captured: &[Option<CaptureTime>]) -> Vec<
     let by_name = filename_order(groups);
     let time = |i: usize| captured.get(i).copied().flatten().map(|t| t.local_ms);
 
-    // (anchor time, rank, filename position): dated groups have rank 0; undated ones inherit
-    // the time of their filename predecessor (or i64::MIN) with rank 1. Within a rank, the
-    // filename position orders equal times by path and keeps undated groups in place.
-    let mut keys: Vec<(i64, u8, usize)> = vec![(0, 0, 0); groups.len()];
-    let mut anchor = i64::MIN;
+    // Key: (time, anchor position, rank, own position). A dated group is its own anchor:
+    // (t, pos, 0, pos). An undated group takes its nearest dated filename predecessor as the
+    // anchor, (t, anchor pos, 1, pos), so it sorts right after that group; with no dated
+    // predecessor the anchor is (i64::MIN, 0). Positions are distinct, so the order is total.
+    let mut keys: Vec<(i64, usize, u8, usize)> = vec![(0, 0, 0, 0); groups.len()];
+    let mut anchor = (i64::MIN, 0usize);
     for (position, &i) in by_name.iter().enumerate() {
         keys[i] = match time(i) {
             Some(t) => {
-                anchor = t;
-                (t, 0, position)
+                anchor = (t, position);
+                (t, position, 0, position)
             }
-            None => (anchor, 1, position),
+            None => (anchor.0, anchor.1, 1, position),
         };
     }
     let mut idx: Vec<usize> = (0..groups.len()).collect();
-    // Filename positions are distinct, so the keys are too: the order is total.
     idx.sort_by_key(|&i| keys[i]);
     idx
 }

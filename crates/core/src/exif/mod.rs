@@ -43,7 +43,8 @@
 //! # Text
 //!
 //! Text values (model, lens) are untrusted (threat model T5, T6): bytes that are not UTF-8 are
-//! replaced, control characters are dropped, surrounding spaces and NULs are trimmed, and the
+//! replaced, control characters (Cc), format characters (Cf: bidi overrides and isolates,
+//! zero-width characters, the BOM, tags) and the line and paragraph separators are dropped, surrounding spaces and NULs are trimmed, and the
 //! result is capped at [`MAX_TEXT_CHARS`] characters. An empty result is `None`. The UI still
 //! renders them as text only.
 //!
@@ -566,7 +567,7 @@ pub fn clean_text(s: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(s);
     let cleaned: String = text
         .chars()
-        .filter(|c| !c.is_control())
+        .filter(|&c| !c.is_control() && !is_format_or_separator(c))
         .collect::<String>()
         .trim()
         .chars()
@@ -574,6 +575,35 @@ pub fn clean_text(s: &[u8]) -> Option<String> {
         .collect();
     let cleaned = cleaned.trim_end().to_owned();
     (!cleaned.is_empty()).then_some(cleaned)
+}
+
+/// True for the Unicode format characters (general category Cf, Unicode 16) and the line and
+/// paragraph separators (Zl, Zp). std has no category table, so the ranges are listed here.
+fn is_format_or_separator(c: char) -> bool {
+    matches!(
+        u32::from(c),
+        0x00AD
+            | 0x0600..=0x0605
+            | 0x061C
+            | 0x06DD
+            | 0x070F
+            | 0x0890..=0x0891
+            | 0x08E2
+            | 0x180E
+            | 0x200B..=0x200F
+            | 0x2028..=0x202E
+            | 0x2060..=0x2064
+            | 0x2066..=0x206F
+            | 0xFEFF
+            | 0xFFF9..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x1343F
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0001
+            | 0xE0020..=0xE007F
+    )
 }
 
 /// The lens name: `lens_model` when it holds text, else the name built from
