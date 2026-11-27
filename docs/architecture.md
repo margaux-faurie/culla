@@ -443,8 +443,8 @@ flowchart LR
 |---|---|
 | Installer | NSIS only, per-user, WebView2 through the default bootstrapper. Unsigned for v1 (SmartScreen note in README). |
 | Updater | `tauri-plugin-updater`, its own signing key (private key in CI secret `TAURI_SIGNING_PRIVATE_KEY`, public key in config). Key loss strands installed users: custody in [releasing.md](releasing.md) (planned). |
-| Local data | Preview cache in `%LOCALAPPDATA%\Culla\cache`. Session databases in `%LOCALAPPDATA%\Culla\sessions`, apply logs in `%LOCALAPPDATA%\Culla\logs`. Nothing is written into the source folder except `_rejected/` on apply. |
-| Web demo | Static assets on Cloudflare Workers, subdomain of margauxfaurie.com (to confirm). No server code. |
+| Local data | Preview cache in `%LOCALAPPDATA%\Culla\cache`. Session databases in `%LOCALAPPDATA%\Culla\sessions`, a small app-level settings store beside them (last destination used), apply logs in `%LOCALAPPDATA%\Culla\logs`. Nothing is written into the source folder except `_rejected/` on apply. |
+| Web demo | Static assets on Cloudflare Workers at `culla.margauxfaurie.com`, behind the site's Cloudflare Access policy until the portfolio opens (SPEC §2). No server code. |
 | Later | winget manifest after v1; SignPath signing once v1 is released ([ADR 0016](adr/0016-per-user-nsis-and-signed-updater-code-signing-deferred.md)). |
 
 ## 8. Crosscutting concepts

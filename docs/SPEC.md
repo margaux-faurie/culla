@@ -101,7 +101,6 @@ Sidecar matching (case-insensitive, same folder):
 | I | EXIF overlay |
 | F | Filter: all / undecided / kept / rejected |
 | ? | Shortcut overlay |
-
 | Enter | Open the review screen |
 | Esc | Leave zoom / overlay / review |
 

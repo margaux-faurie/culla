@@ -204,7 +204,7 @@ As a photographer, I want → to keep and ← to reject and move on, so that I c
 - Given an undecided photo, when I press →, then it is kept and the next photo is shown.
 - Given an undecided photo, when I press ←, then it is rejected and the next photo is shown.
 - Given a decision, when it is made, then it is committed to the log at once and autosaved.
-- Given an AZERTY layout, when I press Z, then the photo zooms, and Ctrl+Z undoes; the arrows keep and reject on any layout ([SPEC §4.1](SPEC.md#41-keyboard-map)).
+- Given an AZERTY or QWERTZ layout, when I press U, N or Ctrl+Z, then they act as labelled on the keys (undo, next undecided, global undo); the arrows keep and reject on any layout ([SPEC §4.1](SPEC.md#41-keyboard-map)).
 
 Links: NFR-PERF, NFR-A11Y. Test: Vitest, Playwright keyboard-only.
 
@@ -320,7 +320,7 @@ M4 does not start until each of these has full Given/When/Then acceptance criter
 | US-36 | As a photographer, I want per-file progress with pause and cancel (after the current file), and a report at the end, so that a long cross-volume apply stays under my control. | NFR-REL, INV |
 | US-37 | As a photographer, I want to resume a session or start fresh when I reopen a folder, including on another drive letter, so that I can cull a card over several sittings. | NFR-REL |
 | US-38 | As a photographer, I want an interrupted apply resumed with a clear message when the app opens, so that I know my photos are safe. | NFR-REL, INV |
-| US-39 | As a photographer, I want to zoom to 100 % at the cursor (Z toggle or hold Space) and pan with the arrows, so that I can check focus before deciding. | NFR-PERF, NFR-A11Y |
+| US-39 | As a photographer, I want to zoom to 100 % at the cursor (Z toggle or hold Space) and pan with the arrows, so that I can check focus before deciding. Z is the key labelled Z on AZERTY and QWERTZ too ([SPEC §4.1](SPEC.md#41-keyboard-map)). | NFR-PERF, NFR-A11Y |
 | US-40 | As a photographer, I want an EXIF overlay (I) with date, lens, exposure, so that I can tell near-identical shots apart. | NFR-A11Y |
 
 ## M6
