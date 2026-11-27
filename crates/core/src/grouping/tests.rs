@@ -18,10 +18,7 @@ fn with(mut e: ScanEntry, attrs: Attributes) -> ScanEntry {
 }
 
 fn all() -> ScanPolicy {
-    ScanPolicy {
-        include_subfolders: true,
-        destination: None,
-    }
+    ScanPolicy::new(true)
 }
 
 fn names<'a>(it: impl Iterator<Item = &'a ScanEntry>) -> Vec<String> {
@@ -51,6 +48,7 @@ fn sidecars(g: &Group) -> Vec<(String, SidecarKind, Describes)> {
 
 // --- US-02: a JPEG, its NEF and its sidecars -------------------------------------------------
 
+/// INV-09: each sidecar is bound to what it follows.
 #[test]
 fn us02_jpeg_nef_and_three_sidecars_form_one_group() {
     let out = group(
@@ -152,6 +150,7 @@ fn us02_bare_sidecars_follow_the_primary_in_a_jpeg_only_group() {
     );
 }
 
+/// INV-09: matching never crosses folders.
 #[test]
 fn us02_same_name_in_two_folders_is_two_groups() {
     let out = group(
@@ -165,10 +164,10 @@ fn us02_same_name_in_two_folders_is_two_groups() {
         &all(),
     );
     assert_eq!(out.groups.len(), 2);
-    assert_eq!(out.groups[0].folder, ["100NIKON"]);
+    assert_eq!(*out.groups[0].folder, ["100NIKON"]);
     assert_eq!(out.groups[0].primary.kind, PhotoKind::Jpeg);
     assert!(out.groups[0].raw.is_none());
-    assert_eq!(out.groups[1].folder, ["101NIKON"]);
+    assert_eq!(*out.groups[1].folder, ["101NIKON"]);
     assert!(out.groups[1].is_lone_nef());
     // X.JPG.xmp in a folder without X.JPG is an orphan, never matched across folders.
     assert_eq!(
@@ -245,6 +244,7 @@ fn us03_lone_nef_is_its_own_primary() {
 
 // --- US-04: unknown files are listed ---------------------------------------------------------
 
+/// INV-20: unknown, orphan and same-basename files are listed, never grouped.
 #[test]
 fn us04_unknown_files_are_listed_with_their_paths() {
     let out = group(
@@ -297,6 +297,7 @@ fn us04_unknown_files_are_listed_with_their_paths() {
     );
 }
 
+/// INV-20.
 #[test]
 fn photos_inside_nksc_param_are_never_grouped() {
     let out = group(
@@ -383,6 +384,7 @@ fn folders_that_fold_to_one_name_stay_apart_and_their_groups_are_ambiguous() {
 
 // --- US-05 and file-engine §3.2: exclusions --------------------------------------------------
 
+/// INV-19.
 #[test]
 fn us05_rejected_folders_are_never_entered_at_any_depth() {
     let p = all();
@@ -413,11 +415,12 @@ fn us05_rejected_folders_are_never_entered_at_any_depth() {
     assert_eq!(ExclusionReason::RejectedFolder.issue_kind(true), None);
 }
 
+/// INV-19.
 #[test]
 fn us05_an_in_source_destination_is_never_entered() {
     let p = ScanPolicy {
-        include_subfolders: true,
         destination: Some(vec!["Keep".into(), "2026".into()]),
+        ..ScanPolicy::new(true)
     };
     assert_eq!(
         p.dir_action(&d(&["keep"], "2026")),
@@ -446,12 +449,13 @@ fn us05_an_in_source_destination_is_never_entered() {
     );
     // The source itself as destination excludes nothing here (preflight P6 refuses it).
     let root = ScanPolicy {
-        include_subfolders: true,
         destination: Some(Vec::new()),
+        ..ScanPolicy::new(true)
     };
     assert_eq!(group([f(&[], "A.JPG")], &root).groups.len(), 1);
 }
 
+/// INV-10, INV-19.
 #[test]
 fn us05_reparse_points_and_cloud_placeholders_are_never_followed_or_grouped() {
     let reparse = Attributes {
@@ -497,6 +501,8 @@ fn us05_reparse_points_and_cloud_placeholders_are_never_followed_or_grouped() {
     assert_eq!(out.groups.len(), 1);
     let g = &out.groups[0];
     assert!(g.raw.is_none() && g.sidecars.is_empty());
+    // The NEF behind the link shares the stem: the shot is not complete, so it is held back.
+    assert_eq!(g.status, GroupStatus::Ambiguous);
     assert_eq!(
         excluded(&out),
         [
@@ -519,6 +525,7 @@ fn us05_reparse_points_and_cloud_placeholders_are_never_followed_or_grouped() {
     );
 }
 
+/// INV-19.
 #[test]
 fn hidden_and_system_entries_are_skipped_but_nksc_param_is_read_even_when_hidden() {
     let hidden = Attributes {
@@ -565,6 +572,8 @@ fn hidden_and_system_entries_are_skipped_but_nksc_param_is_read_even_when_hidden
     );
     assert_eq!(out.groups.len(), 1);
     assert_eq!(out.groups[0].sidecars.len(), 1);
+    // The hidden X.NEF belongs to the shot: the group is ambiguous, never planned partially.
+    assert_eq!(out.groups[0].status, GroupStatus::Ambiguous);
     assert_eq!(out.excluded.len(), 4);
     assert!(
         out.excluded
@@ -578,6 +587,7 @@ fn hidden_and_system_entries_are_skipped_but_nksc_param_is_read_even_when_hidden
     );
 }
 
+/// INV-20: foreign partials are listed, never grouped.
 #[test]
 fn culla_partials_are_never_grouped() {
     let out = group(
@@ -602,6 +612,7 @@ fn culla_partials_are_never_grouped() {
     );
 }
 
+/// INV-20: invalid names are listed, never grouped.
 #[test]
 fn invalid_names_are_skipped() {
     let mut lossy = f(&[], "X\u{FFFD}.JPG");
@@ -852,7 +863,7 @@ fn gen_tree(rng: &mut Rng) -> Vec<ScanEntry> {
             *rng.pick(EXTS)
         };
         let mut e = ScanEntry {
-            folder,
+            folder: folder.into(),
             name: format!("{stem}.{ext}"),
             name_lossy: rng.chance(1),
             kind: EntryKind::File,
@@ -879,6 +890,12 @@ fn gen_tree(rng: &mut Rng) -> Vec<ScanEntry> {
         let mut e = ScanEntry::dir(&folder, name);
         e.attrs.hidden = rng.chance(20);
         e.attrs.reparse_point = rng.chance(20);
+        if rng.chance(10) {
+            e.kind = EntryKind::Unlisted {
+                reason: *rng.pick(&[ExclusionReason::Unreadable, ExclusionReason::TooLarge]),
+                detail: String::new(),
+            };
+        }
         out.push(e);
     }
     let mut seen = std::collections::BTreeSet::new();
@@ -890,6 +907,12 @@ fn gen_policy(rng: &mut Rng) -> ScanPolicy {
     ScanPolicy {
         include_subfolders: rng.chance(80),
         destination: rng.chance(30).then(|| vec!["keep".to_owned()]),
+        max_depth: if rng.chance(10) { 1 } else { DEFAULT_MAX_DEPTH },
+        max_entries_per_folder: if rng.chance(10) {
+            8
+        } else {
+            DEFAULT_MAX_ENTRIES_PER_FOLDER
+        },
     }
 }
 
@@ -902,10 +925,11 @@ fn sorted(mut v: Vec<ScanEntry>) -> Vec<ScanEntry> {
 fn owner(e: &ScanEntry) -> Vec<String> {
     match e.folder.split_last() {
         Some((last, parent)) if eq_folded(last, NKSC_DIR) => parent.to_vec(),
-        _ => e.folder.clone(),
+        _ => e.folder.to_vec(),
     }
 }
 
+/// INV-20: every entry is accounted for, so the review can list it.
 #[test]
 fn prop_every_entry_lands_in_exactly_one_place() {
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
@@ -939,6 +963,7 @@ fn prop_every_entry_lands_in_exactly_one_place() {
     }
 }
 
+/// INV-04, INV-09, INV-10, INV-19.
 #[test]
 fn prop_groups_hold_only_safe_matching_files() {
     let mut rng = Rng(0xD1B5_4A32_D192_ED03);
@@ -946,7 +971,7 @@ fn prop_groups_hold_only_safe_matching_files() {
     for case in 0..CASES {
         let input = gen_tree(&mut rng);
         let policy = gen_policy(&mut rng);
-        let out = group(input, &policy);
+        let out = group(input.clone(), &policy);
         let mut identities = std::collections::BTreeSet::new();
         n_groups += out.groups.len();
         for g in &out.groups {
@@ -976,7 +1001,11 @@ fn prop_groups_hold_only_safe_matching_files() {
                     !e.folder.iter().any(|c| eq_folded(c, REJECTED_DIR)),
                     "case {case}"
                 );
-                assert_eq!(owner(e), g.folder, "case {case}: within one folder only");
+                assert_eq!(
+                    owner(e),
+                    g.folder.to_vec(),
+                    "case {case}: within one folder only"
+                );
             }
             let photos: Vec<&Photo> = std::iter::once(&g.primary)
                 .chain(&g.raw)
@@ -1008,7 +1037,28 @@ fn prop_groups_hold_only_safe_matching_files() {
                 assert_eq!(g.status, GroupStatus::Ambiguous, "case {case}");
             }
             if g.status == GroupStatus::Ok {
+                // Never split a shot: an `Ok` group holds every photo file of its stem in its
+                // folder, no two of its files fold alike, and its folder was read completely.
                 assert!(g.duplicates.is_empty(), "case {case}");
+                let mut folded = std::collections::BTreeSet::new();
+                assert!(
+                    g.files().all(|e| folded.insert(fold(&e.rel_path()))),
+                    "case {case}"
+                );
+                for e in &input {
+                    if *e.folder != *g.folder {
+                        continue;
+                    }
+                    assert!(!matches!(e.kind, EntryKind::Unreadable(_)), "case {case}");
+                    if eq_folded(&e.name, NKSC_DIR) {
+                        assert_eq!(e.kind, EntryKind::Dir, "case {case}");
+                        assert!(!e.attrs.reparse_point && !e.attrs.cloud_placeholder);
+                    }
+                    let (stem, ext) = split_ext(&e.name);
+                    if ext.and_then(PhotoKind::from_ext).is_some() && fold(stem) == g.stem_key {
+                        assert!(photos.iter().any(|p| p.entry == *e), "case {case}: {e:?}");
+                    }
+                }
             }
             for s in &g.sidecars {
                 let (base, _) = split_ext(&s.entry.name);
@@ -1065,12 +1115,7 @@ fn prop_grouping_folder_batches_matches_grouping_the_tree() {
         // One batch per owner folder, as the adapter emits them.
         let mut batches: BTreeMap<Vec<String>, Vec<ScanEntry>> = BTreeMap::new();
         for e in input {
-            let key = if e.kind == EntryKind::Dir {
-                e.folder.clone()
-            } else {
-                owner(&e)
-            };
-            batches.entry(key).or_default().push(e);
+            batches.entry(owner(&e)).or_default().push(e);
         }
         let merged = Grouping::merge(batches.into_values().map(|b| group(b, &policy)));
         assert_eq!(merged, whole, "case {case}");
@@ -1154,4 +1199,305 @@ fn prop_matching_ignores_case() {
         assert_eq!(shape(&a), shape(&b), "case {case}");
         assert_eq!(a.unknown.len(), b.unknown.len(), "case {case}");
     }
+}
+
+// --- Never split a shot (proposed ADR 0027) --------------------------------------------------
+
+fn held_back(g: &Grouping) -> Vec<String> {
+    g.excluded
+        .iter()
+        .filter(|x| x.reason == ExclusionReason::HeldBack)
+        .map(|x| x.entry.rel_path())
+        .collect()
+}
+
+/// INV-04: a folder with an entry that could not be described groups nothing.
+#[test]
+fn an_unreadable_entry_holds_back_its_whole_folder() {
+    let out = group(
+        [
+            f(&[], "X.JPG"),
+            f(&[], "X.NEF"),
+            f(&[], "notes.txt"),
+            f(&["NKSC_PARAM"], "X.NEF.nksc"),
+            ScanEntry::new(&[], "X.xmp", EntryKind::Unreadable("denied".into())),
+            f(&["100NIKON"], "Y.JPG"),
+        ],
+        &all(),
+    );
+    assert_eq!(out.groups.len(), 1);
+    assert_eq!(*out.groups[0].folder, ["100NIKON"]);
+    assert!(out.unknown.is_empty());
+    assert_eq!(
+        held_back(&out),
+        ["notes.txt", "X.JPG", "X.NEF", "NKSC_PARAM\\X.NEF.nksc"]
+    );
+    assert_eq!(
+        ExclusionReason::HeldBack.issue_kind(false),
+        Some("held_back")
+    );
+}
+
+/// INV-04, INV-09, INV-10: an `NKSC_PARAM` that cannot be read through holds back its parent.
+#[test]
+fn an_unreadable_or_linked_nksc_param_holds_back_its_parent() {
+    let reparse = Attributes {
+        reparse_point: true,
+        ..Attributes::default()
+    };
+    let cloud = Attributes {
+        cloud_placeholder: true,
+        ..Attributes::default()
+    };
+    let unlisted = ScanEntry::new(
+        &[],
+        "NKSC_PARAM",
+        EntryKind::Unlisted {
+            reason: ExclusionReason::Unreadable,
+            detail: "denied".into(),
+        },
+    );
+    for broken in [
+        with(d(&[], "NKSC_PARAM"), reparse),
+        with(d(&[], "nksc_param"), cloud),
+        with(ScanEntry::new(&[], "NKSC_PARAM", EntryKind::Other), reparse),
+        with(f(&[], "NKSC_PARAM"), reparse),
+        ScanEntry::new(&[], "NKSC_PARAM", EntryKind::Unreadable("gone".into())),
+        unlisted,
+    ] {
+        let out = group(
+            [
+                f(&[], "X.JPG"),
+                f(&[], "X.NEF"),
+                broken.clone(),
+                f(&["100NIKON"], "Y.JPG"),
+            ],
+            &all(),
+        );
+        assert_eq!(out.groups.len(), 1, "{broken:?}");
+        assert_eq!(*out.groups[0].folder, ["100NIKON"]);
+        assert_eq!(held_back(&out), ["X.JPG", "X.NEF"], "{broken:?}");
+        assert!(
+            out.excluded.iter().any(|x| x.entry == broken),
+            "the cause is listed"
+        );
+    }
+    // A plain file named NKSC_PARAM is just an unknown file.
+    let out = group([f(&[], "X.JPG"), f(&[], "NKSC_PARAM")], &all());
+    assert_eq!(out.groups[0].status, GroupStatus::Ok);
+    assert_eq!(unknown(&out), [("NKSC_PARAM".into(), "unknown_ext")]);
+    // An NKSC_PARAM inside an excluded folder changes nothing outside it.
+    let out = group(
+        [
+            f(&[], "X.JPG"),
+            with(d(&["_rejected"], "NKSC_PARAM"), reparse),
+        ],
+        &all(),
+    );
+    assert_eq!(out.groups[0].status, GroupStatus::Ok);
+}
+
+/// INV-04, INV-06: two members of a group whose paths fold alike make it ambiguous.
+#[test]
+fn case_variant_members_make_the_group_ambiguous() {
+    let cases: [&[ScanEntry]; 3] = [
+        &[f(&[], "X.JPG"), f(&[], "X.xmp"), f(&[], "x.XMP")],
+        &[
+            f(&[], "X.JPG"),
+            f(&[], "X.NEF"),
+            f(&[], "X.NEF.xmp"),
+            f(&[], "x.nef.xmp"),
+        ],
+        &[
+            f(&[], "X.JPG"),
+            f(&["NKSC_PARAM"], "X.JPG.nksc"),
+            f(&["nksc_param"], "X.JPG.nksc"),
+        ],
+    ];
+    for entries in cases {
+        let out = group(entries.to_vec(), &all());
+        assert_eq!(out.groups.len(), 1);
+        let g = &out.groups[0];
+        assert_eq!(
+            g.files().count(),
+            entries.len(),
+            "every file stays in the group"
+        );
+        assert_eq!(g.status, GroupStatus::Ambiguous, "{entries:?}");
+    }
+    // Different files in two NKSC_PARAM spellings do not collide.
+    let out = group(
+        [
+            f(&[], "X.JPG"),
+            f(&[], "X.NEF"),
+            f(&["NKSC_PARAM"], "X.JPG.nksc"),
+            f(&["nksc_param"], "X.NEF.nksc"),
+        ],
+        &all(),
+    );
+    assert_eq!(out.groups[0].status, GroupStatus::Ok);
+}
+
+#[test]
+fn merge_checks_member_collisions_again() {
+    let mut part = group([f(&[], "X.JPG"), f(&[], "X.xmp")], &all());
+    assert_eq!(part.groups[0].status, GroupStatus::Ok);
+    let mut extra = part.groups[0].sidecars[0].clone();
+    extra.entry.name = "x.XMP".into();
+    part.groups[0].sidecars.push(extra);
+    let merged = Grouping::merge([part]);
+    assert_eq!(merged.groups[0].status, GroupStatus::Ambiguous);
+}
+
+/// INV-04, INV-10, INV-19: a JPEG or NEF excluded for its own attributes keeps its shot out of
+/// any plan.
+#[test]
+fn an_excluded_photo_with_the_same_stem_makes_the_group_ambiguous() {
+    let attrs = [
+        Attributes {
+            hidden: true,
+            ..Attributes::default()
+        },
+        Attributes {
+            system: true,
+            ..Attributes::default()
+        },
+        Attributes {
+            cloud_placeholder: true,
+            ..Attributes::default()
+        },
+        Attributes {
+            reparse_point: true,
+            ..Attributes::default()
+        },
+    ];
+    for a in attrs {
+        for name in ["x.nef", "X.jpeg"] {
+            let out = group([f(&[], "X.JPG"), with(f(&[], name), a)], &all());
+            assert_eq!(out.groups.len(), 1);
+            assert_eq!(out.groups[0].status, GroupStatus::Ambiguous, "{name} {a:?}");
+        }
+    }
+    let mut lossy = f(&[], "X.NEF");
+    lossy.name_lossy = true;
+    let other = ScanEntry::new(&[], "X.NEF", EntryKind::Other);
+    for e in [lossy, other] {
+        let out = group([f(&[], "X.JPG"), e], &all());
+        assert_eq!(out.groups[0].status, GroupStatus::Ambiguous);
+    }
+    // Not for another stem, another folder, a sidecar, or a photo inside NKSC_PARAM.
+    let hidden = Attributes {
+        hidden: true,
+        ..Attributes::default()
+    };
+    let out = group(
+        [
+            f(&[], "X.JPG"),
+            with(f(&[], "Y.NEF"), hidden),
+            with(f(&["100NIKON"], "X.NEF"), hidden),
+            with(f(&[], "X.xmp"), hidden),
+            with(f(&["NKSC_PARAM"], "X.NEF"), hidden),
+        ],
+        &all(),
+    );
+    assert_eq!(out.groups[0].status, GroupStatus::Ok);
+}
+
+/// Threat model T19: folders deeper than the cap are not entered.
+#[test]
+fn folders_deeper_than_the_cap_are_not_entered() {
+    let p = ScanPolicy {
+        max_depth: 2,
+        ..ScanPolicy::new(true)
+    };
+    assert_eq!(p.dir_action(&d(&["a"], "b")), DirAction::Enter);
+    assert_eq!(
+        p.dir_action(&d(&["a", "b"], "c")),
+        DirAction::Skip(ExclusionReason::TooDeep)
+    );
+    // NKSC_PARAM is part of its parent, so it is read at the cap.
+    assert_eq!(
+        p.dir_action(&d(&["a", "b"], "NKSC_PARAM")),
+        DirAction::Sidecars
+    );
+    let out = group(
+        [
+            f(&["a", "b"], "X.JPG"),
+            f(&["a", "b", "NKSC_PARAM"], "X.JPG.nksc"),
+            f(&["a", "b", "c"], "Y.JPG"),
+            d(&["a", "b"], "c"),
+        ],
+        &p,
+    );
+    assert_eq!(out.groups.len(), 1);
+    assert_eq!(out.groups[0].sidecars.len(), 1);
+    assert_eq!(
+        excluded(&out),
+        [
+            ("a\\b\\c".into(), ExclusionReason::TooDeep),
+            ("a\\b\\c\\Y.JPG".into(), ExclusionReason::TooDeep),
+        ]
+    );
+    assert_eq!(ExclusionReason::TooDeep.issue_kind(true), Some("too_deep"));
+}
+
+/// Threat model T19: a folder over the entry cap groups nothing.
+#[test]
+fn a_folder_over_the_entry_cap_groups_nothing() {
+    let p = ScanPolicy {
+        max_entries_per_folder: 4,
+        ..ScanPolicy::new(true)
+    };
+    let four = [
+        f(&[], "X.JPG"),
+        f(&[], "X.NEF"),
+        f(&["NKSC_PARAM"], "X.NEF.nksc"),
+        d(&[], "NKSC_PARAM"),
+    ];
+    assert_eq!(group(four.clone(), &p).groups.len(), 1);
+    let mut five = four.to_vec();
+    five.push(f(&[], "notes.txt"));
+    five.push(f(&["sub"], "Y.JPG"));
+    let out = group(five, &p);
+    assert_eq!(groups_of(&out), ["sub|Y"]);
+    assert!(out.unknown.is_empty());
+    let too_large = out
+        .excluded
+        .iter()
+        .filter(|x| x.reason == ExclusionReason::TooLarge)
+        .count();
+    assert_eq!(too_large, 4);
+    assert_eq!(
+        ExclusionReason::TooLarge.issue_kind(false),
+        Some("too_large")
+    );
+}
+
+fn groups_of(g: &Grouping) -> Vec<String> {
+    g.groups
+        .iter()
+        .map(|g| format!("{}|{}", g.folder.join("\\"), g.stem))
+        .collect()
+}
+
+#[test]
+fn default_caps_are_generous() {
+    let p = ScanPolicy::default();
+    assert!(!p.include_subfolders && p.destination.is_none());
+    assert_eq!(p.max_depth, 32);
+    assert_eq!(p.max_entries_per_folder, 100_000);
+    assert_eq!(ScanPolicy::new(true).max_depth, DEFAULT_MAX_DEPTH);
+}
+
+#[test]
+fn entries_of_a_folder_share_its_components() {
+    let folder: Arc<[String]> = vec!["100NIKON".to_owned()].into();
+    let a = ScanEntry::in_folder(Arc::clone(&folder), "X.JPG", EntryKind::File);
+    let b = ScanEntry::in_folder(Arc::clone(&folder), "X.NEF", EntryKind::File);
+    assert!(Arc::ptr_eq(&a.folder, &b.folder));
+    let out = group([a, b], &all());
+    assert!(Arc::ptr_eq(
+        &out.groups[0].primary.entry.folder,
+        &out.groups[0].raw.as_ref().unwrap().entry.folder
+    ));
 }

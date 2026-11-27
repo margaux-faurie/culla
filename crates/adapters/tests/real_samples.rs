@@ -117,10 +117,7 @@ fn real_samples_scan_into_pairs_and_lone_nefs() {
         println!("skipped: CULLA_REAL_SAMPLES is not set");
         return;
     };
-    let policy = ScanPolicy {
-        include_subfolders: true,
-        destination: None,
-    };
+    let policy = ScanPolicy::new(true);
     let (g, summary) = scan_and_group(Path::new(&root), &policy).unwrap();
     let mut files = Vec::new();
     nefs(Path::new(&root), &mut files);

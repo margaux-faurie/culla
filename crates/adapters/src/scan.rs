@@ -8,6 +8,28 @@
 //! is seen as a reparse point and is never entered. Which folders are entered, and how files
 //! group, is decided by `culla_core::grouping`.
 //!
+//! The walk lives here over `std::fs` for now. In M2 it moves behind the core `FileSystem`
+//! port (implemented in `winfs`), so the recording fake can prove it read-only like the rest
+//! of a session (testing.md §4; proposed ADR 0027).
+//!
+//! # Never a partial folder
+//!
+//! A folder is listed completely or not at all. If any entry cannot be described, if the
+//! listing fails part-way, or if the folder has more than
+//! [`ScanPolicy::max_entries_per_folder`] entries (listing stops at the first entry over the
+//! cap), none of its entries is emitted: the folder is reported once, as an
+//! [`EntryKind::Unlisted`] entry against its parent. The same holds for a folder's
+//! `NKSC_PARAM`, and the core then holds back the parent's files too.
+//!
+//! # Swaps (threat model T2)
+//!
+//! Each folder is checked with `symlink_metadata` just before it is listed, and refused if it
+//! has become a link, a placeholder or anything but a folder since its parent was listed. That
+//! narrows the window but does not close it: the listing still goes by path. Scan output is
+//! therefore not trusted against a swap; preflight and every apply step re-check each path
+//! component through handles, and handle-relative listing with `FILE_FLAG_OPEN_REPARSE_POINT`
+//! comes with `winfs` in M2.
+//!
 //! # Batches
 //!
 //! Folders are walked depth-first with each folder's children in folded-name order, and each
@@ -15,7 +37,8 @@
 //! can be shown before the rest of the tree is listed (US-01). A folder's `NKSC_PARAM` is listed
 //! with it and its entries go into the same batch, since its `*.nksc` files belong to the
 //! parent's photos. Grouping a batch with [`culla_core::grouping::group`] therefore gives that
-//! folder's groups; [`Grouping::merge`] combines them.
+//! folder's groups; [`Grouping::merge`] combines them. Every entry of a folder shares one
+//! `Arc` of its components.
 //!
 //! # Windows attributes
 //!
@@ -24,7 +47,8 @@
 //! `MetadataExt::file_attributes`. The reparse tag itself is not read yet (`winfs`, M2), so a
 //! hydrated cloud file without those attributes is reported as a reparse point rather than a
 //! placeholder; it is excluded either way. On other platforms only symlinks are reparse points
-//! and the attributes are false (dot names still count as hidden, in the core).
+//! and the attributes are false (dot names still count as hidden, in the core). Junctions and
+//! the Windows attributes are covered by the `windows-it` suite in M2.
 //!
 //! # Not in this slice
 //!
@@ -37,6 +61,7 @@ use std::fs::{self, DirEntry, Metadata};
 use std::io;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use culla_core::grouping::{
@@ -52,14 +77,14 @@ pub struct ScanBatch {
     /// Its entries in folded-name order, then those of its `NKSC_PARAM`.
     ///
     /// A subfolder that could not be listed gets a batch of its own, whose `folder` is the
-    /// parent and whose only entry names the subfolder as [`EntryKind::Unreadable`].
+    /// parent and whose only entry names the subfolder as [`EntryKind::Unlisted`].
     pub entries: Vec<ScanEntry>,
 }
 
 /// Counts for a finished or stopped scan.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ScanSummary {
-    /// Folders visited (listed or found unreadable), `NKSC_PARAM` folders included.
+    /// Folders visited (listed or found unlistable), `NKSC_PARAM` folders included.
     pub folders: u64,
     /// Entries emitted.
     pub entries: u64,
@@ -76,6 +101,11 @@ pub enum ScanError {
     NotADirectory,
     /// The root is a link or a cloud placeholder, so it is refused (file-engine §3.2).
     Refused(ExclusionReason),
+    /// The root has more entries than the cap.
+    TooLarge {
+        /// [`ScanPolicy::max_entries_per_folder`].
+        cap: usize,
+    },
 }
 
 impl fmt::Display for ScanError {
@@ -84,6 +114,7 @@ impl fmt::Display for ScanError {
             Self::Io(e) => write!(f, "cannot read the folder: {e}"),
             Self::NotADirectory => f.write_str("not a folder"),
             Self::Refused(r) => write!(f, "folder refused: {r}"),
+            Self::TooLarge { cap } => write!(f, "the folder has more than {cap} entries"),
         }
     }
 }
@@ -97,7 +128,46 @@ impl std::error::Error for ScanError {
     }
 }
 
-impl From<io::Error> for ScanError {
+/// Why a folder was not listed.
+#[derive(Debug)]
+enum ListFailure {
+    Io(io::Error),
+    NotADirectory,
+    Refused(ExclusionReason),
+    TooLarge(usize),
+}
+
+impl ListFailure {
+    fn into_root_error(self) -> ScanError {
+        match self {
+            Self::Io(e) => ScanError::Io(e),
+            Self::NotADirectory => ScanError::NotADirectory,
+            Self::Refused(r) => ScanError::Refused(r),
+            Self::TooLarge(cap) => ScanError::TooLarge { cap },
+        }
+    }
+
+    fn into_kind(self) -> EntryKind {
+        let (reason, detail) = match self {
+            Self::Io(e) => (ExclusionReason::Unreadable, e.to_string()),
+            Self::NotADirectory => (
+                ExclusionReason::Unreadable,
+                "no longer a folder when it was listed".to_owned(),
+            ),
+            Self::Refused(r) => (
+                r,
+                "became a link or a placeholder during the scan".to_owned(),
+            ),
+            Self::TooLarge(cap) => (
+                ExclusionReason::TooLarge,
+                format!("more than {cap} entries"),
+            ),
+        };
+        EntryKind::Unlisted { reason, detail }
+    }
+}
+
+impl From<io::Error> for ListFailure {
     fn from(e: io::Error) -> Self {
         Self::Io(e)
     }
@@ -106,56 +176,46 @@ impl From<io::Error> for ScanError {
 /// Walks `root` and hands each folder's entries to `on_batch`, in walk order. Return
 /// [`ControlFlow::Break`] from the callback to stop. Read-only.
 ///
-/// A subfolder that cannot be listed is reported as an [`EntryKind::Unreadable`] entry, and none
-/// of its entries are emitted (a partial listing could split a group).
-///
 /// # Errors
 ///
-/// When the root cannot be read, is not a folder, or is a link or a cloud placeholder.
+/// When the root cannot be read or listed completely, is not a folder, is a link or a cloud
+/// placeholder, or has more entries than the cap.
 pub fn scan(
     root: &Path,
     policy: &ScanPolicy,
     mut on_batch: impl FnMut(ScanBatch) -> ControlFlow<()>,
 ) -> Result<ScanSummary, ScanError> {
-    // Not following a link at the root: a link there is refused, not resolved.
-    let meta = fs::symlink_metadata(root)?;
-    let attrs = attributes(&meta);
-    if attrs.cloud_placeholder {
-        return Err(ScanError::Refused(ExclusionReason::CloudPlaceholder));
-    }
-    if attrs.reparse_point {
-        return Err(ScanError::Refused(ExclusionReason::ReparsePoint));
-    }
-    if !meta.is_dir() {
-        return Err(ScanError::NotADirectory);
-    }
+    check_folder(root).map_err(ListFailure::into_root_error)?;
 
     let mut summary = ScanSummary::default();
     // Folders still to list, the next one last.
     let mut stack: Vec<Vec<String>> = vec![Vec::new()];
     while let Some(folder) = stack.pop() {
-        let mut batch_folder = folder.clone();
-        let mut entries = match list(&path_of(root, &folder), &folder) {
-            Ok(entries) => entries,
-            Err(e) if folder.is_empty() => return Err(ScanError::Io(e)),
-            Err(e) => {
+        summary.folders += 1;
+        let (batch_folder, mut entries) = match list(root, &folder, policy) {
+            Ok(entries) => (folder, entries),
+            Err(fail) if folder.is_empty() => return Err(fail.into_root_error()),
+            Err(fail) => {
                 // Reported against its parent; nothing below it is emitted.
-                let name = batch_folder.pop().unwrap_or_default();
-                vec![unreadable(&batch_folder, name, &e)]
+                let mut parent = folder;
+                let name = parent.pop().unwrap_or_default();
+                let entry = ScanEntry::in_folder(parent.clone().into(), &name, fail.into_kind());
+                (parent, vec![entry])
             }
         };
-        summary.folders += 1;
 
         // Children to enter, in walk order. NKSC_PARAM is listed now, into this batch.
         let mut next: Vec<Vec<String>> = Vec::new();
         let mut sidecar_entries = Vec::new();
-        for e in entries.iter().filter(|e| e.kind == EntryKind::Dir) {
+        for e in &mut entries {
+            if e.kind != EntryKind::Dir {
+                continue;
+            }
             match policy.dir_action(e) {
                 DirAction::Enter => next.push(e.components()),
                 DirAction::Sidecars => {
-                    let path = e.components();
                     summary.folders += 1;
-                    match list(&path_of(root, &path), &path) {
+                    match list(root, &e.components(), policy) {
                         Ok(inner) => {
                             for d in inner.iter().filter(|d| d.kind == EntryKind::Dir) {
                                 if policy.dir_action(d) == DirAction::Enter {
@@ -164,9 +224,8 @@ pub fn scan(
                             }
                             sidecar_entries.extend(inner);
                         }
-                        Err(err) => {
-                            sidecar_entries.push(unreadable(&e.folder, e.name.clone(), &err));
-                        }
+                        // The parent's sidecars are incomplete: the core holds it back.
+                        Err(fail) => e.kind = fail.into_kind(),
                     }
                 }
                 DirAction::Skip(_) => {}
@@ -211,59 +270,56 @@ fn path_of(root: &Path, components: &[String]) -> PathBuf {
     p
 }
 
-fn unreadable(folder: &[String], name: String, err: &io::Error) -> ScanEntry {
-    ScanEntry {
-        folder: folder.to_vec(),
-        name,
-        name_lossy: false,
-        kind: EntryKind::Unreadable(err.to_string()),
-        size: 0,
-        mtime_ns: None,
-        attrs: Attributes::default(),
+/// Refuses a folder that is now a link, a placeholder or not a folder (checked without
+/// following it).
+fn check_folder(path: &Path) -> Result<(), ListFailure> {
+    let meta = fs::symlink_metadata(path)?;
+    let attrs = attributes(&meta);
+    if attrs.cloud_placeholder {
+        return Err(ListFailure::Refused(ExclusionReason::CloudPlaceholder));
     }
+    if attrs.reparse_point {
+        return Err(ListFailure::Refused(ExclusionReason::ReparsePoint));
+    }
+    if !meta.is_dir() {
+        return Err(ListFailure::NotADirectory);
+    }
+    Ok(())
 }
 
-/// Lists one folder completely, sorted by folded name. Any error while listing fails the whole
-/// folder.
-fn list(dir: &Path, folder: &[String]) -> io::Result<Vec<ScanEntry>> {
+/// Lists one folder completely, sorted by folded name. Any error, or one entry over the cap,
+/// fails the whole folder.
+fn list(
+    root: &Path,
+    components: &[String],
+    policy: &ScanPolicy,
+) -> Result<Vec<ScanEntry>, ListFailure> {
+    let dir = path_of(root, components);
+    check_folder(&dir)?;
+    let folder: Arc<[String]> = components.into();
+    let cap = policy.max_entries_per_folder;
     let mut out = Vec::new();
-    for item in fs::read_dir(dir)? {
-        out.push(describe(&item?, folder));
+    for item in fs::read_dir(&dir)? {
+        if out.len() >= cap {
+            return Err(ListFailure::TooLarge(cap));
+        }
+        out.push(describe(&item?, &folder)?);
     }
     out.sort_by_cached_key(|e| (fold(&e.name), e.name.clone()));
     Ok(out)
 }
 
 /// Describes one listed entry without following it.
-fn describe(entry: &DirEntry, folder: &[String]) -> ScanEntry {
+fn describe(entry: &DirEntry, folder: &Arc<[String]>) -> io::Result<ScanEntry> {
     let (name, name_lossy) = match entry.file_name().into_string() {
         Ok(s) => (s, false),
         Err(os) => (os.to_string_lossy().into_owned(), true),
     };
-    let mut e = ScanEntry {
-        folder: folder.to_vec(),
-        name,
-        name_lossy,
-        kind: EntryKind::Other,
-        size: 0,
-        mtime_ns: None,
-        attrs: Attributes::default(),
-    };
     // Both calls describe the entry itself, never a link's target.
-    let file_type = match entry.file_type() {
-        Ok(t) => t,
-        Err(err) => {
-            e.kind = EntryKind::Unreadable(err.to_string());
-            return e;
-        }
-    };
-    let meta = match entry.metadata() {
-        Ok(m) => m,
-        Err(err) => {
-            e.kind = EntryKind::Unreadable(err.to_string());
-            return e;
-        }
-    };
+    let file_type = entry.file_type()?;
+    let meta = entry.metadata()?;
+    let mut e = ScanEntry::in_folder(Arc::clone(folder), &name, EntryKind::Other);
+    e.name_lossy = name_lossy;
     e.attrs = attributes(&meta);
     if file_type.is_symlink() {
         e.attrs.reparse_point = true;
@@ -274,7 +330,7 @@ fn describe(entry: &DirEntry, folder: &[String]) -> ScanEntry {
         e.size = meta.len();
     }
     e.mtime_ns = meta.modified().ok().and_then(unix_ns);
-    e
+    Ok(e)
 }
 
 fn unix_ns(t: SystemTime) -> Option<i64> {
@@ -328,5 +384,29 @@ mod tests {
     fn path_of_joins_components() {
         let p = path_of(Path::new("root"), &["a".to_owned(), "b".to_owned()]);
         assert_eq!(p, Path::new("root").join("a").join("b"));
+    }
+
+    #[test]
+    fn list_failures_map_to_reasons() {
+        let kind = ListFailure::TooLarge(5).into_kind();
+        assert!(matches!(
+            kind,
+            EntryKind::Unlisted {
+                reason: ExclusionReason::TooLarge,
+                ..
+            }
+        ));
+        let kind = ListFailure::Refused(ExclusionReason::ReparsePoint).into_kind();
+        assert!(matches!(
+            kind,
+            EntryKind::Unlisted {
+                reason: ExclusionReason::ReparsePoint,
+                ..
+            }
+        ));
+        assert!(matches!(
+            ListFailure::TooLarge(5).into_root_error(),
+            ScanError::TooLarge { cap: 5 }
+        ));
     }
 }

@@ -6,23 +6,35 @@
 //!
 //! - which folders the walk enters ([`ScanPolicy::dir_action`]): never `_rejected` (at any
 //!   depth), an in-source destination, a reparse point, a cloud placeholder, a hidden or system
-//!   folder, or a folder with an invalid name; `NKSC_PARAM` is read as part of its parent;
+//!   folder, a folder with an invalid name or one deeper than [`ScanPolicy::max_depth`];
+//!   `NKSC_PARAM` is read as part of its parent;
 //! - how the files of one folder form groups ([`group`]): a primary (the JPEG, else the NEF), an
 //!   optional raw (the NEF next to a JPEG), sidecars bound to the file they describe, plus the
 //!   files that are listed but never touched ([`Unknown`]) and the entries left out with a reason
 //!   ([`Excluded`]).
 //!
+//! # Never split a shot
+//!
+//! When the scan cannot be sure it sees every file of a shot, it holds the shot back instead of
+//! grouping it partially (proposed ADR 0027):
+//!
+//! - A folder with an entry that could not be described ([`EntryKind::Unreadable`]), with more
+//!   than [`ScanPolicy::max_entries_per_folder`] entries, or whose `NKSC_PARAM` could not be
+//!   read (a link, a placeholder, unreadable) groups nothing: every file in it is excluded as
+//!   [`ExclusionReason::HeldBack`] or [`ExclusionReason::TooLarge`], next to the entry that
+//!   caused it.
+//! - A group becomes [`GroupStatus::Ambiguous`] (shown, decidable, planned with no operations,
+//!   file-engine §3.3) when two JPEGs or two NEFs share its folded stem, when two of its files
+//!   have the same folded path (`X.xmp` and `x.XMP`, two `NKSC_PARAM` folders differing by
+//!   case), when a JPEG or NEF with its stem was excluded for its own attributes (hidden,
+//!   placeholder, link, unreadable, invalid name), or when another group has the same folded
+//!   folder and stem (two folders differing only by case).
+//!
 //! # Matching
 //!
 //! Everything is matched within one folder, never across folders (ADR 0007), so `DSC_0001.JPG`
 //! in `100NIKON` and `DSC_0001.NEF` in `101NIKON` are two groups. Extensions compare ASCII
-//! case-insensitively and stems and names with [`fold`], as Windows does. Two JPEGs or two NEFs
-//! whose stems fold to the same value (`X.JPG` and `X.jpeg`, or `X.JPG` and `x.JPG` in a
-//! case-sensitive folder) make the group [`GroupStatus::Ambiguous`]: it is shown and can be
-//! decided, but the plan gives it no operations (file-engine §3.3). Two folders whose names fold
-//! to the same value (only possible in a case-sensitive folder) are kept apart, and every group
-//! whose folder and stem collide with another's under folding is marked ambiguous too
-//! (proposed ADR 0027).
+//! case-insensitively and stems and names with [`fold`], as Windows does.
 //!
 //! # Order
 //!
@@ -45,8 +57,9 @@
 #[cfg(test)]
 mod tests;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::sync::Arc;
 
 use crate::names::{eq_folded, fold, split_ext, validate_component};
 
@@ -56,6 +69,13 @@ pub const REJECTED_DIR: &str = "_rejected";
 pub const NKSC_DIR: &str = "NKSC_PARAM";
 /// Extension of Culla's own partial copies (file-engine §9.4). Never grouped.
 pub const PARTIAL_EXT: &str = "culla-partial";
+/// Default for [`ScanPolicy::max_depth`]. A card is `DCIM\100NIKON` (depth 2); 32 leaves room
+/// for any archive layout while bounding a crafted tree (threat model T19, ADR 0027).
+pub const DEFAULT_MAX_DEPTH: usize = 32;
+/// Default for [`ScanPolicy::max_entries_per_folder`]. A DCF folder holds at most 9,999 files;
+/// even with a sidecar of each kind a camera folder stays far below this (threat model T19,
+/// ADR 0027).
+pub const DEFAULT_MAX_ENTRIES_PER_FOLDER: usize = 100_000;
 
 /// File attributes the scan needs, as read from the directory listing without following links.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -82,15 +102,24 @@ pub enum EntryKind {
     Dir,
     /// Anything else: a symlink, a device, a socket.
     Other,
-    /// The entry, or the folder it names, could not be read; the text says why.
+    /// The entry could not be described; the text says why. Its whole folder is held back.
     Unreadable(String),
+    /// The folder this entry names could not be listed completely, so nothing in it was
+    /// emitted. `reason` is why (unreadable, too large, now a link or a placeholder).
+    Unlisted {
+        /// Why the folder was not listed.
+        reason: ExclusionReason,
+        /// Details for the log.
+        detail: String,
+    },
 }
 
 /// One directory entry, as the adapter saw it. Plain data: building one does no I/O.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ScanEntry {
     /// The folder holding the entry, as components from the source root (empty for the root).
-    pub folder: Vec<String>,
+    /// Shared by every entry of a folder.
+    pub folder: Arc<[String]>,
     /// The entry's name as listed (lossily converted when `name_lossy` is set).
     pub name: String,
     /// The listed name was not valid Unicode, so `name` is a lossy display form. Such an entry
@@ -110,8 +139,14 @@ impl ScanEntry {
     /// An entry of `kind` named `name` in `folder`, with size 0, no mtime and no attributes.
     #[must_use]
     pub fn new(folder: &[&str], name: &str, kind: EntryKind) -> Self {
+        Self::in_folder(folder.iter().map(|c| (*c).to_owned()).collect(), name, kind)
+    }
+
+    /// As [`ScanEntry::new`], sharing an existing folder.
+    #[must_use]
+    pub fn in_folder(folder: Arc<[String]>, name: &str, kind: EntryKind) -> Self {
         Self {
-            folder: folder.iter().map(|c| (*c).to_owned()).collect(),
+            folder,
             name: name.to_owned(),
             name_lossy: false,
             kind,
@@ -138,7 +173,7 @@ impl ScanEntry {
     #[must_use]
     pub fn rel_path(&self) -> String {
         let mut s = String::new();
-        for c in &self.folder {
+        for c in self.folder.iter() {
             s.push_str(c);
             s.push('\\');
         }
@@ -149,7 +184,7 @@ impl ScanEntry {
     /// The folder and the name as one list of components.
     #[must_use]
     pub fn components(&self) -> Vec<String> {
-        let mut path = self.folder.clone();
+        let mut path = self.folder.to_vec();
         path.push(self.name.clone());
         path
     }
@@ -164,6 +199,8 @@ pub enum ExclusionReason {
     Destination,
     /// A folder below the source root while "include subfolders" is off.
     NotIncluded,
+    /// A folder deeper than [`ScanPolicy::max_depth`], or anything under one.
+    TooDeep,
     /// A reparse point (symlink, junction, mount point): never followed (threat model T2).
     ReparsePoint,
     /// A cloud placeholder: reading it would trigger a download (threat model T2b).
@@ -180,22 +217,44 @@ pub enum ExclusionReason {
     NotAFile,
     /// Could not be read.
     Unreadable,
+    /// A folder with more than [`ScanPolicy::max_entries_per_folder`] entries, or a file in one.
+    TooLarge,
+    /// A file in a folder that could not be read completely (an entry that could not be
+    /// described, or its `NKSC_PARAM`), so none of its shots is grouped.
+    HeldBack,
 }
 
 impl ExclusionReason {
     /// The `scan_issue.kind` this exclusion is reported as (file-engine §2.3), or `None` when it
     /// is only counted. Hidden and system folders are counted, hidden files reported.
+    /// `too_deep`, `too_large` and `held_back` are proposed in ADR 0027.
     #[must_use]
     pub fn issue_kind(self, is_dir: bool) -> Option<&'static str> {
         match self {
             Self::RejectedFolder | Self::Destination | Self::NotIncluded => None,
+            Self::TooDeep => Some("too_deep"),
             Self::ReparsePoint => Some("reparse_point"),
             Self::CloudPlaceholder => Some("cloud_placeholder"),
             Self::HiddenOrSystem => (!is_dir).then_some("hidden_or_system"),
             Self::InvalidName => Some("invalid_name"),
             Self::CullaPartial => Some("foreign_partial"),
             Self::NotAFile | Self::Unreadable => Some("unreadable"),
+            Self::TooLarge => Some("too_large"),
+            Self::HeldBack => Some("held_back"),
         }
+    }
+
+    /// True for the reasons that come from the entry itself, not from the folder it is in.
+    fn is_own(self) -> bool {
+        matches!(
+            self,
+            Self::ReparsePoint
+                | Self::CloudPlaceholder
+                | Self::HiddenOrSystem
+                | Self::InvalidName
+                | Self::NotAFile
+                | Self::Unreadable
+        )
     }
 }
 
@@ -205,6 +264,7 @@ impl fmt::Display for ExclusionReason {
             Self::RejectedFolder => "inside a _rejected folder",
             Self::Destination => "inside the destination folder",
             Self::NotIncluded => "in a subfolder, and subfolders are not included",
+            Self::TooDeep => "too deep in the folder tree",
             Self::ReparsePoint => "a link or junction, not followed",
             Self::CloudPlaceholder => "a cloud placeholder, not downloaded",
             Self::HiddenOrSystem => "hidden or system",
@@ -212,6 +272,8 @@ impl fmt::Display for ExclusionReason {
             Self::CullaPartial => "a partial copy left by Culla",
             Self::NotAFile => "not a file or folder",
             Self::Unreadable => "unreadable",
+            Self::TooLarge => "too many entries in one folder",
+            Self::HeldBack => "held back: its folder could not be read completely",
         })
     }
 }
@@ -222,15 +284,15 @@ pub enum DirAction {
     /// List it as a folder of its own.
     Enter,
     /// `NKSC_PARAM`: list it now and put its entries in the parent folder's batch, because its
-    /// `*.nksc` files are matched against the parent's photos. Entered even when hidden or when
-    /// subfolders are off.
+    /// `*.nksc` files are matched against the parent's photos. Entered even when hidden, when
+    /// subfolders are off or at the depth cap.
     Sidecars,
     /// Do not list it. The reason is reported in [`Grouping::excluded`].
     Skip(ExclusionReason),
 }
 
-/// Session options that shape the scan.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// Session options and caps that shape the scan.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScanPolicy {
     /// "Include subfolders" (SPEC §2). When off, only the root folder and its `NKSC_PARAM` are
     /// read.
@@ -240,9 +302,30 @@ pub struct ScanPolicy {
     /// identity, file-engine §3.2); this module compares components folded. An empty list (the
     /// source itself) excludes nothing here: preflight P6 refuses it.
     pub destination: Option<Vec<String>>,
+    /// Deepest folder entered, in components below the source root (threat model T19).
+    pub max_depth: usize,
+    /// Most entries a folder may have; a larger folder groups nothing (threat model T19).
+    pub max_entries_per_folder: usize,
+}
+
+impl Default for ScanPolicy {
+    fn default() -> Self {
+        Self::new(false)
+    }
 }
 
 impl ScanPolicy {
+    /// A policy with no destination and the default caps.
+    #[must_use]
+    pub fn new(include_subfolders: bool) -> Self {
+        Self {
+            include_subfolders,
+            destination: None,
+            max_depth: DEFAULT_MAX_DEPTH,
+            max_entries_per_folder: DEFAULT_MAX_ENTRIES_PER_FOLDER,
+        }
+    }
+
     /// What the walk does with the folder `dir` (an entry of kind [`EntryKind::Dir`]).
     ///
     /// Any other kind of entry gets the reason it is left out ([`DirAction::Skip`]).
@@ -290,12 +373,15 @@ impl ScanPolicy {
                 return Some(ExclusionReason::HiddenOrSystem);
             }
         }
-        let root_only = match path {
-            [] => true,
-            [only] => eq_folded(only, NKSC_DIR),
-            _ => false,
+        // NKSC_PARAM is part of its parent: it counts for neither depth nor "subfolders".
+        let depth = match path.split_last() {
+            Some((last, parent)) if is_sidecar_dir(parent, last) => parent.len(),
+            _ => path.len(),
         };
-        if !self.include_subfolders && !root_only {
+        if depth > self.max_depth {
+            return Some(ExclusionReason::TooDeep);
+        }
+        if !self.include_subfolders && depth > 0 {
             return Some(ExclusionReason::NotIncluded);
         }
         None
@@ -303,14 +389,14 @@ impl ScanPolicy {
 
     /// Why the file `e` is left out of grouping, if it is.
     fn file_exclusion(&self, e: &ScanEntry) -> Option<ExclusionReason> {
+        if let Some(r) = self.path_exclusion(&e.folder) {
+            return Some(r);
+        }
         if let Some(r) = entry_exclusion(e) {
             return Some(r);
         }
         if e.kind != EntryKind::File {
             return Some(ExclusionReason::NotAFile);
-        }
-        if let Some(r) = self.path_exclusion(&e.folder) {
-            return Some(r);
         }
         if e.attrs.hidden || e.attrs.system || is_hidden_name(&e.name) {
             return Some(ExclusionReason::HiddenOrSystem);
@@ -323,12 +409,27 @@ impl ScanPolicy {
         }
         None
     }
+
+    /// True when `e` is the `NKSC_PARAM` of its folder and that folder's sidecars cannot be
+    /// read through it: a folder that is skipped, or anything other than a plain file.
+    fn breaks_sidecar_dir(&self, e: &ScanEntry) -> bool {
+        if !is_sidecar_dir(&e.folder, &e.name) {
+            return false;
+        }
+        match e.kind {
+            EntryKind::Dir => matches!(self.dir_action(e), DirAction::Skip(_)),
+            EntryKind::File => e.attrs.reparse_point || e.attrs.cloud_placeholder,
+            EntryKind::Other | EntryKind::Unreadable(_) | EntryKind::Unlisted { .. } => true,
+        }
+    }
 }
 
 /// Exclusions that hold for any entry, from its own listing data.
 fn entry_exclusion(e: &ScanEntry) -> Option<ExclusionReason> {
-    if matches!(e.kind, EntryKind::Unreadable(_)) {
-        return Some(ExclusionReason::Unreadable);
+    match &e.kind {
+        EntryKind::Unreadable(_) => return Some(ExclusionReason::Unreadable),
+        EntryKind::Unlisted { reason, .. } => return Some(*reason),
+        _ => {}
     }
     if e.attrs.cloud_placeholder {
         return Some(ExclusionReason::CloudPlaceholder);
@@ -355,6 +456,15 @@ fn is_sidecar_dir(parent: &[String], name: &str) -> bool {
 
 fn same_path(a: &[String], b: &[String]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| eq_folded(x, y))
+}
+
+/// The folder whose groups an entry belongs to: its own folder, or the parent of the
+/// `NKSC_PARAM` it sits in. The flag says whether it sits in that `NKSC_PARAM`.
+fn owner_of(e: &ScanEntry) -> (&[String], bool) {
+    match e.folder.split_last() {
+        Some((last, parent)) if is_sidecar_dir(parent, last) => (parent, true),
+        _ => (&e.folder, false),
+    }
 }
 
 /// JPEG or NEF.
@@ -446,10 +556,9 @@ pub struct Sidecar {
 /// Whether a group can be planned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GroupStatus {
-    /// One JPEG at most and one NEF at most.
+    /// Every file of the shot is known and none is in doubt.
     Ok,
-    /// Two JPEGs or two NEFs with the same folded stem, or a folder and stem that collide with
-    /// another group's under folding: shown and decidable, but planned with no operations.
+    /// Shown and decidable, but planned with no operations: see the module docs for when.
     Ambiguous,
 }
 
@@ -457,7 +566,7 @@ pub enum GroupStatus {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Group {
     /// The folder, as components from the source root.
-    pub folder: Vec<String>,
+    pub folder: Arc<[String]>,
     /// The stem of the primary, as written.
     pub stem: String,
     /// The stem folded: with the folded folder, the group's identity in a session.
@@ -505,6 +614,12 @@ impl Group {
             .chain(self.raw.as_ref().map(|p| &p.entry))
             .chain(self.duplicates.iter().map(|p| &p.entry))
             .chain(self.sidecars.iter().map(|s| &s.entry))
+    }
+
+    /// True when two files of the group have the same folded path.
+    fn has_folded_collision(&self) -> bool {
+        let mut seen = BTreeSet::new();
+        self.files().any(|e| !seen.insert(fold(&e.rel_path())))
     }
 }
 
@@ -575,7 +690,7 @@ impl Grouping {
             out.unknown.extend(part.unknown);
             out.excluded.extend(part.excluded);
         }
-        mark_folded_collisions(&mut out.groups);
+        mark_collisions(&mut out.groups);
         sort_output(&mut out);
         out
     }
@@ -585,6 +700,19 @@ impl Grouping {
 struct Pending {
     entry: ScanEntry,
     in_nksc: bool,
+}
+
+/// Everything known about one owner folder while grouping.
+#[derive(Default)]
+struct Folder {
+    /// Files not excluded on their own.
+    files: Vec<Pending>,
+    /// Entries of the folder (files and folders), counted against the cap.
+    entries: usize,
+    /// Why the whole folder is held back, if it is.
+    hold: Option<ExclusionReason>,
+    /// Folded stems of JPEGs and NEFs excluded for their own attributes.
+    shadowed: BTreeSet<String>,
 }
 
 /// Groups `entries` (file-engine §3.3). Every file entry ends up in exactly one place: a group,
@@ -597,46 +725,84 @@ struct Pending {
 #[must_use]
 pub fn group(entries: impl IntoIterator<Item = ScanEntry>, policy: &ScanPolicy) -> Grouping {
     let mut out = Grouping::default();
-    // Owner folder (exact components) -> its files.
-    let mut folders: BTreeMap<Vec<String>, Vec<Pending>> = BTreeMap::new();
+    let mut folders: BTreeMap<Vec<String>, Folder> = BTreeMap::new();
     for entry in entries {
+        let (owner, in_nksc) = owner_of(&entry);
+        if !folders.contains_key(owner) {
+            folders.insert(owner.to_vec(), Folder::default());
+        }
+        let Some(folder) = folders.get_mut(owner) else {
+            continue;
+        };
+        // A folder that could not be listed is reported in its own batch, against its parent:
+        // it is not one of the parent's entries.
+        let unlisted = matches!(entry.kind, EntryKind::Unlisted { .. });
+        if !unlisted {
+            folder.entries += 1;
+        }
+        if policy.breaks_sidecar_dir(&entry) {
+            folder.hold = Some(ExclusionReason::HeldBack);
+        }
         if entry.kind == EntryKind::Dir {
             if let DirAction::Skip(reason) = policy.dir_action(&entry) {
                 out.excluded.push(Excluded { reason, entry });
             }
             continue;
         }
-        if let Some(reason) = policy.file_exclusion(&entry) {
-            out.excluded.push(Excluded { reason, entry });
+        let Some(reason) = policy.file_exclusion(&entry) else {
+            folder.files.push(Pending { entry, in_nksc });
             continue;
-        }
-        let (owner, in_nksc) = match entry.folder.split_last() {
-            Some((last, parent)) if is_sidecar_dir(parent, last) => (parent.to_vec(), true),
-            _ => (entry.folder.clone(), false),
         };
-        folders
-            .entry(owner)
-            .or_default()
-            .push(Pending { entry, in_nksc });
+        if matches!(entry.kind, EntryKind::Unreadable(_)) && !folder_excluded(policy, &entry) {
+            folder.hold = Some(ExclusionReason::HeldBack);
+        }
+        if reason.is_own() && !in_nksc && !unlisted {
+            let (stem, ext) = split_ext(&entry.name);
+            if ext.and_then(PhotoKind::from_ext).is_some() {
+                folder.shadowed.insert(fold(stem));
+            }
+        }
+        out.excluded.push(Excluded { reason, entry });
     }
-    for (owner, files) in folders {
-        if owner.iter().any(|c| eq_folded(c, NKSC_DIR)) {
+    for (owner, mut folder) in folders {
+        if folder.entries > policy.max_entries_per_folder {
+            folder.hold = Some(ExclusionReason::TooLarge);
+        }
+        if let Some(reason) = folder.hold {
+            out.excluded
+                .extend(folder.files.into_iter().map(|p| Excluded {
+                    reason,
+                    entry: p.entry,
+                }));
+        } else if owner.iter().any(|c| eq_folded(c, NKSC_DIR)) {
             // Inside NX Studio's folder, below the level its sidecars live at: listed only.
-            out.unknown.extend(files.into_iter().map(|p| Unknown {
-                kind: UnknownKind::UnknownExt,
-                entry: p.entry,
-            }));
+            out.unknown
+                .extend(folder.files.into_iter().map(|p| Unknown {
+                    kind: UnknownKind::UnknownExt,
+                    entry: p.entry,
+                }));
         } else {
-            group_folder(&owner, files, &mut out);
+            group_folder(&owner, folder.files, &folder.shadowed, &mut out);
         }
     }
-    mark_folded_collisions(&mut out.groups);
+    mark_collisions(&mut out.groups);
     sort_output(&mut out);
     out
 }
 
+/// True when the entry's folder itself is excluded, so its files are never grouped anyway.
+fn folder_excluded(policy: &ScanPolicy, e: &ScanEntry) -> bool {
+    policy.path_exclusion(&e.folder).is_some()
+}
+
 /// Groups the files of one folder (with those of its `NKSC_PARAM`).
-fn group_folder(owner: &[String], files: Vec<Pending>, out: &mut Grouping) {
+fn group_folder(
+    owner: &[String],
+    files: Vec<Pending>,
+    shadowed: &BTreeSet<String>,
+    out: &mut Grouping,
+) {
+    let owner: Arc<[String]> = owner.into();
     let mut photos: BTreeMap<String, Vec<Photo>> = BTreeMap::new();
     let mut others = Vec::new();
     for p in files {
@@ -660,7 +826,7 @@ fn group_folder(owner: &[String], files: Vec<Pending>, out: &mut Grouping) {
         set.sort_by_cached_key(|p| (p.kind, fold(&p.entry.name), p.entry.name.clone()));
         let jpegs = set.iter().filter(|p| p.kind == PhotoKind::Jpeg).count();
         let nefs = set.len() - jpegs;
-        let status = if jpegs > 1 || nefs > 1 {
+        let status = if jpegs > 1 || nefs > 1 || shadowed.contains(&stem_key) {
             GroupStatus::Ambiguous
         } else {
             GroupStatus::Ok
@@ -692,7 +858,7 @@ fn group_folder(owner: &[String], files: Vec<Pending>, out: &mut Grouping) {
         }
         by_stem.insert(stem_key.clone(), idx);
         groups.push(Group {
-            folder: owner.to_vec(),
+            folder: Arc::clone(&owner),
             stem: split_ext(&primary.entry.name).0.to_owned(),
             stem_key,
             status,
@@ -759,11 +925,15 @@ fn group_folder(owner: &[String], files: Vec<Pending>, out: &mut Grouping) {
     out.groups.extend(groups);
 }
 
-/// Groups in two folders whose paths fold to the same value, with stems that fold to the same
-/// value, would share a session identity (`folder_key`, `stem_key`): both become ambiguous.
-fn mark_folded_collisions(groups: &mut [Group]) {
+/// Marks groups ambiguous when two of their files have the same folded path, or when two
+/// groups share a session identity (`folder_key`, `stem_key`) because their folders differ only
+/// by case.
+fn mark_collisions(groups: &mut [Group]) {
     let mut seen: BTreeMap<(String, String), Vec<usize>> = BTreeMap::new();
-    for (i, g) in groups.iter().enumerate() {
+    for (i, g) in groups.iter_mut().enumerate() {
+        if g.has_folded_collision() {
+            g.status = GroupStatus::Ambiguous;
+        }
         seen.entry((g.folder_key(), g.stem_key.clone()))
             .or_default()
             .push(i);

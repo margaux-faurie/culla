@@ -20,7 +20,7 @@ Work now:
 
 ## Layout
 - `crates/core` (package `culla-core`) — domain, ports, pure logic (TIFF/IFD walker behind a `ReadAt` port; `grouping` and scan exclusions over plain `ScanEntry` data; `names`). No I/O, no Tauri, `#![forbid(unsafe_code)]`.
-- `crates/adapters` (package `culla-adapters`) — Windows file ops, the read-only folder walk (`scan`, `read_dir` only, never follows links), file reads for NEF previews, EXIF, decode, SQLite. No Tauri.
+- `crates/adapters` (package `culla-adapters`) — Windows file ops, the read-only folder walk (`scan`, `read_dir` only, never follows links, never a partial folder; moves into `winfs` in M2), file reads for NEF previews, EXIF, decode, SQLite. No Tauri.
 - `crates/cli` (package `culla-cli`, binary `culla`) — headless scan, preview, plan, apply, resume. Wiring only.
 - `crates/bench` (package `culla-bench`) — benchmark harness. See ADR 0020.
 - `src-tauri` (package `culla-app`) — wiring only: commands, `culla://` image scheme, capabilities. New command: `build.rs` `AppManifest::commands` + `allow-<command>` in `capabilities/main.json`.

@@ -23,10 +23,7 @@ fn synthetic() -> PathBuf {
 }
 
 fn all() -> ScanPolicy {
-    ScanPolicy {
-        include_subfolders: true,
-        destination: None,
-    }
+    ScanPolicy::new(true)
 }
 
 /// A uniquely named folder under the system temp folder, removed with everything in it on drop.
@@ -194,6 +191,7 @@ fn sample_tree(test: &str) -> (TempTree, PathBuf) {
     (t, src)
 }
 
+/// INV-03 (the tree is unchanged), INV-10, INV-19, INV-20.
 #[test]
 fn us02_to_us05_on_a_real_tree() {
     let (t, src) = sample_tree("tree");
@@ -204,8 +202,8 @@ fn us02_to_us05_on_a_real_tree() {
         symlink(src.join("DSC_0001.JPG"), src.join("link_file.NEF")).unwrap();
     }
     let policy = ScanPolicy {
-        include_subfolders: true,
         destination: Some(vec!["keep".into()]),
+        ..ScanPolicy::new(true)
     };
     let mut before = Vec::new();
     snapshot(t.path(), &mut before);
@@ -394,6 +392,7 @@ fn the_root_must_be_a_real_folder() {
     }
 }
 
+/// INV-20: invalid names are listed, never grouped.
 #[cfg(unix)]
 #[test]
 fn names_that_are_not_unicode_are_excluded() {
@@ -429,4 +428,168 @@ fn entries_carry_size_and_kind() {
     assert_eq!(e[1].size, 1234);
     assert!(e[1].mtime_ns.is_some_and(|t| t > 0));
     assert!(!e[1].attrs.reparse_point && !e[1].attrs.cloud_placeholder);
+}
+
+fn unlisted(g: &Grouping) -> Vec<(String, ExclusionReason)> {
+    g.excluded
+        .iter()
+        .filter(|x| matches!(x.entry.kind, EntryKind::Unlisted { .. }))
+        .map(|x| (x.entry.rel_path(), x.reason))
+        .collect()
+}
+
+/// Threat model T19: a folder over the entry cap is reported whole, never listed partially.
+#[test]
+fn a_folder_over_the_entry_cap_is_reported_not_listed() {
+    let t = TempTree::new("cap");
+    for i in 0..5 {
+        t.file(&format!("big/DSC_000{i}.JPG"), b"x");
+    }
+    t.file("small/A.JPG", b"x");
+    t.file("A.JPG", b"x");
+    let policy = ScanPolicy {
+        max_entries_per_folder: 4,
+        ..ScanPolicy::new(true)
+    };
+    let (g, _) = scan_and_group(t.path(), &policy).unwrap();
+    assert_eq!(groups(&g), ["|A", "small|A"]);
+    assert_eq!(
+        unlisted(&g),
+        [("big".to_owned(), ExclusionReason::TooLarge)]
+    );
+    // At the cap exactly, the folder is listed.
+    let policy = ScanPolicy {
+        max_entries_per_folder: 5,
+        ..ScanPolicy::new(true)
+    };
+    let (g, _) = scan_and_group(t.path(), &policy).unwrap();
+    assert_eq!(g.groups.len(), 7);
+    // A root over the cap is an error.
+    let policy = ScanPolicy {
+        max_entries_per_folder: 2,
+        ..ScanPolicy::new(true)
+    };
+    assert!(matches!(
+        scan(t.path(), &policy, |_| ControlFlow::Continue(())),
+        Err(ScanError::TooLarge { cap: 2 })
+    ));
+}
+
+/// Threat model T19: folders below the depth cap are not entered.
+#[test]
+fn folders_below_the_depth_cap_are_not_entered() {
+    let t = TempTree::new("depth");
+    t.file("a/A.JPG", b"x");
+    t.file("a/b/B.JPG", b"x");
+    t.file("a/NKSC_PARAM/A.JPG.nksc", b"x");
+    let policy = ScanPolicy {
+        max_depth: 1,
+        ..ScanPolicy::new(true)
+    };
+    let got = batches(t.path(), &policy);
+    let folders: Vec<String> = got.iter().map(|b| b.folder.join("\\")).collect();
+    assert_eq!(folders, ["", "a"]);
+    let (g, _) = scan_and_group(t.path(), &policy).unwrap();
+    assert_eq!(groups(&g), ["a|A"]);
+    assert_eq!(g.groups[0].sidecars.len(), 1);
+    assert_eq!(
+        excluded(&g),
+        [("a\\b".to_owned(), ExclusionReason::TooDeep)]
+    );
+}
+
+/// INV-04, INV-10: an NKSC_PARAM that is a link holds back its parent folder.
+#[cfg(unix)]
+#[test]
+fn a_linked_nksc_param_holds_back_its_parent() {
+    let t = TempTree::new("nksclink");
+    t.file("src/X.JPG", b"x");
+    t.file("src/X.NEF", b"x");
+    t.file("src/sub/Y.JPG", b"x");
+    let elsewhere = t.dir("elsewhere");
+    t.file("elsewhere/X.NEF.nksc", b"x");
+    std::os::unix::fs::symlink(&elsewhere, t.path().join("src/NKSC_PARAM")).unwrap();
+    let (g, _) = scan_and_group(&t.path().join("src"), &all()).unwrap();
+    assert_eq!(groups(&g), ["sub|Y"]);
+    assert_eq!(
+        excluded(&g),
+        [
+            ("NKSC_PARAM".to_owned(), ExclusionReason::ReparsePoint),
+            ("X.JPG".to_owned(), ExclusionReason::HeldBack),
+            ("X.NEF".to_owned(), ExclusionReason::HeldBack),
+        ]
+    );
+}
+
+/// INV-04: case-variant sidecars on a case-sensitive file system make the group ambiguous.
+#[test]
+fn case_variant_sidecars_make_the_group_ambiguous() {
+    let t = TempTree::new("casevar");
+    t.file("X.JPG", b"x");
+    t.file("X.xmp", b"x");
+    let (g, _) = scan_and_group(t.path(), &all()).unwrap();
+    assert_eq!(g.groups[0].status, GroupStatus::Ok);
+    // Only where the file system keeps both names (Linux, case-sensitive folders on Windows).
+    let other = t.path().join("x.XMP");
+    if OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&other)
+        .is_ok()
+    {
+        let (g, _) = scan_and_group(t.path(), &all()).unwrap();
+        assert_eq!(g.groups[0].sidecars.len(), 2);
+        assert_eq!(g.groups[0].status, GroupStatus::Ambiguous);
+    }
+}
+
+/// Threat model T2, INV-10: a folder swapped for a link after its parent was listed is refused
+/// when its turn comes, and nothing behind the link is listed.
+#[cfg(unix)]
+#[test]
+fn a_folder_swapped_for_a_link_during_the_scan_is_refused() {
+    let t = TempTree::new("swap");
+    t.file("src/100NIKON/A.JPG", b"x");
+    t.file("outside/O.JPG", b"x");
+    let src = t.path().join("src");
+    let mut seen = Vec::new();
+    scan(&src, &all(), |b| {
+        if seen.is_empty() {
+            // Between the root's listing and 100NIKON's: move it away, put a link in its place.
+            #[allow(clippy::disallowed_methods, reason = "test temp folder only")]
+            fs::rename(src.join("100NIKON"), t.path().join("moved")).unwrap();
+            std::os::unix::fs::symlink(t.path().join("outside"), src.join("100NIKON")).unwrap();
+        }
+        seen.push(b);
+        ControlFlow::Continue(())
+    })
+    .unwrap();
+    assert_eq!(seen.len(), 2);
+    let swapped = &seen[1];
+    assert!(swapped.folder.is_empty());
+    assert_eq!(swapped.entries.len(), 1);
+    assert_eq!(swapped.entries[0].name, "100NIKON");
+    assert!(matches!(
+        swapped.entries[0].kind,
+        EntryKind::Unlisted {
+            reason: ExclusionReason::ReparsePoint,
+            ..
+        }
+    ));
+    let names: Vec<&str> = seen
+        .iter()
+        .flat_map(|b| &b.entries)
+        .map(|e| e.name.as_str())
+        .collect();
+    assert!(!names.contains(&"O.JPG") && !names.contains(&"A.JPG"));
+}
+
+#[test]
+fn entries_of_a_folder_share_one_folder_allocation() {
+    let t = TempTree::new("arc");
+    t.file("a/X.JPG", b"x");
+    t.file("a/X.NEF", b"x");
+    let got = batches(t.path(), &all());
+    let e = &got[1].entries;
+    assert!(std::sync::Arc::ptr_eq(&e[0].folder, &e[1].folder));
 }
