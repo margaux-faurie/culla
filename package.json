@@ -17,7 +17,7 @@
     "preview:demo": "vite preview --mode demo --host 127.0.0.1 --port 4173 --strictPort",
     "e2e": "playwright test",
     "tauri": "tauri",
-    "gen:bindings": "node -e \"console.log('M1: bindings arrive with the first tauri-specta command (ADR 0019)')\""
+    "gen:bindings": "node -e \"console.log('M3: bindings arrive with the first tauri-specta command (ADR 0019)')\""
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.0",

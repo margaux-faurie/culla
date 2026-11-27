@@ -8,7 +8,7 @@ use crate::scan::GroupKind;
 
 /// The JSON id of an exclusion reason.
 #[must_use]
-pub fn reason(r: ExclusionReason) -> &'static str {
+pub(crate) fn reason(r: ExclusionReason) -> &'static str {
     match r {
         ExclusionReason::RejectedFolder => "rejected_folder",
         ExclusionReason::Destination => "destination",
@@ -28,7 +28,7 @@ pub fn reason(r: ExclusionReason) -> &'static str {
 
 /// The JSON id of a drive kind (`GetDriveTypeW`).
 #[must_use]
-pub fn drive_kind(k: DriveKind) -> &'static str {
+pub(crate) fn drive_kind(k: DriveKind) -> &'static str {
     match k {
         DriveKind::Unknown => "unknown",
         DriveKind::NoRootDir => "no_root_dir",
@@ -42,7 +42,7 @@ pub fn drive_kind(k: DriveKind) -> &'static str {
 
 /// The JSON id of a capture-time source.
 #[must_use]
-pub fn time_source_id(s: TimeSource) -> &'static str {
+pub(crate) fn time_source_id(s: TimeSource) -> &'static str {
     match s {
         TimeSource::DateTimeOriginal => "date_time_original",
         TimeSource::CreateDate => "create_date",
@@ -52,7 +52,7 @@ pub fn time_source_id(s: TimeSource) -> &'static str {
 
 /// A capture-time source in text.
 #[must_use]
-pub fn time_source_text(s: TimeSource) -> &'static str {
+pub(crate) fn time_source_text(s: TimeSource) -> &'static str {
     match s {
         TimeSource::DateTimeOriginal => "DateTimeOriginal",
         TimeSource::CreateDate => "CreateDate",
@@ -62,7 +62,7 @@ pub fn time_source_text(s: TimeSource) -> &'static str {
 
 /// An orientation in text.
 #[must_use]
-pub fn orientation_text(o: Orientation) -> &'static str {
+pub(crate) fn orientation_text(o: Orientation) -> &'static str {
     match o {
         Orientation::Normal => "upright",
         Orientation::MirrorHorizontal => "mirrored left to right",
@@ -77,7 +77,7 @@ pub fn orientation_text(o: Orientation) -> &'static str {
 
 /// The JSON id of a group kind.
 #[must_use]
-pub fn group_kind(k: GroupKind) -> &'static str {
+pub(crate) fn group_kind(k: GroupKind) -> &'static str {
     match k {
         GroupKind::Pair => "pair",
         GroupKind::LoneNef => "lone_nef",
@@ -87,7 +87,7 @@ pub fn group_kind(k: GroupKind) -> &'static str {
 
 /// The file a sidecar follows, as resolved by `Group::follows`.
 #[must_use]
-pub fn describes(d: Describes) -> &'static str {
+pub(crate) fn describes(d: Describes) -> &'static str {
     match d {
         Describes::Primary | Describes::Group => "primary",
         Describes::Raw => "raw",
@@ -97,7 +97,7 @@ pub fn describes(d: Describes) -> &'static str {
 
 /// A metadata issue as `id` or `id:detail`.
 #[must_use]
-pub fn issue(i: MetaIssue) -> String {
+pub(crate) fn issue(i: MetaIssue) -> String {
     let tag = |t: TimeTag| match t {
         TimeTag::Original => "original",
         TimeTag::Digitized => "digitized",

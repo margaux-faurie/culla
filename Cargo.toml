@@ -14,6 +14,14 @@ publish = false
 
 [workspace.lints.rust]
 unsafe_code = "deny"
+# Warnings are denied in CI.
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+unused_lifetimes = "warn"
 
 [workspace.lints.clippy]
 disallowed_methods = "deny"
+
+# Profiles: no release profile may set `panic = "abort"`. Per-file isolation in
+# crates/adapters/src/metadata/exif.rs relies on `catch_unwind`, so one malformed file cannot
+# end the scan. Add profiles below this line with that in mind.

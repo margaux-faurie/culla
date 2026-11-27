@@ -7,7 +7,7 @@ use crate::text;
 
 /// A JSON value.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Value {
+pub(crate) enum Value {
     /// `null`.
     Null,
     /// `true` or `false`.
@@ -24,23 +24,23 @@ pub enum Value {
 
 impl Value {
     /// A string value.
-    pub fn str(s: impl Into<String>) -> Self {
+    pub(crate) fn str(s: impl Into<String>) -> Self {
         Self::Str(s.into())
     }
 
     /// An integer value.
-    pub fn int(n: impl Into<i128>) -> Self {
+    pub(crate) fn int(n: impl Into<i128>) -> Self {
         Self::Int(n.into())
     }
 
     /// `null` for `None`, else the value `f` makes.
-    pub fn opt<T>(v: Option<T>, f: impl FnOnce(T) -> Value) -> Self {
+    pub(crate) fn opt<T>(v: Option<T>, f: impl FnOnce(T) -> Value) -> Self {
         v.map_or(Self::Null, f)
     }
 
     /// The value as pretty-printed JSON text, without a trailing newline.
     #[must_use]
-    pub fn to_pretty(&self) -> String {
+    pub(crate) fn to_pretty(&self) -> String {
         let mut out = String::new();
         self.write(&mut out, 0);
         out

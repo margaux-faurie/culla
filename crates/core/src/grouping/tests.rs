@@ -898,7 +898,7 @@ fn gen_tree(rng: &mut Rng) -> Vec<ScanEntry> {
         }
         out.push(e);
     }
-    let mut seen = std::collections::BTreeSet::new();
+    let mut seen = BTreeSet::new();
     out.retain(|e| seen.insert((e.folder.clone(), e.name.clone())));
     out
 }
@@ -972,7 +972,7 @@ fn prop_groups_hold_only_safe_matching_files() {
         let input = gen_tree(&mut rng);
         let policy = gen_policy(&mut rng);
         let out = group(input.clone(), &policy);
-        let mut identities = std::collections::BTreeSet::new();
+        let mut identities = BTreeSet::new();
         n_groups += out.groups.len();
         for g in &out.groups {
             n_sidecars += g.sidecars.len();
@@ -1040,7 +1040,7 @@ fn prop_groups_hold_only_safe_matching_files() {
                 // Never split a shot: an `Ok` group holds every photo file of its stem in its
                 // folder, no two of its files fold alike, and its folder was read completely.
                 assert!(g.duplicates.is_empty(), "case {case}");
-                let mut folded = std::collections::BTreeSet::new();
+                let mut folded = BTreeSet::new();
                 assert!(
                     g.files().all(|e| folded.insert(fold(&e.rel_path()))),
                     "case {case}"
@@ -1165,7 +1165,7 @@ fn prop_matching_ignores_case() {
             .collect()
     };
     for case in 0..CASES {
-        let mut seen = std::collections::BTreeSet::new();
+        let mut seen = BTreeSet::new();
         let mut base = Vec::new();
         for _ in 0..rng.below(16) {
             let folder = if rng.chance(50) { "100NIKON" } else { "" };

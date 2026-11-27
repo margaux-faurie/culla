@@ -1,5 +1,5 @@
-//! Culla dev tasks (docs/testing.md §11). Run with `cargo xtask <task>` once the alias is in
-//! `.cargo/config.toml`, or `cargo run -p xtask -- <task>` meanwhile.
+//! Culla dev tasks (docs/testing.md §11). Run with `cargo xtask <task>` (alias in
+//! `.cargo/config.toml`) or `cargo run -p xtask -- <task>`.
 //!
 //! Std only. xtask is outside the product crates but still inherits the workspace lints, so it
 //! never truncates, overwrites, renames or removes a file: it only creates new files with

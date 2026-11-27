@@ -3,10 +3,10 @@
 //!
 //! Output is a pure function of this code: same bytes on every run and every OS.
 //!
-//! Format limits (M1 adds the NEF structures the IFD walker needs):
+//! Format limits:
 //! - JPEG: flat grey greyscale baseline images of a chosen size (2 bits per 8x8 block). The
-//!   paired JPEG is 8x8 with an APP1 Exif block holding IFD0 with Orientation = 1 only. No Exif
-//!   SubIFD, so no DateTimeOriginal or LensModel yet; no JFIF APP0, no colour, no thumbnail.
+//!   paired JPEG is 8x8 with an APP1 Exif block holding IFD0 with Orientation = 1 only, no Exif
+//!   IFD (the EXIF variants are under `exif/`); no JFIF APP0, no colour, no thumbnail.
 //! - NEF (`pair/` big-endian, `lone/` little-endian): IFD0 with baseline tags (ImageWidth/Length,
 //!   BitsPerSample, Compression 6, Photometric) pointing at an 8x8 thumbnail, Make and Model;
 //!   SubIFD0 with a 48x32 JPEG (JPEGInterchangeFormat, the largest, as on a Z6III), SubIFD1 with
@@ -39,10 +39,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Folder under the repository root, as in docs/testing.md §9.
-pub const DIR: &str = "testdata/synthetic";
+pub(crate) const DIR: &str = "testdata/synthetic";
 
 /// Every fixture as (path relative to `DIR`, bytes), in a fixed order.
-pub fn all() -> Vec<(&'static str, Vec<u8>)> {
+pub(crate) fn all() -> Vec<(&'static str, Vec<u8>)> {
     vec![
         ("pair/DSC_0001.JPG", jpeg_with_exif()),
         ("pair/DSC_0001.NEF", nef(true)),
@@ -57,7 +57,7 @@ pub fn all() -> Vec<(&'static str, Vec<u8>)> {
     ]
 }
 
-pub fn write(root: &Path) -> Result<(), String> {
+pub(crate) fn write(root: &Path) -> Result<(), String> {
     let dir = root.join(DIR);
     let files = all();
     // Refuse before writing anything, so a run never leaves a half-refreshed folder.
@@ -93,7 +93,7 @@ pub fn write(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub fn check(root: &Path) -> Result<(), String> {
+pub(crate) fn check(root: &Path) -> Result<(), String> {
     let dir = root.join(DIR);
     let files = all();
     let mut problems = Vec::new();

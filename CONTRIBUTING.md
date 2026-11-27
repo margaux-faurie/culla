@@ -12,6 +12,10 @@ Thank you for your interest in Culla.
 
 Outside pull requests are not merged for now, so Culla keeps a single author ([ADR 0026](docs/adr/0026-gpl-3-0-only-licence-and-reserved-name.md)). If you have a fix, describe it in an issue; it will be credited if it is used. This may open up later.
 
+## Authorship
+
+Culla has a single author, Margaux Faurie. Copyright © 2026 Margaux Faurie. Outside pull requests are not merged ([ADR 0026](docs/adr/0026-gpl-3-0-only-licence-and-reserved-name.md)).
+
 ## Forks
 
 You can fork and change Culla under the [GPL-3.0](LICENSE). Please give your version another name ([TRADEMARKS.md](TRADEMARKS.md)).

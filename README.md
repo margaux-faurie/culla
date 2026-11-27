@@ -166,6 +166,7 @@ What could go wrong and how each risk is handled is in the [threat model](docs/t
 | [File engine](docs/design/file-engine.md) | Data model, grouping, plan, apply, recovery, invariants |
 | [ADRs](docs/adr/README.md) | Decisions and their reasons |
 | [Threat model](docs/threat-model.md) | Threats and mitigations |
+| [Incident response](docs/incident-response.md) | What to do about a leaked key, a bad release or a vulnerability |
 | [Testing](docs/testing.md) | Test strategy and definition of done |
 | [Roadmap](docs/roadmap.md) | Milestones M0 to M6 |
 

@@ -10,6 +10,7 @@ Status: v1, 24 Nov 2026, updated 27 Nov 2026. This file is the record of the aut
 | Decisions and their reasons | [adr/](adr/README.md) |
 | File engine: data model, grouping, plan, apply, recovery, invariants | [design/file-engine.md](design/file-engine.md) |
 | Threats and mitigations | [threat-model.md](threat-model.md) |
+| Incident response (keys, bad releases, vulnerabilities) | [incident-response.md](incident-response.md) |
 | Tests and Definition of Done | [testing.md](testing.md) |
 | Performance measurement | [benchmarks.md](benchmarks.md) |
 | Milestones | [roadmap.md](roadmap.md) |
@@ -49,6 +50,7 @@ A Windows desktop app that culls a folder of Nikon photos (JPEG + NEF) one photo
 | Success criteria | The PRD §7 targets are confirmed: 1,000 pairs from SD with zero lost files, recovery after a card pull, 30 minutes or less of swiping for 1,000 pairs (decided 27 Nov 2026) |
 | Licence and name | GPL-3.0-only (not "or later"), copyright Margaux Faurie; the "Culla" name and logo are reserved and forks must rename; issues are welcome but outside pull requests are not merged, so the code keeps one author (decided 27 Nov 2026, ADR 0026) |
 | Capture time | DateTimeOriginal, then CreateDate, then the file time in the PC's local time zone; camera-local order with filename tie-breaks (decided 27 Nov 2026, ADR 0028) |
+| Review and merge | Agent PRs merge on an independent reviewer's approval plus green CI; PRs that touch src-tauri, winfs, CI or dependencies also wait for Margaux's OK in chat (decided 27 Nov 2026) |
 | Where photos go | Shown as one route, the same on the start, swipe, review and apply screens: the origin, then a Kept branch (move or copy, destination, one real example path with its JPEG, NEF and edit files), a Rejected branch (`<source>\_rejected\…` written literally, marked as a new folder only while `_rejected\` doesn't exist yet, "nothing is deleted") and "undecided photos stay where they are". The example path follows the "RAW follows JPEG" toggle (when off, the NEF and its sidecars stay at the origin, ADR 0023) and shows copy for camera-protected files. The swipe screen shows where the current photo would go under each button; on an already decided photo it shows where the photo will go without implying the arrows act (ADR 0006). Full folder trees and the per-file list are one click away on review. Button placement is still open (NFR-A11Y-02) (decided 27 Nov 2026; design canvas linked in §5.6) |
 | Keyboard layouts | By the letter: letters and Ctrl shortcuts match the character on the key (`KeyboardEvent.key`, case-insensitive), so Z and Ctrl+Z stay on the Z key on AZERTY and QWERTZ; arrows, Space, Enter and Esc match by position (`KeyboardEvent.code`); `?` by character. Hints show the key as labelled (decided 27 Nov 2026, §4.1) |
 | Web demo hosting | `culla.margauxfaurie.com`, Cloudflare Workers static assets; same Cloudflare Access policy as the rest of the site until the portfolio goes public; the repository itself stays public (decided 27 Nov 2026) |
@@ -239,4 +241,6 @@ Screen designs (start, swipe, already decided, review, apply) live on the design
 - Which photos to publish in the demo.
 - The author's real sample files (Nikon Z series, see §2): 9 Z6III NEFs (8 pairs, 1 lone) used locally since 27 Nov 2026, outside the repo; the stripped Git LFS set is pending.
 - Preview cache when the source drive is encrypted and the system drive is not: keep previews in memory only (default) or warn before caching to disk; to decide (raised 27 Nov 2026).
+- Code of conduct: adopt one, with which text and which reporting channel.
+- Incident response: confirm the procedures in [incident-response.md](incident-response.md), drafted by an agent on 27 Nov 2026 and not yet reviewed.
 - `culla scan` (M1 slice 6), proposed by the agent and awaiting Margaux: exit codes 0 done, 1 usage error, 2 folder refused, 3 folder unreadable; exit 0 also when some groups have metadata errors or folders are held back (they are reported in the output, not in the code); off Windows, scan the folder anyway and report the volume identity as unavailable (rather than refuse); the `--json` field set as it stands, marked unstable until M2 (`"schema": "unstable"` in the output and a note in `culla help scan`); std-only argument parsing and a hand-written JSON writer in `culla-cli` rather than `clap` and `serde_json`.
