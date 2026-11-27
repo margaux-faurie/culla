@@ -3,14 +3,18 @@
 //!
 //! Output is a pure function of this code: same bytes on every run and every OS.
 //!
-//! Format limits of the M0 skeleton (extended in M1 with the parsers):
-//! - JPEG: one 8x8 greyscale baseline image (a single DC value, so a flat grey square), with
-//!   an APP1 Exif block holding IFD0 with Orientation = 1 only. No Exif SubIFD, so no
-//!   DateTimeOriginal or LensModel yet; no JFIF APP0, no colour, no thumbnail.
-//! - NEF: big-endian TIFF ("MM") with one IFD0: NewSubfileType, Compression = 6 (old JPEG),
-//!   Make, Model, JPEGInterchangeFormat and its length, pointing at the same 8x8 JPEG (without
-//!   Exif). No SubIFDs, no MakerNote or PreviewIFD, no raw CFA data, no thumbnail strip. It is
-//!   NEF-shaped enough for an IFD walker and an embedded-JPEG finder, not for a RAW decoder.
+//! Format limits (M1 adds the NEF structures the IFD walker needs):
+//! - JPEG: flat grey greyscale baseline images of a chosen size (2 bits per 8x8 block). The
+//!   paired JPEG is 8x8 with an APP1 Exif block holding IFD0 with Orientation = 1 only. No Exif
+//!   SubIFD, so no DateTimeOriginal or LensModel yet; no JFIF APP0, no colour, no thumbnail.
+//! - NEF (`pair/` big-endian, `lone/` little-endian): IFD0 with baseline tags (ImageWidth/Length,
+//!   BitsPerSample, Compression 6, Photometric) pointing at an 8x8 thumbnail, Make and Model;
+//!   SubIFD0 with a 48x32 JPEG (JPEGInterchangeFormat, the largest, as on a Z6III), SubIFD1 with
+//!   a 24x16 JPEG strip, SubIFD2 with stand-in raw data (Compression 34713, not a JPEG); an Exif
+//!   IFD with a Nikon type 3 MakerNote in the other byte order whose PreviewIFD (0x0011) points
+//!   at a 32x24 JPEG inside the MakerNote. Not decodable as RAW.
+//! - `broken/`: `ifd-loop.NEF` (IFD0 and a SubIFD point back at themselves and each other),
+//!   `truncated.NEF` (the pair NEF cut in the middle of its full-size JPEG).
 //! - The pair shares a basename in one folder (ADR 0007), so it doubles as a pairing case.
 //!
 //! Writing: the target files must not exist. xtask follows the workspace rule (no truncate, no
@@ -31,7 +35,10 @@ pub const DIR: &str = "testdata/synthetic";
 pub fn all() -> Vec<(&'static str, Vec<u8>)> {
     vec![
         ("pair/DSC_0001.JPG", jpeg_with_exif()),
-        ("pair/DSC_0001.NEF", nef_with_preview()),
+        ("pair/DSC_0001.NEF", nef(true)),
+        ("lone/DSC_0002.NEF", nef(false)),
+        ("broken/ifd-loop.NEF", nef_ifd_loop()),
+        ("broken/truncated.NEF", nef_truncated()),
     ]
 }
 
@@ -134,8 +141,9 @@ fn segment(out: &mut Vec<u8>, marker: u8, payload: &[u8]) {
     out.extend_from_slice(payload);
 }
 
-/// An 8x8 greyscale baseline JPEG. `app1` is inserted right after SOI when given.
-fn jpeg(app1: Option<&[u8]>) -> Vec<u8> {
+/// A `width` x `height` greyscale baseline JPEG, flat grey. `app1` is inserted right after
+/// SOI when given.
+fn jpeg(width: u16, height: u16, app1: Option<&[u8]>) -> Vec<u8> {
     let mut out = vec![0xFF, 0xD8]; // SOI
     if let Some(app1) = app1 {
         segment(&mut out, 0xE1, app1);
@@ -144,12 +152,12 @@ fn jpeg(app1: Option<&[u8]>) -> Vec<u8> {
     let mut dqt = vec![0x00];
     dqt.extend_from_slice(&[1; 64]);
     segment(&mut out, 0xDB, &dqt);
-    // SOF0: 8-bit, 8x8, one component (id 1, 1x1 sampling, table 0).
-    segment(
-        &mut out,
-        0xC0,
-        &[0x08, 0x00, 0x08, 0x00, 0x08, 0x01, 0x01, 0x11, 0x00],
-    );
+    // SOF0: 8-bit, height, width, one component (id 1, 1x1 sampling, table 0).
+    let mut sof = vec![0x08];
+    sof.extend_from_slice(&height.to_be_bytes());
+    sof.extend_from_slice(&width.to_be_bytes());
+    sof.extend_from_slice(&[0x01, 0x01, 0x11, 0x00]);
+    segment(&mut out, 0xC0, &sof);
     // DHT: one code of length 1 ("0") per table. DC: symbol 0 (difference 0). AC: symbol 0 (EOB).
     for class_and_id in [0x00, 0x10] {
         let mut dht = vec![class_and_id, 1];
@@ -159,8 +167,14 @@ fn jpeg(app1: Option<&[u8]>) -> Vec<u8> {
     }
     // SOS: one component, tables 0/0, spectral 0..63, no approximation.
     segment(&mut out, 0xDA, &[0x01, 0x01, 0x00, 0x00, 0x3F, 0x00]);
-    // Entropy data: DC "0" + EOB "0", padded with ones.
-    out.push(0b0011_1111);
+    // Entropy data: per 8x8 block DC "0" + EOB "0", so 2 zero bits; padded with ones. Zero
+    // bytes and a final byte below 0xFF need no byte stuffing.
+    let blocks = usize::from(width.div_ceil(8)) * usize::from(height.div_ceil(8));
+    let bits = 2 * blocks;
+    out.extend(std::iter::repeat_n(0u8, bits / 8));
+    if bits % 8 != 0 {
+        out.push(0xFF >> (bits % 8));
+    }
     out.extend_from_slice(&[0xFF, 0xD9]); // EOI
     out
 }
@@ -176,71 +190,335 @@ fn jpeg_with_exif() -> Vec<u8> {
     app1.extend_from_slice(&1u32.to_le_bytes()); // count
     app1.extend_from_slice(&[1, 0, 0, 0]); // value, left-justified
     app1.extend_from_slice(&0u32.to_le_bytes()); // no next IFD
-    jpeg(Some(&app1))
+    jpeg(8, 8, Some(&app1))
+}
+
+// ---------------------------------------------------------------------------------------------
+// TIFF writer
+// ---------------------------------------------------------------------------------------------
+
+const ASCII: u16 = 2;
+const SHORT: u16 = 3;
+const LONG: u16 = 4;
+const UNDEFINED: u16 = 7;
+
+/// A value of an IFD entry. Values over 4 bytes are written before the IFD.
+enum Val {
+    Short(u16),
+    Long(u32),
+    Longs(Vec<u32>),
+    Ascii(&'static [u8]),
+    Undefined(Vec<u8>),
+    /// `count` values of type `kind` already written at `offset`.
+    At(u16, u32, u32),
+}
+
+/// TIFF bytes whose offsets are relative to the start of `out`.
+struct Tiff {
+    big: bool,
+    out: Vec<u8>,
+}
+
+impl Tiff {
+    /// A header whose IFD0 offset is set by `set_ifd0`.
+    fn new(big: bool) -> Self {
+        let mut out = if big {
+            b"MM\0*".to_vec()
+        } else {
+            b"II*\0".to_vec()
+        };
+        out.extend_from_slice(&[0; 4]);
+        Self { big, out }
+    }
+
+    fn u16(&self, v: u16) -> [u8; 2] {
+        if self.big {
+            v.to_be_bytes()
+        } else {
+            v.to_le_bytes()
+        }
+    }
+
+    fn u32(&self, v: u32) -> [u8; 4] {
+        if self.big {
+            v.to_be_bytes()
+        } else {
+            v.to_le_bytes()
+        }
+    }
+
+    /// Appends `data` at a word-aligned offset (TIFF 6.0) and returns that offset.
+    fn push(&mut self, data: &[u8]) -> u32 {
+        if self.out.len() % 2 == 1 {
+            self.out.push(0);
+        }
+        let at = len32(&self.out);
+        self.out.extend_from_slice(data);
+        at
+    }
+
+    /// Writes an IFD with `entries` (sorted by tag here) and returns its offset.
+    fn ifd(&mut self, entries: Vec<(u16, Val)>, next: u32) -> u32 {
+        let mut entries = entries;
+        entries.sort_by_key(|(tag, _)| *tag);
+        let mut fields = Vec::new();
+        for (tag, val) in &entries {
+            let (kind, count, bytes) = match val {
+                Val::Short(v) => (SHORT, 1, self.u16(*v).to_vec()),
+                Val::Long(v) => (LONG, 1, self.u32(*v).to_vec()),
+                Val::Longs(vs) => (
+                    LONG,
+                    vs.len(),
+                    vs.iter().flat_map(|v| self.u32(*v)).collect(),
+                ),
+                Val::Ascii(s) => (ASCII, s.len(), s.to_vec()),
+                Val::Undefined(b) => (UNDEFINED, b.len(), b.clone()),
+                Val::At(kind, count, offset) => {
+                    fields.push((*tag, *kind, *count, self.u32(*offset).to_vec()));
+                    continue;
+                }
+            };
+            let value = if bytes.len() <= 4 {
+                let mut v = bytes;
+                v.resize(4, 0); // left-justified
+                v
+            } else {
+                let at = self.push(&bytes);
+                self.u32(at).to_vec()
+            };
+            let count = u32::try_from(count).expect("few values");
+            fields.push((*tag, kind, count, value));
+        }
+        let n = u16::try_from(fields.len()).expect("few entries");
+        let mut ifd = self.u16(n).to_vec();
+        for (tag, kind, count, value) in fields {
+            ifd.extend_from_slice(&self.u16(tag));
+            ifd.extend_from_slice(&self.u16(kind));
+            ifd.extend_from_slice(&self.u32(count));
+            ifd.extend_from_slice(&value);
+        }
+        ifd.extend_from_slice(&self.u32(next));
+        self.push(&ifd)
+    }
+
+    fn patch_u32(&mut self, at: u32, v: u32) {
+        let at = at as usize;
+        let b = self.u32(v);
+        self.out[at..at + 4].copy_from_slice(&b);
+    }
+
+    fn set_ifd0(&mut self, at: u32) {
+        self.patch_u32(4, at);
+    }
+
+    /// Offset of the value field of entry `index` of the IFD at `ifd`.
+    fn entry_value(ifd: u32, index: u32) -> u32 {
+        ifd + 2 + 12 * index + 8
+    }
+
+    /// Offset of the next-IFD field of the IFD at `ifd` with `entries` entries.
+    fn next_field(ifd: u32, entries: u32) -> u32 {
+        ifd + 2 + 12 * entries
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
 // NEF-shaped TIFF
 // ---------------------------------------------------------------------------------------------
 
-const ASCII: u16 = 2;
-const SHORT: u16 = 3;
-const LONG: u16 = 4;
+/// Where the image data starts: the IFDs, strings and MakerNote fit before it.
+const NEF_DATA_START: u32 = 1024;
 
-fn nef_with_preview() -> Vec<u8> {
-    let preview = jpeg(None);
-    let make = b"NIKON CORPORATION\0";
-    let model = b"CULLA SYNTHETIC\0";
+/// The embedded images of the synthetic NEF, by where they are referenced.
+struct NefImages {
+    /// IFD0 thumbnail, JPEGInterchangeFormat.
+    thumb: Vec<u8>,
+    /// SubIFD0, JPEGInterchangeFormat: the full-size preview (the largest).
+    full: Vec<u8>,
+    /// SubIFD1, a single JPEG strip (Compression 6).
+    strip: Vec<u8>,
+    /// SubIFD2, stand-in raw data (Compression 34713), not a JPEG.
+    raw: Vec<u8>,
+    /// MakerNote PreviewIFD, JPEGInterchangeFormat, stored inside the MakerNote.
+    preview: Vec<u8>,
+}
 
-    const ENTRIES: u32 = 6;
-    let ifd_offset: u32 = 8;
-    let data_start = ifd_offset + 2 + 12 * ENTRIES + 4;
-    let make_offset = data_start;
-    let model_offset = make_offset + len32(make);
-    // TIFF offsets should be word aligned.
-    let jpeg_offset = (model_offset + len32(model) + 1) & !1;
-
-    let mut out = b"MM\0*".to_vec();
-    out.extend_from_slice(&ifd_offset.to_be_bytes());
-    out.extend_from_slice(&u16::try_from(ENTRIES).expect("few entries").to_be_bytes());
-    // Entries in ascending tag order.
-    let short = |v: u16| {
-        let mut b = v.to_be_bytes().to_vec();
-        b.extend_from_slice(&[0, 0]);
-        b
-    };
-    let entries: [(u16, u16, u32, Vec<u8>); 6] = [
-        (0x00FE, LONG, 1, 1u32.to_be_bytes().to_vec()), // NewSubfileType: reduced resolution
-        (0x0103, SHORT, 1, short(6)),                   // Compression: old-style JPEG
-        // Make, Model
-        (
-            0x010F,
-            ASCII,
-            len32(make),
-            make_offset.to_be_bytes().to_vec(),
-        ),
-        (
-            0x0110,
-            ASCII,
-            len32(model),
-            model_offset.to_be_bytes().to_vec(),
-        ),
-        (0x0201, LONG, 1, jpeg_offset.to_be_bytes().to_vec()), // JPEGInterchangeFormat
-        (0x0202, LONG, 1, len32(&preview).to_be_bytes().to_vec()), // ...Length
-    ];
-    for (tag, kind, count, value) in &entries {
-        out.extend_from_slice(&tag.to_be_bytes());
-        out.extend_from_slice(&kind.to_be_bytes());
-        out.extend_from_slice(&count.to_be_bytes());
-        out.extend_from_slice(value);
+fn nef_images() -> NefImages {
+    NefImages {
+        thumb: jpeg(8, 8, None),
+        full: jpeg(48, 32, None),
+        strip: jpeg(24, 16, None),
+        raw: (0..256u32)
+            .map(|i| (i.wrapping_mul(37) % 251) as u8)
+            .collect(),
+        preview: jpeg(32, 24, None),
     }
-    out.extend_from_slice(&0u32.to_be_bytes()); // no next IFD
-    debug_assert_eq!(len32(&out), data_start);
-    out.extend_from_slice(make);
-    out.extend_from_slice(model);
-    out.resize(jpeg_offset as usize, 0);
-    out.extend_from_slice(&preview);
+}
+
+/// A Nikon type 3 MakerNote: "Nikon\0", version 2.11, then a TIFF in its own byte order
+/// whose offsets are relative to that TIFF header. Its IFD holds MakerNoteVersion and the
+/// PreviewIFD (0x0011), which points at `preview` stored inside the MakerNote.
+fn nikon_maker_note(big: bool, preview: &[u8]) -> Vec<u8> {
+    let mut mn = Tiff::new(big);
+    let jpeg_at = mn.push(preview);
+    let preview_ifd = mn.ifd(
+        vec![
+            (0x0103, Val::Short(6)),
+            (0x0201, Val::Long(jpeg_at)),
+            (0x0202, Val::Long(len32(preview))),
+        ],
+        0,
+    );
+    let ifd = mn.ifd(
+        vec![
+            (0x0001, Val::Undefined(b"0211".to_vec())), // MakerNoteVersion
+            (0x0011, Val::Long(preview_ifd)),
+        ],
+        0,
+    );
+    mn.set_ifd0(ifd);
+    let mut out = b"Nikon\0\x02\x11\0\0".to_vec();
+    out.extend_from_slice(&mn.out);
     out
+}
+
+/// A NEF-shaped TIFF in the main byte order `big`, with the MakerNote in the other one.
+///
+/// Layout: header, MakerNote, IFDs and strings below `NEF_DATA_START`, then the thumbnail,
+/// the strip JPEG, the full-size JPEG and the raw data, in that order (as on a Z6III, the
+/// raw data comes last).
+fn nef(big: bool) -> Vec<u8> {
+    let img = nef_images();
+    let mut t = Tiff::new(big);
+
+    // Image data offsets, laid out after the structures.
+    let mut at = NEF_DATA_START;
+    let mut place = |data: &[u8]| {
+        let here = at;
+        at += len32(data).next_multiple_of(2);
+        here
+    };
+    let thumb_at = place(&img.thumb);
+    let strip_at = place(&img.strip);
+    let full_at = place(&img.full);
+    let raw_at = place(&img.raw);
+
+    let mn = nikon_maker_note(!big, &img.preview);
+    let mn_at = t.push(&mn);
+    let exif = t.ifd(
+        vec![
+            (0x9000, Val::Undefined(b"0230".to_vec())), // ExifVersion
+            (0x927C, Val::At(UNDEFINED, len32(&mn), mn_at)), // MakerNote
+        ],
+        0,
+    );
+
+    let sub0 = t.ifd(
+        vec![
+            (0x00FE, Val::Long(1)), // NewSubfileType: reduced resolution
+            (0x0103, Val::Short(6)),
+            (0x0201, Val::Long(full_at)),
+            (0x0202, Val::Long(len32(&img.full))),
+        ],
+        0,
+    );
+    let sub1 = t.ifd(
+        vec![
+            (0x00FE, Val::Long(1)),
+            (0x0100, Val::Long(24)),
+            (0x0101, Val::Long(16)),
+            (0x0102, Val::Short(8)),
+            (0x0103, Val::Short(6)),
+            (0x0106, Val::Short(1)), // BlackIsZero
+            (0x0111, Val::Long(strip_at)),
+            (0x0116, Val::Long(16)),
+            (0x0117, Val::Long(len32(&img.strip))),
+        ],
+        0,
+    );
+    let sub2 = t.ifd(
+        vec![
+            (0x00FE, Val::Long(0)), // full resolution
+            (0x0100, Val::Long(16)),
+            (0x0101, Val::Long(8)),
+            (0x0102, Val::Short(14)),
+            (0x0103, Val::Short(34713)), // Nikon NEF compressed
+            (0x0106, Val::Short(32803)), // CFA
+            (0x0111, Val::Long(raw_at)),
+            (0x0116, Val::Long(8)),
+            (0x0117, Val::Long(len32(&img.raw))),
+        ],
+        0,
+    );
+    let ifd0 = t.ifd(
+        vec![
+            (0x00FE, Val::Long(1)),
+            // Baseline tags for strict readers; the image is the 8x8 thumbnail.
+            (0x0100, Val::Long(8)),
+            (0x0101, Val::Long(8)),
+            (0x0102, Val::Short(8)),
+            (0x0103, Val::Short(6)), // old-style JPEG
+            (0x0106, Val::Short(1)), // BlackIsZero
+            (0x010F, Val::Ascii(b"NIKON CORPORATION\0")),
+            (0x0110, Val::Ascii(b"CULLA SYNTHETIC\0")),
+            (0x0115, Val::Short(1)),
+            (0x014A, Val::Longs(vec![sub0, sub1, sub2])),
+            (0x0201, Val::Long(thumb_at)),
+            (0x0202, Val::Long(len32(&img.thumb))),
+            (0x8769, Val::Long(exif)),
+        ],
+        0,
+    );
+    t.set_ifd0(ifd0);
+
+    assert!(len32(&t.out) <= NEF_DATA_START, "NEF structures overflow");
+    t.out.resize(NEF_DATA_START as usize, 0);
+    for (data, offset) in [
+        (&img.thumb, thumb_at),
+        (&img.strip, strip_at),
+        (&img.full, full_at),
+        (&img.raw, raw_at),
+    ] {
+        t.out.resize(offset as usize, 0);
+        t.out.extend_from_slice(data);
+    }
+    t.out
+}
+
+/// IFD0 with a thumbnail and loops: IFD0's next IFD is itself, its SubIFD lists itself as a
+/// SubIFD and has IFD0 as its next IFD. A walker must stop and still find the thumbnail.
+fn nef_ifd_loop() -> Vec<u8> {
+    let thumb = jpeg(8, 8, None);
+    let mut t = Tiff::new(false);
+    let thumb_at = t.push(&thumb);
+    let sub = t.ifd(vec![(0x0103, Val::Short(1)), (0x014A, Val::Long(0))], 0);
+    let ifd0 = t.ifd(
+        vec![
+            (0x0103, Val::Short(6)),
+            (0x014A, Val::Long(sub)),
+            (0x0201, Val::Long(thumb_at)),
+            (0x0202, Val::Long(len32(&thumb))),
+        ],
+        0,
+    );
+    t.patch_u32(Tiff::entry_value(sub, 1), sub);
+    t.patch_u32(Tiff::next_field(sub, 2), ifd0);
+    t.patch_u32(Tiff::next_field(ifd0, 4), ifd0);
+    t.set_ifd0(ifd0);
+    t.out
+}
+
+/// The pair NEF cut in the middle of its full-size JPEG: that JPEG and the raw data are
+/// missing, the IFDs, thumbnail, strip JPEG and MakerNote preview are intact.
+fn nef_truncated() -> Vec<u8> {
+    let mut n = nef(true);
+    let img = nef_images();
+    let full_at = NEF_DATA_START as usize
+        + img.thumb.len().next_multiple_of(2)
+        + img.strip.len().next_multiple_of(2);
+    debug_assert_eq!(&n[full_at..full_at + img.full.len()], &img.full[..]);
+    n.truncate(full_at + img.full.len() / 2);
+    n
 }
 
 fn len32(bytes: &[u8]) -> u32 {
@@ -286,32 +564,111 @@ mod tests {
     }
 
     #[test]
-    fn nef_ifd0_points_at_embedded_jpeg() {
-        let n = nef_with_preview();
+    fn jpeg_entropy_data_has_two_bits_per_block() {
+        // 8x8: one block, 2 bits, one padded byte (the M0 bytes).
+        let j = jpeg(8, 8, None);
+        assert_eq!(&j[j.len() - 3..], &[0b0011_1111, 0xFF, 0xD9]);
+        // 32x24: 12 blocks, 24 bits, three zero bytes and no padding.
+        let j = jpeg(32, 24, None);
+        assert_eq!(&j[j.len() - 7..], &[0x3F, 0x00, 0, 0, 0, 0xFF, 0xD9]);
+    }
+
+    /// (tag, value or offset) of the IFD at `ifd` in a big-endian TIFF.
+    fn entries(n: &[u8], ifd: usize) -> Vec<(u16, u32)> {
+        let count = usize::from(be16(n, ifd));
+        (0..count)
+            .map(|i| {
+                let e = ifd + 2 + 12 * i;
+                let kind = be16(n, e + 2);
+                let v = if kind == SHORT {
+                    u32::from(be16(n, e + 8))
+                } else {
+                    be32(n, e + 8)
+                };
+                (be16(n, e), v)
+            })
+            .collect()
+    }
+
+    fn tag(e: &[(u16, u32)], t: u16) -> u32 {
+        e.iter()
+            .find(|(tag, _)| *tag == t)
+            .map(|(_, v)| *v)
+            .unwrap()
+    }
+
+    #[test]
+    fn nef_layout_matches_its_description() {
+        let n = nef(true);
+        let img = nef_images();
         assert_eq!(&n[..4], b"MM\0*");
-        let ifd = be32(&n, 4) as usize;
-        let count = usize::from(be16(&n, ifd));
-        let mut tags = Vec::new();
-        let (mut offset, mut length) = (0, 0);
-        for i in 0..count {
-            let e = ifd + 2 + 12 * i;
-            let tag = be16(&n, e);
-            tags.push(tag);
-            match tag {
-                0x0201 => offset = be32(&n, e + 8) as usize,
-                0x0202 => length = be32(&n, e + 8) as usize,
-                0x010F => {
-                    let at = be32(&n, e + 8) as usize;
-                    assert_eq!(&n[at..at + 5], b"NIKON");
-                }
-                _ => {}
-            }
+        let ifd0 = entries(&n, be32(&n, 4) as usize);
+        assert!(ifd0.windows(2).all(|w| w[0].0 < w[1].0), "tags ascending");
+        for baseline in [0x0100, 0x0101, 0x0102, 0x0103, 0x0106] {
+            assert!(ifd0.iter().any(|(t, _)| *t == baseline), "{baseline:#06x}");
         }
-        assert!(tags.windows(2).all(|w| w[0] < w[1]), "tags ascending");
-        assert_eq!(be32(&n, ifd + 2 + 12 * count), 0, "single IFD");
-        assert_eq!(offset % 2, 0, "word aligned");
-        assert_eq!(offset + length, n.len());
-        assert_eq!(&n[offset..offset + 2], &[0xFF, 0xD8]);
-        assert_eq!(&n[n.len() - 2..], &[0xFF, 0xD9]);
+        let jpeg_at = |e: &[(u16, u32)], base: usize| base + tag(e, 0x0201) as usize;
+        let thumb = jpeg_at(&ifd0, 0);
+        assert_eq!(&n[thumb..thumb + img.thumb.len()], &img.thumb[..]);
+
+        let subs_at = tag(&ifd0, 0x014A) as usize;
+        let subs: Vec<usize> = (0..3).map(|i| be32(&n, subs_at + 4 * i) as usize).collect();
+        let sub0 = entries(&n, subs[0]);
+        let full = jpeg_at(&sub0, 0);
+        assert_eq!(&n[full..full + img.full.len()], &img.full[..]);
+        let sub1 = entries(&n, subs[1]);
+        let strip = tag(&sub1, 0x0111) as usize;
+        assert_eq!(&n[strip..strip + img.strip.len()], &img.strip[..]);
+        let sub2 = entries(&n, subs[2]);
+        assert_eq!(tag(&sub2, 0x0103), 34713);
+        assert_eq!(
+            tag(&sub2, 0x0111) as usize + img.raw.len(),
+            n.len(),
+            "raw data last"
+        );
+
+        // MakerNote: Nikon header, little-endian TIFF, PreviewIFD relative to that TIFF.
+        let exif = entries(&n, tag(&ifd0, 0x8769) as usize);
+        let mn = tag(&exif, 0x927C) as usize;
+        assert_eq!(&n[mn..mn + 10], b"Nikon\0\x02\x11\0\0");
+        let base = mn + 10;
+        assert_eq!(&n[base..base + 4], b"II*\0");
+        let le32 = |at: usize| u32::from_le_bytes([n[at], n[at + 1], n[at + 2], n[at + 3]]);
+        let le16 = |at: usize| u16::from_le_bytes([n[at], n[at + 1]]);
+        let mn_ifd = base + le32(base + 4) as usize;
+        let count = usize::from(le16(mn_ifd));
+        let preview_ifd = (0..count)
+            .map(|i| mn_ifd + 2 + 12 * i)
+            .find(|&e| le16(e) == 0x0011)
+            .map(|e| base + le32(e + 8) as usize)
+            .unwrap();
+        let pcount = usize::from(le16(preview_ifd));
+        let jpeg = (0..pcount)
+            .map(|i| preview_ifd + 2 + 12 * i)
+            .find(|&e| le16(e) == 0x0201)
+            .map(|e| base + le32(e + 8) as usize)
+            .unwrap();
+        assert_eq!(&n[jpeg..jpeg + img.preview.len()], &img.preview[..]);
+    }
+
+    #[test]
+    fn little_endian_nef_is_the_mirror() {
+        let n = nef(false);
+        assert_eq!(&n[..4], b"II*\0");
+        assert_eq!(n.len(), nef(true).len());
+    }
+
+    #[test]
+    fn broken_variants() {
+        let l = nef_ifd_loop();
+        let ifd0 = u32::from_le_bytes([l[4], l[5], l[6], l[7]]) as usize;
+        let next = ifd0 + 2 + 12 * 4;
+        assert_eq!(
+            u32::from_le_bytes([l[next], l[next + 1], l[next + 2], l[next + 3]]) as usize,
+            ifd0
+        );
+        let t = nef_truncated();
+        assert!(t.len() < nef(true).len());
+        assert_eq!(&t[..], &nef(true)[..t.len()]);
     }
 }

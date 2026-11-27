@@ -15,7 +15,7 @@ One decision per file, in [MADR 4](https://adr.github.io/madr/) minimal format. 
 | [0008](0008-key-sessions-and-caches-by-volume-serial-and-relative-path.md) | Key sessions and caches by volume serial + relative path | accepted |
 | [0009](0009-sqlite-per-source-for-sessions-and-journal.md) | Use one SQLite database per source for sessions and the journal | accepted |
 | [0010](0010-journaled-apply-with-roll-forward-only.md) | Journaled apply: copy, hash, fsync, verify, rename; roll forward only | accepted (refined by 0021, 0022) |
-| [0011](0011-own-ifd-walker-for-nef-previews-and-kamadak-exif.md) | Own TIFF/IFD walker for NEF previews instead of rawler; kamadak-exif for EXIF | accepted |
+| [0011](0011-own-ifd-walker-for-nef-previews-and-kamadak-exif.md) | Own TIFF/IFD walker for NEF previews instead of rawler; kamadak-exif for EXIF | accepted, refined by 0025 |
 | [0012](0012-turbojpeg-scaled-decode-preview-pipeline.md) | Preview pipeline: turbojpeg scaled decode + fast_image_resize; no mmap on removable media | accepted |
 | [0013](0013-deliver-images-through-a-custom-uri-scheme.md) | Deliver images through a custom URI scheme, not IPC or the asset protocol | accepted |
 | [0014](0014-backend-interface-with-build-time-implementations.md) | A `Backend` interface with build-time Tauri and Demo implementations | accepted |
@@ -29,3 +29,4 @@ One decision per file, in [MADR 4](https://adr.github.io/madr/) minimal format. 
 | [0022](0022-rename-through-the-checked-handle.md) | Rename through the checked handle, with no-replace semantics | accepted |
 | [0023](0023-bare-sidecars-follow-the-nef.md) | Bare `X.xmp` and `X.pp3` follow the NEF, and stay with it when "RAW follows JPEG" is off | accepted |
 | [0024](0024-reconcile-event-for-a-file-joining-a-decided-group.md) | A new file joining a decided group makes it undecided, through a reconcile event | accepted |
+| [0025](0025-lone-nef-preview-is-the-largest-valid-embedded-jpeg.md) | A lone NEF's preview is its largest valid embedded JPEG, chosen by pixel count (refines 0011) | accepted |

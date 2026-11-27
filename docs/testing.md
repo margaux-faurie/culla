@@ -28,8 +28,8 @@ flowchart TB
 
 | Layer | Tool | Where it runs | What it covers | Trigger |
 |---|---|---|---|---|
-| Unit (Rust, core) | `cargo test -p culla-core`, `insta` for plan snapshots, in-memory `FileSystem` port | anywhere | grouping, sidecar matching, plan, preflight rules, journal state machine, resume logic, session reconcile, decision log | every PR |
-| Unit (Rust, adapters) | `cargo test -p culla-adapters`, `tempfile` | Linux + Windows | EXIF fields, IFD walker, preview pipeline, SQLite store, scan over a real tree | every PR |
+| Unit (Rust, core) | `cargo test -p culla-core`, `insta` for plan snapshots, in-memory `FileSystem` port | anywhere | IFD walker (in-memory bytes), grouping, sidecar matching, plan, preflight rules, journal state machine, resume logic, session reconcile, decision log | every PR |
+| Unit (Rust, adapters) | `cargo test -p culla-adapters`, `tempfile` | Linux + Windows | EXIF fields, NEF preview reads, preview pipeline, SQLite store, scan over a real tree | every PR |
 | Property | `proptest` | Linux | plan building, decision log fold (section 3) | every PR (default case count), nightly (high case count) |
 | Golden | JSONL fixtures in `testdata/event-log/` | Linux (Rust and Node) | Rust and TS reducers give the same state for the same log | every PR |
 | Unit (TS) | Vitest, against `DemoBackend` | Linux | reducer, keyboard map, key-repeat filter, swipe threshold logic, filters, end-of-list | every PR |
@@ -208,7 +208,7 @@ The exact transitions and resume rules are owned by [design/file-engine.md](desi
 - Schedule: nightly GitHub Actions job, 10 minutes per target, corpus cached between runs. `practices.md` suggested weekly; nightly is cheap at this size.
 - A crash opens an issue, and the minimized input is added to `testdata/fuzz-regressions/` with a unit test that runs on every PR.
 - Pass bar: no panic, no timeout above 1 s per input, no allocation above the limit.
-- Setup: `rustup toolchain install nightly` and `cargo install cargo-fuzz --locked`. `fuzz/` is its own Cargo workspace (excluded from the root one), so stable `cargo` commands never build it. In M0 `tiff_ifd_walk` is a placeholder that only reads its input; it calls the IFD walker from M1. `fuzz/Cargo.lock` is created on the first run and committed with it.
+- Setup: `rustup toolchain install nightly` and `cargo install cargo-fuzz --locked`. `fuzz/` is its own Cargo workspace (excluded from the root one), so stable `cargo` commands never build it. `tiff_ifd_walk` runs `culla_core::ifd::walk` on its input (M1) and asserts that every valid candidate lies inside it; `nef_preview_extract` is covered by the same call until the decode guard lands. `fuzz/Cargo.lock` is created on the first run and committed with it.
 
 ## 8. Manual checklist (real hardware)
 
@@ -243,7 +243,9 @@ Run on the ROG Zephyrus G14 2024 before each release, and once at the end of M1,
 
 The generator writes TIFF and EXIF structures with its own minimal writer, not with the parser under test, so a parser bug cannot hide in the fixtures.
 
-The generator follows the workspace file rules like product code: it only creates new files (`create_new`) and never truncates, overwrites or removes one. `cargo xtask fixtures` therefore refuses to run when a target file exists; to regenerate, delete `testdata/synthetic/` by hand first. The M0 skeleton writes one JPEG + NEF pair (`testdata/synthetic/pair/`): an 8x8 greyscale JPEG with Exif IFD0 (Orientation only), and a big-endian TIFF "NEF" whose IFD0 points at an embedded JPEG (no SubIFDs, MakerNote or raw data). It is NEF-shaped enough for an IFD walker but not baseline-TIFF valid (no ImageWidth, BitsPerSample or Photometric), so strict readers such as PIL reject it; add those tags before cross-checking with external tools. The format limits are listed in `xtask/src/fixtures.rs`; the full set above lands with the parsers in M1.
+The generator follows the workspace file rules like product code: it only creates new files (`create_new`) and never truncates, overwrites or removes one. `cargo xtask fixtures` therefore refuses to run when a target file exists; to regenerate, delete `testdata/synthetic/` by hand first. The M1 set: `pair/` (an 8x8 greyscale JPEG with Exif IFD0, Orientation only, and a big-endian NEF), `lone/` (the same NEF little-endian), and `broken/` (`ifd-loop.NEF`, `truncated.NEF`). Each NEF has IFD0 with the baseline tags (ImageWidth/Length, BitsPerSample, Compression, Photometric, so PIL opens it) and an 8x8 thumbnail, SubIFD0 with the largest JPEG (48x32, JPEGInterchangeFormat, as on a Z6III), SubIFD1 with a JPEG strip, SubIFD2 with stand-in raw data, and a Nikon type 3 MakerNote in the other byte order whose PreviewIFD holds a 32x24 JPEG. No RAW decode is possible. The format limits are listed in `xtask/src/fixtures.rs`; EXIF variants (Orientation, DateTimeOriginal, LensModel) and sidecars come with the EXIF and grouping slices.
+
+Until they are stripped and committed, the author's samples stay outside the repository. `crates/adapters/tests/real_samples.rs` reads them only when `CULLA_REAL_SAMPLES` names their folder (`cargo test -p culla-adapters --test real_samples -- --ignored --nocapture`); it is ignored otherwise. What the Z6III embeds is in [z6iii-nef-layout.md](research/z6iii-nef-layout.md).
 
 Privacy for real samples: before committing, strip GPS, owner name and body serial number from the files (a local `exiftool` run is fine; it is a dev tool, not shipped). Check that each stripped NEF still parses and still yields its preview. The same rule applies to the web demo photos.
 
