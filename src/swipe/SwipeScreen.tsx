@@ -377,7 +377,6 @@ function Actions({ session, photo, decision, onCommand }: ActionsProps) {
           <button
             type="button"
             className="button button-undo"
-            aria-label="Undo"
             aria-keyshortcuts="U"
             onClick={() => onCommand("clear")}
           >
