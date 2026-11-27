@@ -146,7 +146,7 @@ fn len(b: &[u8]) -> u32 {
     u32::try_from(b.len()).unwrap()
 }
 
-/// SOI, a frame header with `marker`, `precision`, width and height, then EOI.
+/// SOI, a frame header with `marker`, `precision`, width and height, a scan header, then EOI.
 fn jpeg_with(marker: u8, precision: u8, w: u16, h: u16) -> Vec<u8> {
     let mut j = vec![0xFF, 0xD8];
     // An APP1 segment first, as Nikon's previews have.
@@ -155,7 +155,9 @@ fn jpeg_with(marker: u8, precision: u8, w: u16, h: u16) -> Vec<u8> {
     j.extend_from_slice(&h.to_be_bytes());
     j.extend_from_slice(&w.to_be_bytes());
     j.extend_from_slice(&[0x01, 0x01, 0x11, 0x00]);
-    j.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x02, 0x12, 0x34, 0xFF, 0xD9]);
+    // SOS: one component, tables 0/0, spectral 0..63; then stand-in entropy data and EOI.
+    j.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00]);
+    j.extend_from_slice(&[0x12, 0x34, 0xFF, 0xD9]);
     j
 }
 
@@ -734,6 +736,64 @@ fn jpeg_checks() {
         probe(&[0xFF, 0xD8, 0xFF, 0xE1, 0xFF, 0xFF, 0xFF, 0xD9], &l).0,
         inv(Reject::NoFrame)
     );
+    // A frame header but no scan header before EOI.
+    let mut no_sos = jpeg(8, 8);
+    let sos = no_sos.windows(2).position(|w| w == [0xFF, 0xDA]).unwrap();
+    no_sos.drain(sos..no_sos.len() - 2);
+    assert_eq!(probe(&no_sos, &l).0, inv(Reject::NoScan));
+    // A scan header with more components than the frame, or a length that does not match Ns.
+    let mut bad_ns = jpeg(8, 8);
+    bad_ns[sos + 4] = 2;
+    assert_eq!(probe(&bad_ns, &l).0, inv(Reject::NoScan));
+    let mut bad_len = jpeg(8, 8);
+    bad_len[sos + 3] = 0x0A;
+    assert_eq!(probe(&bad_len, &l).0, inv(Reject::NoScan));
+    // Ns > Nf alone: two components in the scan, its length matching (6 + 2 * 2), Nf = 1.
+    let mut ns_over_nf = jpeg(8, 8);
+    ns_over_nf.splice(
+        sos..sos + 10,
+        [
+            0xFF, 0xDA, 0x00, 0x0A, 0x02, 0x01, 0x00, 0x01, 0x00, 0x00, 0x3F, 0x00,
+        ],
+    );
+    assert_eq!(probe(&ns_over_nf, &l).0, inv(Reject::NoScan));
+    // `FF 00 <len>` is not a segment: libjpeg discards `FF 00` and rescans byte by byte, so
+    // whatever it hides would be read there and skipped here. Refused before and after SOF.
+    let hidden = [0xFF, 0x00, 0x00, 0x04, 0x00, 0x00];
+    let mut before_sof = jpeg(8, 8);
+    let sof = before_sof
+        .windows(2)
+        .position(|w| w == [0xFF, 0xC0])
+        .unwrap();
+    before_sof.splice(sof..sof, hidden);
+    assert_eq!(probe(&before_sof, &l).0, inv(Reject::NoFrame));
+    let mut after_sof = jpeg(8, 8);
+    after_sof.splice(sos..sos, hidden);
+    assert_eq!(probe(&after_sof, &l).0, inv(Reject::NoScan));
+    // Other markers outside the allowlist: TEM, RST0, JPG, DNL, DHP, EXP, JPG0, reserved.
+    for m in [0x01, 0xD0, 0xC8, 0xDC, 0xDE, 0xDF, 0xF0, 0x02, 0xBF] {
+        let mut j = jpeg(8, 8);
+        j.splice(sos..sos, [0xFF, m, 0x00, 0x04, 0x00, 0x00]);
+        assert_eq!(probe(&j, &l).0, inv(Reject::NoScan), "marker {m:#04x}");
+    }
+    // Allowed markers between SOF and SOS: DQT, DHT, DRI, DAC, COM, APP15, and fill bytes.
+    for seg in [
+        &[0xFF, 0xDB, 0x00, 0x02][..],
+        &[0xFF, 0xC4, 0x00, 0x02],
+        &[0xFF, 0xDD, 0x00, 0x04, 0x00, 0x00],
+        &[0xFF, 0xCC, 0x00, 0x02],
+        &[0xFF, 0xFE, 0x00, 0x03, b'x'],
+        &[0xFF, 0xFF, 0xFF, 0xEF, 0x00, 0x02],
+    ] {
+        let mut j = jpeg(8, 8);
+        j.splice(sos..sos, seg.iter().copied());
+        assert_eq!(probe(&j, &l).0, JpegCheck::Valid, "{seg:02x?}");
+    }
+    // A frame header whose length does not match Nf.
+    let mut bad_nf = jpeg(8, 8);
+    let sof = bad_nf.windows(2).position(|w| w == [0xFF, 0xC0]).unwrap();
+    bad_nf[sof + 9] = 3;
+    assert_eq!(probe(&bad_nf, &l).0, inv(Reject::NoFrame));
     // A flood of fill bytes hits the segment cap.
     let mut flood = vec![0xFF, 0xD8];
     flood.extend_from_slice(&[0xFF; 1000]);

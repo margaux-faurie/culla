@@ -4,7 +4,8 @@
 //! Ignored by default. Run with the folder of samples (searched recursively for `*.NEF`):
 //! `CULLA_REAL_SAMPLES=/path/to/samples cargo test -p culla-adapters --test real_samples -- --ignored --nocapture`
 //! Read-only: the files are opened with `File::open` and never written; the scan only lists
-//! folders.
+//! folders. The preview test can write its previews for a visual check into a folder named by
+//! `CULLA_PREVIEW_OUT` (outside the repository: they show the photos), never replacing a file.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,10 +14,12 @@ use culla_adapters::metadata::exif::{read_group_meta, read_photo_meta};
 use culla_adapters::metadata::nef_preview::{
     FileSource, MAX_PREVIEW_BYTES, find_preview, read_preview_bytes,
 };
+use culla_adapters::preview::{PreviewOptions, build_preview};
 use culla_adapters::scan::scan_and_group;
 use culla_core::exif::{MetaIssue, Orientation, TimeSource, capture_order};
 use culla_core::grouping::{GroupStatus, PhotoKind, ScanPolicy};
 use culla_core::ifd::{self, Limits};
+use culla_core::preview::{Scale, Size};
 
 /// Long edge of the G14 screen (SPEC): a preview below it would look soft.
 const SCREEN_LONG_EDGE: u32 = 2880;
@@ -226,4 +229,108 @@ fn real_samples_have_capture_time_orientation_and_lens() {
     for &i in &order {
         println!("  {}", g.groups[i].primary.entry.rel_path());
     }
+}
+
+/// Bytes of the JPEG a preview is made from: the camera JPEG, or a lone NEF's largest
+/// embedded JPEG (ADR 0025).
+fn preview_source(path: &Path) -> Vec<u8> {
+    if path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("nef"))
+    {
+        let best = find_preview(path).unwrap();
+        read_preview_bytes(path, best.range, MAX_PREVIEW_BYTES).unwrap()
+    } else {
+        fs::read(path).unwrap()
+    }
+}
+
+/// The size of an encoded preview, from turbojpeg's header.
+fn encoded_size(jpeg: &[u8]) -> Size {
+    let h = turbojpeg::Decompressor::new()
+        .unwrap()
+        .read_header(jpeg)
+        .unwrap();
+    Size::new(
+        u32::try_from(h.width).unwrap(),
+        u32::try_from(h.height).unwrap(),
+    )
+}
+
+#[test]
+#[ignore = "needs the author's samples: set CULLA_REAL_SAMPLES"]
+fn real_samples_preview_upright_at_g14_size() {
+    let Ok(root) = std::env::var("CULLA_REAL_SAMPLES") else {
+        println!("skipped: CULLA_REAL_SAMPLES is not set");
+        return;
+    };
+    let root = Path::new(&root);
+    let out = std::env::var_os("CULLA_PREVIEW_OUT").map(PathBuf::from);
+    let (g, _) = scan_and_group(root, &ScanPolicy::new(true)).unwrap();
+    assert!(!g.groups.is_empty(), "no photo under {}", root.display());
+    let options = PreviewOptions::default();
+    let (mut portrait, mut total_ms) = (0, 0.0);
+    for group in &g.groups {
+        let name = group.primary.entry.rel_path();
+        let mut path = root.to_path_buf();
+        for c in group.primary.entry.components() {
+            path.push(c);
+        }
+        let meta = read_group_meta(root, group).unwrap();
+        let jpeg = preview_source(&path);
+        let p = build_preview(&jpeg, meta.orientation, &options).unwrap();
+        let t = p.timings;
+        println!(
+            "{name}: {}x{} {:?} at {}/{} -> {}x{} -> {}x{}, {} KB; check {:?} decode {:?} \
+             resize {:?} orient {:?} encode {:?}, total {:?}",
+            p.plan.source.width,
+            p.plan.source.height,
+            meta.orientation,
+            p.plan.scale.num(),
+            p.plan.scale.denom(),
+            p.plan.decoded.width,
+            p.plan.decoded.height,
+            p.size.width,
+            p.size.height,
+            p.jpeg.len() / 1024,
+            t.check,
+            t.decode,
+            t.resize,
+            t.orient,
+            t.encode,
+            t.total()
+        );
+        total_ms += t.total().as_secs_f64() * 1000.0;
+        // Z6III: 6048x4032, decoded at 1/2, 2700x1800 upright (US-07, ADR 0012).
+        assert_eq!(p.plan.source, Size::new(6048, 4032), "{name}");
+        assert_eq!(p.plan.scale, Scale::eighths(4).unwrap(), "{name}");
+        assert_eq!(p.plan.decoded, Size::new(3024, 2016), "{name}");
+        let want = if meta.orientation.swaps_dimensions() {
+            portrait += 1;
+            Size::new(1800, 2700)
+        } else {
+            Size::new(2700, 1800)
+        };
+        assert_eq!(p.size, want, "{name}");
+        assert_eq!(encoded_size(&p.jpeg), want, "{name}");
+        assert!(
+            p.jpeg.len() < 4 * 1024 * 1024,
+            "{name}: {} bytes",
+            p.jpeg.len()
+        );
+        if let Some(dir) = &out {
+            let file = dir.join(format!("{}.preview.jpg", group.stem));
+            let mut f = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&file)
+                .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+            std::io::Write::write_all(&mut f, &p.jpeg).unwrap();
+        }
+    }
+    println!(
+        "{} preview(s), {portrait} portrait, mean {:.1} ms",
+        g.groups.len(),
+        total_ms / g.groups.len() as f64
+    );
 }

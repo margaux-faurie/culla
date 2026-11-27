@@ -58,10 +58,10 @@ Links: NFR-PERF. Test: core unit, B-03.
 ### US-07 Upright previews at screen size
 As a photographer, I want each preview upright and sharp at full screen, so that I judge the photo, not the pipeline.
 - Given a JPEG with EXIF Orientation 6 or 8, when its preview is built, then it is rotated upright.
-- Given a 24 MP or 45 MP JPEG, when its preview is built, then the long edge is just above the screen size (2880×1800 on the G14) and the file is a JPEG.
+- Given a 24 MP or 45 MP JPEG, when its preview is built, then it fits the screen box (2880×1800 on the G14) in its own orientation without upscaling, filling the height for a 3:2 photo (2700×1800, or 1800×2700 portrait), and the file is a JPEG.
 - Given a JPEG whose declared dimensions exceed the decode limit, when its preview is built, then it fails with an error and does not allocate the full size.
 
-Links: NFR-PERF, NFR-REL. Test: adapters unit (one fixture per Orientation value), fuzz.
+Links: NFR-PERF, NFR-REL. Test: adapters unit (a JPEG built in the test for each Orientation value, not a fixture), core unit (sizes, caps, orientation), fuzz (`jpeg_header`).
 
 ### US-08 Prefetch and cache
 As a photographer, I want the next photo already prepared when I advance, so that culling never waits on the card.

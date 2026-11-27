@@ -7,6 +7,7 @@ pub mod exif;
 pub mod grouping;
 pub mod ifd;
 pub mod names;
+pub mod preview;
 pub mod volume;
 
 /// Crate version, shown by the CLI, the bench and the app.

@@ -1,5 +1,5 @@
-//! Checks that a byte range holds a JPEG a preview decoder can take, reading only its first
-//! segments and its last bytes.
+//! Checks that a byte range holds a JPEG a preview decoder can take, reading only its marker
+//! segments up to the first scan header and its last bytes.
 
 use std::io;
 
@@ -12,6 +12,12 @@ pub(super) struct Frame {
     pub length: u64,
     pub width: u32,
     pub height: u32,
+    /// The SOFn marker: 0xC0 baseline, 0xC1 extended sequential, 0xC2 progressive.
+    pub marker: u8,
+    /// Components in the frame (Nf in the SOFn header).
+    pub components: u8,
+    /// Components in the first scan (Ns in the first SOS header).
+    pub scan_components: u8,
 }
 
 /// Bytes read from the end to find EOI behind zero padding (so up to ~500 bytes of padding).
@@ -50,10 +56,13 @@ pub(super) fn probe<R: ReadAt + ?Sized>(
         return Ok(Err(Reject::TooShort));
     }
 
-    // Marker segments from just after SOI to the frame header. Every step reads inside
-    // `offset..offset + length` and moves forward, and the number of steps is capped.
+    // Marker segments from just after SOI to the frame header, then on to the first scan
+    // header. Every step reads inside `offset..offset + length` and moves forward, and the
+    // number of steps for both is capped together.
     let end = offset + length;
     let mut pos = offset + 2;
+    // The frame header once seen: (width, height, marker, components).
+    let mut frame: Option<(u32, u32, u8, u8)> = None;
     for _ in 0..limits.max_jpeg_segments {
         if pos.checked_add(4).is_none_or(|p| p > end) {
             break;
@@ -64,30 +73,64 @@ pub(super) fn probe<R: ReadAt + ?Sized>(
             break;
         }
         let marker = m[1];
+        // An allowlist of the length-bearing markers that may come before the first scan, so
+        // Culla and libjpeg see the same first scan (threat model T5). Anything else is a
+        // broken file: SOI, EOI, TEM, RSTn, JPG, DNL, DHP, EXP, JPGn, reserved markers, and
+        // `FF 00`, which libjpeg discards before scanning on byte by byte, so a scan header
+        // hidden behind it would be skipped here and read there.
         match marker {
-            // Fill byte before a marker.
+            // Fill byte before a marker, skipped as libjpeg does.
             0xFF => {
                 pos += 1;
                 continue;
             }
-            // SOI, EOI, SOS, TEM, RSTn: no frame header before them is a broken file.
-            0xD8 | 0xD9 | 0xDA | 0x01 | 0xD0..=0xD7 => break,
-            _ => {}
+            // JPG (C8) is reserved, not a frame header.
+            0xC8 => break,
+            // APPn, COM, DQT, DHT, DRI, DAC, SOFn, SOS (refused below without a frame).
+            0xE0..=0xEF | 0xFE | 0xDB | 0xC4 | 0xDD | 0xCC | 0xC0..=0xCF | 0xDA => {}
+            _ => break,
         }
         let seg = u64::from(u16::from_be_bytes([m[2], m[3]]));
         if seg < 2 || pos + 2 + seg > end {
             break;
         }
-        // SOFn: C0..CF except DHT (C4), JPG (C8) and DAC (CC).
-        if (0xC0..=0xCF).contains(&marker) && !matches!(marker, 0xC4 | 0xC8 | 0xCC) {
-            if seg < 8 {
+        if marker == 0xDA {
+            let Some((width, height, marker, components)) = frame else {
+                break;
+            };
+            // Ns, then Ns component selectors of 2 bytes and 3 bytes of spectral selection
+            // and approximation: the length is 6 + 2 * Ns, with 1 <= Ns <= min(4, Nf), as
+            // libjpeg checks.
+            if seg < 3 {
                 break;
             }
-            let mut sof = [0u8; 5];
+            let mut ns = [0u8; 1];
+            src.read_exact_at(pos + 4, &mut ns)?;
+            let ns = ns[0];
+            if ns == 0 || ns > 4 || ns > components || seg != 6 + 2 * u64::from(ns) {
+                break;
+            }
+            return Ok(Ok(Frame {
+                length,
+                width,
+                height,
+                marker,
+                components,
+                scan_components: ns,
+            }));
+        }
+        // SOFn: C0..CF except DHT (C4), JPG (C8) and DAC (CC).
+        if (0xC0..=0xCF).contains(&marker) && !matches!(marker, 0xC4 | 0xC8 | 0xCC) {
+            // A second frame header is not a file a preview decoder takes.
+            if frame.is_some() || seg < 8 {
+                break;
+            }
+            let mut sof = [0u8; 6];
             src.read_exact_at(pos + 4, &mut sof)?;
             let precision = sof[0];
             let height = u32::from(u16::from_be_bytes([sof[1], sof[2]]));
             let width = u32::from(u16::from_be_bytes([sof[3], sof[4]]));
+            let components = sof[5];
             // Baseline, extended sequential and progressive Huffman, 8-bit: what turbojpeg
             // decodes for previews. Lossless (C3) is how raw data is stored as JPEG.
             if !matches!(marker, 0xC0..=0xC2) || precision != 8 {
@@ -99,13 +142,17 @@ pub(super) fn probe<R: ReadAt + ?Sized>(
             if u64::from(width) * u64::from(height) > limits.max_pixels {
                 return Ok(Err(Reject::TooManyPixels));
             }
-            return Ok(Ok(Frame {
-                length,
-                width,
-                height,
-            }));
+            // Nf, then 3 bytes per component: libjpeg refuses any other length.
+            if components == 0 || seg != 8 + 3 * u64::from(components) {
+                break;
+            }
+            frame = Some((width, height, marker, components));
         }
         pos += 2 + seg;
     }
-    Ok(Err(Reject::NoFrame))
+    Ok(Err(if frame.is_some() {
+        Reject::NoScan
+    } else {
+        Reject::NoFrame
+    }))
 }
