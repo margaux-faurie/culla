@@ -1,6 +1,7 @@
 ---
-status: proposed
+status: accepted
 date: 2026-11-27
+decision-makers: Margaux Faurie (accepted 27 Nov 2026)
 ---
 
 # Never split a shot: how the scan handles what it cannot see completely

@@ -9,7 +9,7 @@ The file engine is the part that must never lose a photo. Everything below serve
 | Crate | Owns | I/O |
 |---|---|---|
 | `crates/core` (`culla-core`) | Domain types, port traits (`FileSystem`, `SessionStore`, `Clock`), grouping, `fold()`, reconciliation, `plan()`, preflight rules, journal state machine, the recovery table, apply executor, all driven through ports | None. `#![forbid(unsafe_code)]`. Tested with in-memory fakes on any OS |
-| `crates/adapters` (`culla-adapters`) | `winfs` (volume mapping, walk, handle-based no-replace rename, verified copy, hashing, `remove_verified`), SQLite store, EXIF/NEF parsing. Until M2 the walk is `scan` over `std::fs`, outside `winfs` and outside the `FileSystem` port (proposed [ADR 0027](../adr/0027-scan-edge-cases-left-out-of-grouping.md)) | All real I/O. Win32 `unsafe` confined to `winfs` |
+| `crates/adapters` (`culla-adapters`) | `winfs` (volume mapping, walk, handle-based no-replace rename, verified copy, hashing, `remove_verified`), SQLite store, EXIF/NEF parsing. Until M2 the walk is `scan` over `std::fs`, outside `winfs` and outside the `FileSystem` port ([ADR 0027](../adr/0027-scan-edge-cases-left-out-of-grouping.md)) | All real I/O. Win32 `unsafe` confined to `winfs` |
 | `src-tauri` | Wiring only: builds adapters, injects them into core services, exposes commands | None of its own |
 
 The core decides *what* to do and in which state; the adapter performs one primitive per call and reports the outcome.
@@ -102,7 +102,7 @@ CREATE TABLE scan_issue (
              'reparse_point','cloud_placeholder','hidden_or_system','invalid_name',
              'unreadable','foreign_partial','same_basename_unknown',
              'joins_applied_group','reverted_move',
-             'too_deep','too_large','held_back')),   -- last three: proposed, ADR 0027
+             'too_deep','too_large','held_back')),   -- last three: ADR 0027
   detail   TEXT
 ) STRICT;
 
@@ -806,4 +806,4 @@ Each invariant has at least one test in [testing.md](../testing.md): property te
 - Session after a completed apply (§9.6); auto-resume or confirm (§10.1); log copy in the destination (§2.2).
 - `FileRenameInfoEx` support on FAT32 and exFAT, and the path form it accepts, to check in adapter tests.
 - NX Studio `.nksc` naming and `NKSC_PARAM` attributes, to verify on real files. If NX Studio also marks the `.nksc` files hidden, the hidden rule (§3.2) skips them and they no longer follow their photo; the code exempts only the folder, as written.
-- Scan edge cases not covered above, proposed in [ADR 0027](../adr/0027-scan-edge-cases-left-out-of-grouping.md): ambiguous groups for case-variant members, for a JPEG or NEF excluded by its own attributes, and for case-colliding folders; held-back folders (an entry that cannot be described, a broken `NKSC_PARAM`, over the entry cap); depth and entry caps (32, 100,000); the scan issue kinds `too_deep`, `too_large`, `held_back`; and the walk living in `culla_adapters::scan` over `std::fs` until it moves behind the `FileSystem` port in `winfs` (M2), so the recording fake covers it. For Margaux.
+- Decided 27 Nov 2026 in [ADR 0027](../adr/0027-scan-edge-cases-left-out-of-grouping.md): ambiguous groups for case-variant members, for a JPEG or NEF excluded by its own attributes, and for case-colliding folders; held-back folders (an entry that cannot be described, a broken `NKSC_PARAM`, over the entry cap); depth and entry caps (32, 100,000); the scan issue kinds `too_deep`, `too_large`, `held_back`; and the walk living in `culla_adapters::scan` over `std::fs` until it moves behind the `FileSystem` port in `winfs` (M2), so the recording fake covers it.

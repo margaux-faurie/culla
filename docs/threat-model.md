@@ -91,7 +91,7 @@ Status: *planned* (designed, not built), *decided* (in an ADR or SPEC), *open* (
 | T16 | I | Preview cache exposes photos to other users of the PC | Cache | Lives in the user's `%LOCALAPPDATA%` (per-user ACL); no telemetry; the only network call is the updater | planned |
 | T17 | I | Demo reveals the author's location through EXIF GPS | Demo build | Strip GPS and serial numbers when pre-extracting EXIF and encoding AVIF/WebP | planned |
 | T18 | I, T | Demo "your folder" mode leaks a visitor's files, or the site serves altered code | Demo | Static assets only, no backend, no uploads; files read in the browser only; CSP `connect-src 'self'`; no third-party scripts; Cloudflare account with 2FA and a scoped deploy token | planned |
-| T19 | D | Huge or deep folder trees exhaust memory or time | Scan | Streamed scan, folder by folder; caps on depth (32) and entries per folder (100,000) in `ScanPolicy`, a folder over a cap is reported and never listed partially; entries share their folder's path components (proposed ADR 0027) | partial (caps in place; time budget unmeasured until B-01) |
+| T19 | D | Huge or deep folder trees exhaust memory or time | Scan | Streamed scan, folder by folder; caps on depth (32) and entries per folder (100,000) in `ScanPolicy`, a folder over a cap is reported and never listed partially; entries share their folder's path components (ADR 0027) | partial (caps in place; time budget unmeasured until B-01) |
 | T20 | S | Unsigned installer trains users to click through SmartScreen | Distribution | README explains; checksums on releases; SignPath Foundation after v1 | decided (SPEC §6) |
 
 ## 4. Did we do enough

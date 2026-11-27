@@ -11,7 +11,7 @@
 //!
 //! The walk lives here over `std::fs` for now. In M2 it moves behind the core `FileSystem`
 //! port (implemented in `winfs`), so the recording fake can prove it read-only like the rest
-//! of a session (testing.md §4; proposed ADR 0027).
+//! of a session (testing.md §4; ADR 0027).
 //!
 //! # Never a partial folder
 //!

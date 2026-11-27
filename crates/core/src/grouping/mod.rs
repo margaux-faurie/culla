@@ -16,7 +16,7 @@
 //! # Never split a shot
 //!
 //! When the scan cannot be sure it sees every file of a shot, it holds the shot back instead of
-//! grouping it partially (proposed ADR 0027):
+//! grouping it partially (ADR 0027):
 //!
 //! - A folder with an entry that could not be described ([`EntryKind::Unreadable`]), with more
 //!   than [`ScanPolicy::max_entries_per_folder`] entries, or whose `NKSC_PARAM` could not be
@@ -227,7 +227,7 @@ pub enum ExclusionReason {
 impl ExclusionReason {
     /// The `scan_issue.kind` this exclusion is reported as (file-engine §2.3), or `None` when it
     /// is only counted. Hidden and system folders are counted, hidden files reported.
-    /// `too_deep`, `too_large` and `held_back` are proposed in ADR 0027.
+    /// `too_deep`, `too_large` and `held_back` are from ADR 0027.
     #[must_use]
     pub fn issue_kind(self, is_dir: bool) -> Option<&'static str> {
         match self {

@@ -1201,7 +1201,7 @@ fn prop_matching_ignores_case() {
     }
 }
 
-// --- Never split a shot (proposed ADR 0027) --------------------------------------------------
+// --- Never split a shot (ADR 0027) --------------------------------------------------
 
 fn held_back(g: &Grouping) -> Vec<String> {
     g.excluded
