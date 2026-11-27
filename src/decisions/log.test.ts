@@ -81,7 +81,8 @@ describe("fold", () => {
   });
 
   it("allows seq gaps and any first seq, and ignores ts", () => {
-    expect(expected([{ ...keep(-5, 1), ts: 99 }, { ...undo(40, -5), ts: 0 }])).toEqual({
+    const events = [{ ...keep(-5, 1), ts: 99 }, { ...undo(40, -5), ts: 0 }];
+    expect(expected(events)).toEqual({
       state: {},
       done: [],
       undone: [-5],
