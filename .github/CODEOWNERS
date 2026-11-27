@@ -1,0 +1,13 @@
+# Margaux reviews every change to the safety rails (design/file-engine.md §9.7, CLAUDE.md).
+# Agents' changes to these paths need her approval before merge.
+/clippy.toml                    @margaux-faurie
+/crates/core/clippy.toml        @margaux-faurie
+/deny.toml                      @margaux-faurie
+/.cargo/                        @margaux-faurie
+/scripts/ci/                    @margaux-faurie
+/.github/                       @margaux-faurie
+/crates/adapters/src/winfs/     @margaux-faurie
+/crates/adapters/src/winfs.rs   @margaux-faurie
+/src-tauri/capabilities/        @margaux-faurie
+/src-tauri/tauri.conf.json      @margaux-faurie
+/.claude/                       @margaux-faurie

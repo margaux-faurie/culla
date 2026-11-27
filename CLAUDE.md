@@ -15,7 +15,7 @@ Work now (M0):
 - `pnpm dev:demo` · `pnpm build:demo` (web demo, `dist-demo/`) · `pnpm tauri dev` · `pnpm tauri build` (Windows, NSIS)
 - `pnpm build:demo && pnpm e2e` (Playwright + axe on `dist-demo/`; first time `pnpm exec playwright install chromium`)
 - `pnpm gen:bindings` (placeholder until the first tauri-specta command in M1)
-- `cargo xtask fixtures [--check]` · `cargo xtask golden --check` · `cargo xtask crash-loop --iterations N` (M2); until the `.cargo/config.toml` alias lands use `cargo run -p xtask -- <task>`
+- `cargo xtask fixtures [--check]` · `cargo xtask golden --check` · `cargo xtask crash-loop --iterations N` (M2)
 - `cargo llvm-cov -p culla-core -p culla-adapters --html` · `cargo +nightly fuzz run tiff_ifd_walk -- -max_total_time=60` (setup: testing.md §7, §10)
 
 ## Layout

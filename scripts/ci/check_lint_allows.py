@@ -117,7 +117,7 @@ def main() -> int:
             if UNSAFE_LINT.search(lints) and not UNSAFE_ALLOWED.match(path):
                 problems.append(f"{path}:{line}: unsafe_code allowed outside crates/adapters/src/winfs/")
 
-    for manifest in tracked("crates/*/Cargo.toml", "src-tauri/Cargo.toml"):
+    for manifest in tracked("crates/*/Cargo.toml", "src-tauri/Cargo.toml", "xtask/Cargo.toml"):
         with open(manifest, encoding="utf-8") as f:
             text = f.read()
         section = re.search(r"^\[lints\]\s*\n(.*?)(?=^\[|\Z)", text, re.S | re.M)
