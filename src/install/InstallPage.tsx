@@ -13,7 +13,7 @@ export function InstallPage() {
   const { release, demoVideo, installVideo } = STATUS;
   return (
     <div className="doc-page">
-      <header className="start-header doc-header">
+      <header className="doc-header">
         <a className="brand" href="/">
           Culla
         </a>

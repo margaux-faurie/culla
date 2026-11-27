@@ -206,7 +206,6 @@ export function StartScreen({ onStarted }: StartScreenProps) {
     <div className="start">
       <header className="start-header">
         <span className="brand">Culla</span>
-        {import.meta.env.MODE === "demo" && <a href="/install">Download and install</a>}
       </header>
       <main className="start-main">
         {notReady && (
@@ -298,6 +297,12 @@ export function StartScreen({ onStarted }: StartScreenProps) {
           )}
         </section>
       </main>
+      {/* Demo only, after the main content so it is not the first tab stop. */}
+      {import.meta.env.MODE === "demo" && (
+        <footer className="start-footer">
+          <a href="/install">Download and install</a>
+        </footer>
+      )}
     </div>
   );
 }

@@ -295,7 +295,7 @@ export function parseInline(source: string): Inline[] {
     } else if (kbd !== undefined) {
       out.push({ kind: "kbd", text: kbd });
     } else if (bare !== undefined) {
-      out.push({ kind: "link", href: bare, children: [{ kind: "text", text: bare }] });
+      out.push({ kind: "link", href: bare, children: [{ kind: "text", text: bare, key: "i0" }] });
     }
   }
   push(source.slice(last));

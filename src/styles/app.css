@@ -924,9 +924,20 @@ kbd {
   }
 }
 
-/* Header links (demo only: "Download and install"). */
+/* Footer link of the demo start screen ("Download and install"), and the install page header. */
 
-.start-header {
+.start-footer {
+  margin-top: auto;
+  font-size: 15px;
+}
+
+.start-footer a,
+.doc-header a {
+  color: var(--ink);
+  text-underline-offset: 0.2em;
+}
+
+.doc-header {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-4);
@@ -934,12 +945,7 @@ kbd {
   justify-content: space-between;
 }
 
-.start-header a {
-  color: var(--ink);
-  text-underline-offset: 0.2em;
-}
-
-.start-header a.brand {
+.doc-header a.brand {
   text-decoration: none;
 }
 
@@ -1002,18 +1008,17 @@ kbd {
   overflow-wrap: anywhere;
 }
 
+/* Code wraps instead of scrolling, so it needs no focusable scroll region (axe). */
 .doc-code {
   margin: var(--space-2) 0 var(--space-4);
   padding: var(--space-3) var(--space-4);
-  overflow-x: auto;
   border-radius: var(--radius-sm);
   background: var(--paper-raised);
   line-height: 1.5;
 }
 
 .doc-code code {
-  overflow-wrap: normal;
-  white-space: pre;
+  white-space: pre-wrap;
 }
 
 .doc-table {

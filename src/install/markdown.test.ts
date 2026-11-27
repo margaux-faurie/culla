@@ -167,8 +167,12 @@ describe("the install guide on the web (docs/install.md)", () => {
   });
 
   it("leaves no Markdown unread", () => {
+    // Markers of bold, fences, comments, links and kbd that the reader should have consumed.
+    const markers = ["**", "```", "<!--", "](", "<kbd>"];
     for (const text of allText(guide.body)) {
-      expect(text, text).not.toMatch(/\*\*|```|<!--|-->|\]\(|<kbd>/);
+      for (const marker of markers) {
+        expect(text, text).not.toContain(marker);
+      }
     }
   });
 
