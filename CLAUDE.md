@@ -3,11 +3,11 @@
 Culla is a Windows desktop app (Tauri 2 + Rust + React/TS) that culls Nikon JPEG+NEF photos with a swipe UI, then applies keep/reject as safe, journaled file operations. Start at `docs/SPEC.md`: it records the author's decisions and maps each topic to its owning doc (PRD, nfr, architecture, ADRs, file-engine design, threat model, testing, roadmap). `docs/research/` is historical input: where it disagrees with the spec or an ADR, the spec and ADRs win.
 
 ## Status
-M0 (repo and tooling) is done; M1 (core engine headless) is in progress: NEF preview reader, scan and grouping, EXIF, and volume identity are in. Author decisions recorded 27 Nov; what is still open is in SPEC §10 and file-engine §13.
+M0 (repo and tooling) is done; M1 (core engine headless) is in progress: NEF preview reader, scan and grouping, EXIF, and volume identity are in, with the headless `culla scan`. Author decisions recorded 27 Nov; what is still open is in SPEC §10 and file-engine §13.
 
 ## Commands
 Work now:
-- `cargo test --workspace` · `cargo test -p culla-core <name>` · `cargo test -p culla-adapters [--features windows-it]` (Windows integration tests from M2) · `CULLA_REAL_SAMPLES=<dir> cargo test -p culla-adapters --test real_samples -- --ignored` (the author's NEFs stay outside the repo: they hold GPS)
+- `cargo test --workspace` · `cargo test -p culla-core <name>` · `cargo test -p culla-adapters [--features windows-it]` (Windows integration tests from M2) · `CULLA_REAL_SAMPLES=<dir> cargo test -p culla-adapters --test real_samples -- --ignored` (the author's NEFs stay outside the repo: they hold GPS; same gate for `-p culla-cli --test scan`) · `cargo run -p culla-cli -- scan <folder> [--no-subfolders] [--json]` (read-only; `culla help` lists exit codes)
 - `cargo clippy --workspace --all-targets -- -D warnings` · `cargo fmt --all` · `cargo deny check` (`culla-app` needs WebView2 on Windows or libwebkit2gtk-4.1-dev on Linux)
 - `scripts/ci/check-conflict-markers.sh` · `scripts/ci/check_lint_allows.py` · `pwsh scripts/ci/vhdx.ps1 -Action mount|attach|detach|readonly|unmount` (Windows, admin; see `scripts/ci/README.md`)
 - `pnpm install` · `pnpm check` (Biome + tsc) · `pnpm test` · `pnpm test <file>`
@@ -21,7 +21,7 @@ Work now:
 ## Layout
 - `crates/core` (package `culla-core`) — domain, ports, pure logic (TIFF/IFD walker behind a `ReadAt` port; `grouping` and scan exclusions over plain `ScanEntry` data; `exif` parsing and capture order over plain `RawExif` data; `names`; `volume`: serial + folded relative path keys, run binding). No I/O, no Tauri, `#![forbid(unsafe_code)]`.
 - `crates/adapters` (package `culla-adapters`) — Windows file ops, the read-only folder walk (`scan`, `read_dir` only, re-checks each folder before listing it, swap window until M2, never a partial folder; moves into `winfs` in M2), file reads for NEF previews, EXIF, decode, SQLite; `winfs` (Win32 `unsafe` only in `winfs/win32.rs`, read-only volume and time-zone lookups so far, a stub off Windows). No Tauri.
-- `crates/cli` (package `culla-cli`, binary `culla`) — headless scan, preview, plan, apply, resume. Wiring only.
+- `crates/cli` (package `culla-cli`, binary `culla`) — headless scan (in; exit codes, JSON fields and off-Windows behaviour provisional, SPEC §10), preview, plan, apply, resume. Wiring only, writes nothing but stdout and stderr.
 - `crates/bench` (package `culla-bench`) — benchmark harness. See ADR 0020.
 - `src-tauri` (package `culla-app`) — wiring only: commands, `culla://` image scheme, capabilities. New command: `build.rs` `AppManifest::commands` + `allow-<command>` in `capabilities/main.json`.
 - `src` — React UI, one Vite app, `--mode desktop` or `--mode demo`; `vite.config.ts` aliases `#backend-impl` to `backend/tauri.ts` or `backend/demo.ts` (ADR 0014).
