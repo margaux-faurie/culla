@@ -1,0 +1,28 @@
+# Response headers for the web demo on Cloudflare Workers static assets (docs/deploy-demo.md).
+# Vite copies this file into dist-demo/ in `--mode demo` only (vite.config.ts publicDir).
+# Cloudflare reads it at deploy time and does not serve it. Rules apply in file order, and a
+# header set by two matching rules is joined with a comma, so each header is set by one rule.
+#
+# CSP: the demo loads only its own module script and stylesheet from /assets/ (no inline
+# script or style, no images, fonts or fetches yet). tests/demo-site.test.ts fails if the built
+# index.html gains an inline script or style. Widen a directive only when a feature needs it:
+# img-src gets blob: with the "your folder" mode, font-src stays 'self' (fonts are self-hosted).
+# Cloudflare features that inject scripts (Rocket Loader, email obfuscation, Web Analytics
+# auto-injection, Zaraz, Bot Fight Mode JS detections) stay off for this hostname: the CSP
+# would block them.
+#
+# HSTS: one year with includeSubDomains, without preload (not on the browser preload lists).
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Permissions-Policy: accelerometer=(), autoplay=(), bluetooth=(), browsing-topics=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), hid=(), magnetometer=(), microphone=(), midi=(), payment=(), publickey-credentials-get=(), serial=(), usb=(), xr-spatial-tracking=()
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+
+# Vite writes content-hashed file names under /assets/, so a changed file gets a new URL.
+# index.html is outside /assets/ and keeps Cloudflare's default (revalidate on every load).
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

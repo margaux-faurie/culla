@@ -69,7 +69,7 @@ flowchart TB
 | File system | Win32 via Rust std and the adapters | Removable media can disappear at any time. Other apps can lock files briefly. |
 | Lightroom, NX Studio | Shared files only | Files moved outside Lightroom show as missing in its catalog (README warning). NX Studio edits live in `NKSC_PARAM/X.NEF.nksc` and follow the NEF. |
 | GitHub Releases | HTTPS, signed `latest.json` | Updater only. No telemetry. |
-| Cloudflare | Static hosting | Demo only. The "your folder" mode reads local files in the browser and uploads nothing. |
+| Cloudflare | Static hosting, builds, Access | Demo only. Workers Builds builds and deploys it from `main`; Access gates it until the portfolio opens. The "your folder" mode reads local files in the browser and uploads nothing. |
 
 ## 5. Building block view
 
@@ -457,10 +457,11 @@ flowchart LR
   rel -->|"download"| inst
   inst -->|"updater check, HTTPS, signature verified"| rel
 
-  subgraph cfw["Cloudflare Workers static assets"]
+  subgraph cfw["Cloudflare Worker culla (static assets only)"]
     demo["Demo build of src/<br/>~25 photos AVIF/WebP + EXIF JSON"]
   end
-  ci2["GitHub Actions"] -->|"wrangler deploy"| demo
+  ci2["Workers Builds<br/>(push to main)"] -->|"pnpm build:demo, wrangler deploy"| demo
+  acc["Cloudflare Access<br/>culla.margauxfaurie.com"] -->|"signed-in visitors only"| demo
 ```
 
 | Node | Details |
@@ -468,7 +469,7 @@ flowchart LR
 | Installer | NSIS only, per-user, WebView2 through the default bootstrapper. Unsigned for v1 (SmartScreen note in README). |
 | Updater | `tauri-plugin-updater`, its own signing key (private key in CI secret `TAURI_SIGNING_PRIVATE_KEY`, public key in config). Key loss strands installed users: custody in [releasing.md](releasing.md) (planned). |
 | Local data | Preview cache in `%LOCALAPPDATA%\Culla\cache`. Session databases in `%LOCALAPPDATA%\Culla\sessions`, a small app-level settings store beside them (last destination used), apply logs in `%LOCALAPPDATA%\Culla\logs`. Nothing is written into the source folder except `_rejected/` on apply. |
-| Web demo | Static assets on Cloudflare Workers at `culla.margauxfaurie.com`, behind the site's Cloudflare Access policy until the portfolio opens (SPEC §2). No server code. |
+| Web demo | Worker `culla`, static assets only, at `culla.margauxfaurie.com`, behind the site's Cloudflare Access policy until the portfolio opens (SPEC §2). No server code. Workers Builds builds and deploys it on every push to `main` (no preview builds, no preview URLs, workers.dev off). Config in `wrangler.jsonc`, response headers (CSP and the rest) in `public-demo/_headers`, which Vite copies into `dist-demo/` in demo mode only. Settings: [deploy-demo.md](deploy-demo.md). |
 | Later | winget manifest after v1; SignPath signing once v1 is released ([ADR 0016](adr/0016-per-user-nsis-and-signed-updater-code-signing-deferred.md)). |
 
 ## 8. Crosscutting concepts
