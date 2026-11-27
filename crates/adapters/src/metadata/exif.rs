@@ -34,6 +34,14 @@
 //! number of the IFD that points to them. Stable across 0.6.x. `read_from_container` is not
 //! used: it would dispatch on the format itself.
 //!
+//! # File time
+//!
+//! The listing's modification time is the last capture-time fallback, read in the PC's local
+//! time zone (ADR 0028): [`local_file_time`] adds the PC's UTC offset at that instant, from
+//! [`crate::winfs::local_utc_offset_minutes`]. [`read_photo_meta`] looks it up only when the
+//! file time is the time used; [`meta_from_head`] takes it already resolved, so it stays free
+//! of the time zone (tests and the fuzz target pass [`FileTime::utc`]).
+//!
 //! # What becomes an error
 //!
 //! Only failing to open or read the file is an error. A file without EXIF, or whose EXIF
@@ -46,8 +54,12 @@ use std::io::{self, Read};
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
-use culla_core::exif::{MetaIssue, PhotoMeta, Rational, RawExif};
+use culla_core::exif::{
+    CaptureTime, FileTime, MetaIssue, PhotoMeta, Rational, RawExif, TimeSource,
+};
 use culla_core::grouping::Group;
+
+use crate::winfs;
 
 /// Bytes read from the start of a file for its EXIF. SPEC §5.1 budgets ~128 KB per file for
 /// the background pass; see the module docs for why it is enough on the Z6III.
@@ -72,8 +84,19 @@ pub fn read_head(path: &Path, cap: u64) -> io::Result<Vec<u8>> {
     Ok(head)
 }
 
+/// The listing's modification time `mtime_ns` with the PC's offset from UTC at that instant
+/// (ADR 0028). UTC when the offset cannot be looked up, and off Windows.
+#[must_use]
+pub fn local_file_time(mtime_ns: i64) -> FileTime {
+    FileTime::new(
+        mtime_ns,
+        winfs::local_utc_offset_minutes(mtime_ns).unwrap_or(0),
+    )
+}
+
 /// The metadata of the JPEG or NEF at `path`, from its first [`EXIF_HEAD_BYTES`].
-/// `mtime_ns` (the listing's modification time) is the last capture-time fallback.
+/// `mtime_ns` (the listing's modification time) is the last capture-time fallback, read in the
+/// PC's local time zone ([`local_file_time`]).
 ///
 /// # Errors
 ///
@@ -93,7 +116,15 @@ pub fn read_photo_meta_capped(
     cap: u64,
 ) -> io::Result<PhotoMeta> {
     let head = read_head(path, cap)?;
-    Ok(meta_from_head(head, mtime_ns))
+    let mut meta = meta_from_head(head, mtime_ns.map(FileTime::utc));
+    // Most photos have an EXIF time: the time zone is looked up only when the file time is
+    // the one used.
+    if let (Some(ns), Some(t)) = (mtime_ns, meta.captured.as_mut())
+        && t.source == TimeSource::FileModified
+    {
+        *t = CaptureTime::from_file_time(local_file_time(ns));
+    }
+    Ok(meta)
 }
 
 /// The metadata of a group: that of its primary (the JPEG, or the NEF of a lone NEF), with
@@ -115,21 +146,22 @@ fn entry_path(root: &Path, components: &[String]) -> PathBuf {
     path
 }
 
-/// Parses the first bytes of a file (any length) into metadata. Never fails and never panics
-/// out: see the module docs.
+/// Parses the first bytes of a file (any length) into metadata, with `file_time` (already at
+/// the PC's offset, see [`local_file_time`]) as the last capture-time fallback. Never fails
+/// and never panics out: see the module docs.
 #[must_use]
-pub fn meta_from_head(head: Vec<u8>, mtime_ns: Option<i64>) -> PhotoMeta {
+pub fn meta_from_head(head: Vec<u8>, file_time: Option<FileTime>) -> PhotoMeta {
     let parsed = panic::catch_unwind(AssertUnwindSafe(|| raw_exif(head)))
         .unwrap_or(Err(MetaIssue::UnreadableExif));
     match parsed {
         Ok((raw, skipped)) => {
-            let mut meta = PhotoMeta::from_raw(&raw, mtime_ns);
+            let mut meta = PhotoMeta::from_raw(&raw, file_time);
             if skipped > 0 {
                 meta.issues.insert(0, MetaIssue::SkippedFields(skipped));
             }
             meta
         }
-        Err(issue) => PhotoMeta::without_exif(issue, mtime_ns),
+        Err(issue) => PhotoMeta::without_exif(issue, file_time),
     }
 }
 
@@ -366,7 +398,7 @@ mod tests {
             vec![0xFF, 0xD8],
             b"not an image at all".to_vec(),
         ] {
-            let meta = meta_from_head(head, Some(1_000_000));
+            let meta = meta_from_head(head, Some(FileTime::utc(1_000_000)));
             assert_eq!(meta.captured.unwrap().local_ms, 1);
             assert!(
                 matches!(

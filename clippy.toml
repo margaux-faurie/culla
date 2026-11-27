@@ -1,7 +1,8 @@
 # Removal, rename and overwrite rules (SPEC §5.2, design/file-engine.md §9.7).
-# The list mirrors file-engine §9.7; paths that don't resolve yet (tokio, windows_sys) are inert until those crates are added.
+# The list mirrors file-engine §9.7. windows_sys is a Windows-only dependency of culla-adapters since M1: its paths are live on
+# Windows and inert elsewhere; paths behind a windows-sys feature that is not enabled (Wdk) and tokio stay inert until added.
 # Where the lint may be switched off (checked by scripts/ci/check_lint_allows.py):
-#   crates/adapters/src/winfs/  (the audited module, from M2)
+#   crates/adapters/src/winfs/  (the audited module: read-only lookups since M1, file operations from M2)
 #   crates/bench/               (outside the rule, temp dirs only, ADR 0020)
 #   crates/*/tests/             (integration tests, temp dirs only)
 # Everywhere else under src/, including inline #[cfg(test)] code, it cannot be switched off.
@@ -24,4 +25,25 @@ disallowed-methods = [
   { path = "windows_sys::Win32::Storage::FileSystem::MoveFileExW", reason = "use winfs::rename_noreplace" },
   { path = "windows_sys::Win32::Storage::FileSystem::MoveFileW",   reason = "use winfs::rename_noreplace" },
   { path = "windows_sys::Win32::Storage::FileSystem::SetFileInformationByHandle", reason = "winfs only" },
+  { path = "windows_sys::Win32::Storage::FileSystem::DeleteFileA", reason = "use winfs::remove_verified" },
+  { path = "windows_sys::Win32::Storage::FileSystem::DeleteFile2W", reason = "use winfs::remove_verified" },
+  { path = "windows_sys::Win32::Storage::FileSystem::DeleteFileTransactedW", reason = "use winfs::remove_verified" },
+  { path = "windows_sys::Win32::Storage::FileSystem::RemoveDirectoryW", reason = "Culla never removes folders" },
+  { path = "windows_sys::Win32::Storage::FileSystem::RemoveDirectoryA", reason = "Culla never removes folders" },
+  { path = "windows_sys::Win32::Storage::FileSystem::RemoveDirectory2W", reason = "Culla never removes folders" },
+  { path = "windows_sys::Win32::Storage::FileSystem::MoveFileA", reason = "use winfs::rename_noreplace" },
+  { path = "windows_sys::Win32::Storage::FileSystem::MoveFileExA", reason = "use winfs::rename_noreplace" },
+  { path = "windows_sys::Win32::Storage::FileSystem::MoveFileWithProgressW", reason = "use winfs::rename_noreplace" },
+  { path = "windows_sys::Win32::Storage::FileSystem::MoveFileWithProgressA", reason = "use winfs::rename_noreplace" },
+  { path = "windows_sys::Win32::Storage::FileSystem::MoveFileTransactedW", reason = "use winfs::rename_noreplace" },
+  { path = "windows_sys::Win32::Storage::FileSystem::ReplaceFileW", reason = "replaces the target; Culla never overwrites" },
+  { path = "windows_sys::Win32::Storage::FileSystem::ReplaceFileA", reason = "replaces the target; Culla never overwrites" },
+  { path = "windows_sys::Win32::Storage::FileSystem::CopyFileW", reason = "can replace the target; use winfs copy steps" },
+  { path = "windows_sys::Win32::Storage::FileSystem::CopyFileA", reason = "can replace the target; use winfs copy steps" },
+  { path = "windows_sys::Win32::Storage::FileSystem::CopyFileExW", reason = "can replace the target; use winfs copy steps" },
+  { path = "windows_sys::Win32::Storage::FileSystem::CopyFile2", reason = "can replace the target; use winfs copy steps" },
+  { path = "windows_sys::Win32::Storage::FileSystem::CreateHardLinkW", reason = "Culla never creates links" },
+  { path = "windows_sys::Win32::Storage::FileSystem::CreateSymbolicLinkW", reason = "Culla never creates links" },
+  { path = "windows_sys::Win32::Storage::FileSystem::SetFileAttributesW", reason = "Culla never changes attributes" },
+  { path = "windows_sys::Win32::Storage::FileSystem::SetEndOfFile", reason = "Culla never truncates" },
 ]

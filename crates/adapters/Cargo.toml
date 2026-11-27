@@ -12,6 +12,12 @@ culla-core = { path = "../core" }
 # EXIF for JPEG and NEF (ADR 0011). BSD-2-Clause. Pure Rust, reads from a buffer, no mmap.
 kamadak-exif = "0.6.1"
 
+[target.'cfg(windows)'.dependencies]
+# Read-only Win32 lookups in `winfs` (volume identity, time zone). MIT OR Apache-2.0. Already in
+# the lockfile through Tauri. Features: FILETIME and SYSTEMTIME (Foundation), the volume calls
+# (Storage_FileSystem), the time zone calls (System_Time).
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Time"] }
+
 [features]
 # Windows integration tests (docs/testing.md §5), run on windows-latest with the VHDX volumes.
 # Empty until the file-op tests land in M2.

@@ -7,6 +7,7 @@ pub mod exif;
 pub mod grouping;
 pub mod ifd;
 pub mod names;
+pub mod volume;
 
 /// Crate version, so the other crates have something to link against in M0.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

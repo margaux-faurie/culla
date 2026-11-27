@@ -365,7 +365,7 @@ fn unix_ns(t: SystemTime) -> Option<i64> {
 }
 
 #[cfg(windows)]
-fn attributes(meta: &Metadata) -> Attributes {
+pub(crate) fn attributes(meta: &Metadata) -> Attributes {
     use std::os::windows::fs::MetadataExt;
     const READONLY: u32 = 0x0000_0001;
     const HIDDEN: u32 = 0x0000_0002;
@@ -385,7 +385,7 @@ fn attributes(meta: &Metadata) -> Attributes {
 }
 
 #[cfg(not(windows))]
-fn attributes(meta: &Metadata) -> Attributes {
+pub(crate) fn attributes(meta: &Metadata) -> Attributes {
     Attributes {
         reparse_point: meta.file_type().is_symlink(),
         ..Attributes::default()

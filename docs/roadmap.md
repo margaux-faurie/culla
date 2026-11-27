@@ -59,7 +59,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
 - **Goal:** scan, group and preview a real card fast enough, proven by numbers on the G14.
 - **Scope:**
   - Streamed recursive scan, grouping (JPEG, NEF, sidecars incl. `NKSC_PARAM`), exclusions (`_rejected/`, destination inside source), unknown-extension list.
-  - Volume serial + relative path identity; with it, the PC time-zone lookup for the file-time fallback (ADR 0028).
+  - Volume serial + relative path identity; with it, the PC time-zone lookup for the file-time fallback (ADR 0028). Core rules (`culla_core::volume`) and the read-only Win32 lookups (`culla_adapters::winfs`) are in (slice 4); the session store that uses the key comes with M2.
   - EXIF pass (`kamadak-exif`): DateTimeOriginal, orientation, lens fallback; capture-time sort.
   - Own TIFF/IFD walker for NEF previews; fuzz targets running nightly.
   - Preview pipeline: turbojpeg scaled decode, resize, orientation, encode; reader threads separate from decode workers; prefetch; in-memory LRU; disk cache. No mmap on removable media.
@@ -67,7 +67,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
   - Headless CLI `culla scan`, `culla preview` (`crates/cli`) and `culla-bench` (`crates/bench`), per [ADR 0020](adr/0020-headless-cli-and-bench-crates.md).
   - Scan and preview benchmark campaign (B-01 to B-11, B-15, B-16) per [benchmarks.md](benchmarks.md).
 - **Exit criteria:**
-  - Stories US-01 to US-09 pass.
+  - Stories US-01 to US-09 pass, except US-09's criterion that the session and the cache are found again under another letter: the key is in M1 (`culla_core::volume`), and the criterion closes with M2's session store (and the VHDX remount test).
   - Every M1 benchmark in [benchmarks.md](benchmarks.md) has a recorded result on H-2 (UHS-I SD) and passes, or has an ADR that changes the design or the budget. In particular (all est.): first photo ≤ 1.5 s (B-01), scan of 3,000 files with EXIF ≤ 15 s (B-02 + B-03), next prefetched photo ≤ 50 ms at p95 (B-09), peak memory ≤ 1 GB while swiping (B-15).
   - ADRs recorded for preview source (camera JPEG vs NEF embedded), thread counts, prefetch window and LRU size.
   - Fuzz targets ran for at least a week of nightlies without an open crash.

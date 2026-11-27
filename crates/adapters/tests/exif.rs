@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use culla_adapters::metadata::exif::{
-    EXIF_HEAD_BYTES, meta_from_head, read_group_meta, read_head, read_photo_meta,
+    EXIF_HEAD_BYTES, local_file_time, meta_from_head, read_group_meta, read_head, read_photo_meta,
     read_photo_meta_capped,
 };
 use culla_adapters::scan::scan_and_group;
 use culla_core::exif::{
-    CaptureTime, MetaIssue, Orientation, Rational, TimeSource, TimeTag, capture_order,
+    CaptureTime, FileTime, MetaIssue, Orientation, Rational, TimeSource, TimeTag, capture_order,
     parse_date_time,
 };
 use culla_core::grouping::ScanPolicy;
@@ -138,6 +138,10 @@ fn jpeg_without_exif_uses_the_file_time() {
     assert_eq!(m.issues, [MetaIssue::NoExif]);
     let t = m.captured.unwrap();
     assert_eq!(t.source, TimeSource::FileModified);
+    // In the PC's local time zone (ADR 0028); UTC off Windows.
+    assert_eq!(t, CaptureTime::from_file_time(local_file_time(MTIME_NS)));
+    assert_eq!(t.utc_ms(), Some(MTIME_NS / 1_000_000));
+    #[cfg(not(windows))]
     assert_eq!(t.local_ms, MTIME_NS / 1_000_000);
     assert_eq!(m.orientation, Orientation::Normal);
     assert_eq!(m.lens, None);
@@ -222,7 +226,7 @@ fn truncated_and_broken_files_never_fail_the_read() {
         let path = fixture(rel);
         let bytes = std::fs::read(&path).unwrap();
         for cut in 0..bytes.len() {
-            let m = meta_from_head(bytes[..cut].to_vec(), Some(MTIME_NS));
+            let m = meta_from_head(bytes[..cut].to_vec(), Some(FileTime::utc(MTIME_NS)));
             assert!(m.captured.is_some(), "{rel} cut at {cut}");
         }
         // Every byte flipped in turn.
