@@ -1,7 +1,10 @@
 //! Culla adapters: the only crate that touches the user's files.
 //!
 //! The audited removal module `winfs::remove_verified` lands in M2
-//! (`docs/design/file-engine.md` §9.7). Until then this crate holds no file operations.
+//! (`docs/design/file-engine.md` §9.7). Until then this crate holds no file operations; it only
+//! reads files (`metadata`).
+
+pub mod metadata;
 
 pub use culla_core::VERSION;
 

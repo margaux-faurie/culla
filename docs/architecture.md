@@ -172,7 +172,7 @@ flowchart LR
 | journal state machine, apply executor | core | Legal transitions per operation; drive the operations through `FileSystem`, write each state through `SessionStore`, pause and cancel, roll forward on resume. | [ADR 0010](adr/0010-journaled-apply-with-roll-forward-only.md) |
 | `scan`, `session` | core | Drive the walk (exclude `_rejected/` and an in-source destination), stream groups in filename order, request capture-time order, reconcile with the stored session, append events. | [ADR 0008](adr/0008-key-sessions-and-caches-by-volume-serial-and-relative-path.md) |
 | `winfs` | adapters | Walk with `follow_links(false)`, skip reparse points, read into buffers (never mmap). Rename through the checked handle with no-replace semantics ([ADR 0022](adr/0022-rename-through-the-checked-handle.md)): an existing target is a hard error, and a cross-volume rename fails with `ERROR_NOT_SAME_DEVICE`. Copy with `create_new`; both verify reads (destination and source) use `FILE_FLAG_NO_BUFFERING` ([ADR 0021](adr/0021-unbuffered-source-re-read-for-hash-3.md)); hash the source while copying, fsync, read the destination back unbuffered, hash the source again. Owns `remove_verified`, the single audited removal function. | [ADR 0004](adr/0004-never-delete-or-overwrite.md). `unsafe` for Win32 calls is confined here. |
-| `metadata` | adapters | `kamadak-exif` tags (first ~128 KB). Own TIFF/IFD walker finds the largest embedded JPEG in a NEF. Fuzz targets. | [ADR 0011](adr/0011-own-ifd-walker-for-nef-previews-and-kamadak-exif.md) |
+| `metadata` | adapters | `kamadak-exif` tags (first ~128 KB). Own TIFF/IFD walker (pure, in `culla_core::ifd`, fed by positioned reads from `metadata::nef_preview`) finds the largest embedded JPEG in a NEF. Fuzz targets. | [ADR 0011](adr/0011-own-ifd-walker-for-nef-previews-and-kamadak-exif.md) |
 | preview pipeline | adapters | 1–2 reader threads, 2–4 decode workers, prefetch 5 ahead and 2 behind, memory LRU of about 12 screen previews, disk cache, orientation. | [ADR 0012](adr/0012-turbojpeg-scaled-decode-preview-pipeline.md) |
 | `store` | adapters | One SQLite database per source: sessions, events, plans, journal. | [ADR 0009](adr/0009-sqlite-per-source-for-sessions-and-journal.md) |
 
@@ -553,6 +553,7 @@ ADR 0000 records how decisions are written. Index with status: [adr/README.md](a
 | [0022](adr/0022-rename-through-the-checked-handle.md) | Rename through the checked handle, with no-replace semantics |
 | [0023](adr/0023-bare-sidecars-follow-the-nef.md) | Bare `X.xmp` and `X.pp3` follow the NEF |
 | [0024](adr/0024-reconcile-event-for-a-file-joining-a-decided-group.md) | A new file joining a decided group makes it undecided (reconcile event) |
+| [0025](adr/0025-lone-nef-preview-is-the-largest-valid-embedded-jpeg.md) | A lone NEF's preview is its largest valid embedded JPEG, by pixel count (proposed) |
 
 Candidates not yet written: Tauri isolation pattern (8.5), Biome instead of ESLint + Prettier.
 

@@ -13,6 +13,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4.13"
+culla-core = { path = "../crates/core" }
 
 [[bin]]
 name = "tiff_ifd_walk"

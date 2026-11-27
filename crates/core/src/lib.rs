@@ -3,6 +3,8 @@
 //! No I/O and no Tauri. See `docs/architecture.md` and `docs/design/file-engine.md`.
 #![forbid(unsafe_code)]
 
+pub mod ifd;
+
 /// Crate version, so the other crates have something to link against in M0.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
