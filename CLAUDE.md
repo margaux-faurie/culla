@@ -3,7 +3,7 @@
 Culla is a Windows desktop app (Tauri 2 + Rust + React/TS) that culls Nikon JPEG+NEF photos with a swipe UI, then applies keep/reject as safe, journaled file operations. Start at `docs/SPEC.md`: it records the author's decisions and maps each topic to its owning doc (PRD, nfr, architecture, ADRs, file-engine design, threat model, testing, roadmap). `docs/research/` is historical input: where it disagrees with the spec or an ADR, the spec and ADRs win.
 
 ## Status
-M0 (repo and tooling) is done; M1 (core engine headless) is in progress: NEF preview reader, scan and grouping, EXIF, volume identity, the preview decode and the preview pipeline (threads, prefetch, in-memory cache) are in, with the headless `culla scan` and `culla preview` and the `culla-bench` harness for the M1 campaign. M2 (file engine) has started: the pure decision log and `plan()` are in. Author decisions recorded 27 Nov; what is still open is in SPEC §10 and file-engine §13.
+M0 (repo and tooling) is done; M1 (core engine headless) is in progress: NEF preview reader, scan and grouping, EXIF, volume identity, the preview decode and the preview pipeline (threads, prefetch, in-memory cache) are in, with the headless `culla scan` and `culla preview` and the `culla-bench` harness for the M1 campaign. M2 (file engine) has started: the pure decision log and `plan()` are in. M3 has started on the UI, demo backend only: start screen with the route view, swipe screen, TS decision reducer (`src/decisions`). Author decisions recorded 27 Nov; what is still open is in SPEC §10 and file-engine §13.
 
 ## Commands
 Work now:
@@ -24,7 +24,7 @@ Work now:
 - `crates/cli` (package `culla-cli`, binary `culla`) — headless scan (in; exit codes, JSON fields and off-Windows behaviour provisional, SPEC §10), preview (in; decodes, times and reports), plan, apply, resume. Wiring only; writes nothing but stdout and stderr.
 - `crates/bench` (package `culla-bench`) — benchmark harness (ADR 0020): scan, preview, swipe through the pipeline, io-baseline, report; read-only, writes nothing but stdout, std only, `--json` unstable. Campaign: docs/benchmarks.md §7.
 - `src-tauri` (package `culla-app`) — wiring only: commands, `culla://` image scheme, capabilities. New command: `build.rs` `AppManifest::commands` + `allow-<command>` in `capabilities/main.json`.
-- `src` — React UI, one Vite app, `--mode desktop` or `--mode demo`; `vite.config.ts` aliases `#backend-impl` to `backend/tauri.ts` or `backend/demo.ts` (ADR 0014).
+- `src` — React UI, one Vite app, `--mode desktop` or `--mode demo`; `vite.config.ts` aliases `#backend-impl` to `backend/tauri.ts` or `backend/demo.ts` (ADR 0014); `decisions` (event log fold, golden-tested by `tests/golden.test.ts`), `route` (the route view: it prints the display paths the backend computes, `backend/demo-routes.ts` in the demo, and never builds one), `start`, `swipe` (key map, reducer, screen), `session`. Logic stays in pure `.ts` modules with Vitest tests (no DOM in Vitest); screens are covered by Playwright on the demo build.
 - `xtask` — dev tasks, std only, under the workspace file rules: `fixtures` never overwrites, so delete `testdata/synthetic/` by hand to regenerate. `fuzz` — cargo-fuzz, own workspace. `testdata` — synthetic and golden fixtures.
 - `docs` — specs, ADRs, research.
 
