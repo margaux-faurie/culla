@@ -2,9 +2,9 @@
 
 <!-- This file is also the demo site's install page (src/install/, SPEC §2). Keep to the Markdown that reader handles: headings, paragraphs, lists, fenced code, pipe tables, inline code, bold, links, kbd. src/install/markdown.test.ts checks it. -->
 
-Status: draft, 28 Nov 2026. There is no release yet: everything marked "(from the first release)" describes how it will work once v1.0 is out ([roadmap](roadmap.md) M6). Names of files and buttons are to be checked against the first release candidate. To build Culla yourself instead, see [Building from source](../README.md#building-from-source).
+Status: draft, 28 Nov 2026. There is no release yet: everything marked "(from the first release)" describes how it will work once v1.0 is out ([roadmap](roadmap.md) M6). Names of files and buttons are to be checked against the first release candidate.
 
-Culla runs on Windows 11 only. You don't need administrator rights, an account or an internet connection to use it. Culla itself sends nothing over the internet except a daily update check, which you can turn off.
+Culla runs on Windows 11 only. You don't need administrator rights, an account or an internet connection to use it. Culla itself sends nothing over the internet except a daily update check, which you can turn off. To build Culla yourself instead, see [Building from source](../README.md#building-from-source).
 
 If you would rather try Culla without installing anything, see [Try it in your browser](#try-it-in-your-browser) at the end. This guide is also on the demo site at https://culla.margauxfaurie.com/install, with the demo and install videos once they are recorded (the site is not public yet).
 
@@ -37,15 +37,17 @@ This takes a minute and tells you that the file you have is exactly the file tha
    Get-FileHash .\Culla_1.0.0_x64-setup.exe -Algorithm SHA256
    ```
 
-4. Open `SHA256SUMS` in Notepad and find the line that ends with the installer's name. The long code at the start of that line must be the same as the **Hash** that PowerShell printed (capital or small letters don't matter).
+4. Open `SHA256SUMS` in Notepad: the file has no extension, so right-click it, choose **Open with**, then **Notepad**. Find the line that ends with the installer's name. The long code at the start of that line must be the same as the **Hash** that PowerShell printed (capital or small letters don't matter).
 
-Or let PowerShell compare them for you. It prints `True` when they match:
+Or let PowerShell compare them for you. Put the installer's exact file name in `$file`; it prints `True` when they match:
 
 ```powershell
 $file = "Culla_1.0.0_x64-setup.exe"
 $line = Select-String -Path .\SHA256SUMS -Pattern $file -SimpleMatch | Select-Object -First 1
 (Get-FileHash ".\$file" -Algorithm SHA256).Hash -eq $line.Line.Split(" ")[0]
 ```
+
+If PowerShell prints an error in red instead of `True` or `False`, the file name in `$file` is not the one in your Downloads folder: check its spelling and version number, then run the three lines again.
 
 If they don't match, don't run the installer: delete it and download it again. If they still don't match, please [open an issue](https://github.com/margaux-faurie/culla/issues).
 
@@ -55,7 +57,7 @@ What this check does and doesn't prove: it shows the download is complete and un
 
 ### Check where the file was built (optional, from M6)
 
-Once releases carry build attestations (planned for M6, not in place yet), you can check that the installer was built by the project's own GitHub workflow from its public source. This needs the GitHub CLI (`winget install GitHub.cli`, then `gh auth login`):
+Once releases carry build attestations (planned for M6, not in place yet), you can check that the installer was built by the project's own GitHub workflow from its public source. This needs the GitHub CLI: run `winget install GitHub.cli`, close PowerShell and open a new PowerShell window (so it finds the `gh` command), then run `gh auth login`:
 
 ```powershell
 gh attestation verify .\Culla_1.0.0_x64-setup.exe --repo margaux-faurie/culla
@@ -67,7 +69,7 @@ It ends with a line saying the verification succeeded. Any error means the file 
 
 When you open the installer, Windows 11 is likely to show a blue screen titled **Windows protected your PC**, saying that Microsoft Defender SmartScreen prevented an unrecognized app from starting.
 
-**Why it appears.** SmartScreen warns about any program that is not signed with a paid code-signing certificate and that few people have downloaded yet. The first versions of Culla are not signed: certificates are costly, and the free route for open-source projects (SignPath Foundation) is only open to projects that have already had a release. Signing is planned after v1 ([ADR 0016](adr/0016-per-user-nsis-and-signed-updater-code-signing-deferred.md)). The warning says the file is unknown to Microsoft, not that anything bad was found in it.
+**Why it appears.** SmartScreen warns about programs it has rarely seen, especially unsigned ones (not signed with a paid code-signing certificate). The first versions of Culla are not signed: certificates are costly, and the free route for open-source projects (SignPath Foundation) is only open to projects that have already had a release. Signing is planned after v1 ([ADR 0016](adr/0016-per-user-nsis-and-signed-updater-code-signing-deferred.md)). The warning says the file is unknown to Microsoft, not that anything bad was found in it.
 
 **How to judge it.** Go ahead only if all of these are true:
 
@@ -137,16 +139,18 @@ Culla checks for a new version once a day; you can turn this off in its settings
 
 With the check turned off, you can update by hand: download the new installer from the Releases page and run it over the old one. Your sessions and settings are kept.
 
-## 7. Uninstall
+## 7. Uninstall (from the first release)
 
 1. Open **Settings**, then **Apps**, then **Installed apps**.
 2. Find **Culla**, click **...** and choose **Uninstall**.
-3. Choose whether to also remove your Culla data (sessions, cache and logs in `%LOCALAPPDATA%\Culla`). Leave it unticked if you may reinstall later and want to resume a folder. The exact wording of this option is confirmed with the first release.
+3. Follow the uninstaller's steps.
+
+An option to also remove your Culla data (sessions, cache and logs in `%LOCALAPPDATA%\Culla`) is planned (US-43) but not built yet: the uninstaller Culla gets from Tauri does not remove that folder today. Until the option exists, the folder stays after uninstalling, so you can reinstall and resume a folder. To remove it, delete `%LOCALAPPDATA%\Culla` yourself after uninstalling.
 
 Uninstalling never touches your photos, your `_rejected` folders or your destination folders.
 
 <!-- screenshot: Settings, Installed apps, Culla's Uninstall menu -->
-<!-- screenshot: the uninstaller with the "remove my Culla data" option -->
+<!-- screenshot: the uninstaller with the "remove my Culla data" option, once US-43 is built -->
 
 ## Try it in your browser
 

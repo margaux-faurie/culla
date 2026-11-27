@@ -86,6 +86,16 @@ describe("resolveHref", () => {
     expect(resolveHref("javascript:alert(1)")).toBeNull();
     expect(resolveHref("data:text/html,x")).toBeNull();
   });
+
+  it("refuses backslashes and relative links that leave GitHub", () => {
+    expect(resolveHref("//x")).toBeNull();
+    expect(resolveHref("//evil.com/x")).toBeNull();
+    expect(resolveHref("/\\evil.com/x")).toBeNull();
+    expect(resolveHref("\\\\evil.com\\x")).toBeNull();
+    expect(resolveHref("adr\\0016.md")).toBeNull();
+    expect(resolveHref("\t//evil.com/x")).toBeNull();
+    expect(resolveHref("/margaux-faurie/culla")).toBe("https://github.com/margaux-faurie/culla");
+  });
 });
 
 describe("slug", () => {
@@ -155,6 +165,12 @@ describe("the install guide on the web (docs/install.md)", () => {
     expect(allText(guide.body).some((text) => text.startsWith("Status:"))).toBe(false);
   });
 
+  it("keeps the pointer to building from source", () => {
+    expect(linkHrefs(guide.body)).toContain(
+      "https://github.com/margaux-faurie/culla/blob/main/README.md#building-from-source",
+    );
+  });
+
   it("links only to https pages or headings that exist on the page", () => {
     const ids = new Set(headingIds(guide.body));
     for (const href of linkHrefs(guide.body)) {
@@ -188,6 +204,11 @@ describe("isSelfHosted", () => {
     expect(isSelfHosted("//cdn.example.org/v.mp4")).toBe(false);
     expect(isSelfHosted("https://www.youtube.com/embed/x")).toBe(false);
     expect(isSelfHosted("videos/v.mp4")).toBe(false);
+    expect(isSelfHosted("//x")).toBe(false);
+    expect(isSelfHosted("/\\evil.com/x.mp4")).toBe(false);
+    expect(isSelfHosted("/videos\\v.mp4")).toBe(false);
+    expect(isSelfHosted("/\t/evil.com/x.mp4")).toBe(false);
+    expect(isSelfHosted("/videos/a b.mp4")).toBe(true);
   });
 
   it("holds for every video the page lists", () => {

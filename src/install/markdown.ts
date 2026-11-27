@@ -304,17 +304,26 @@ export function parseInline(source: string): Inline[] {
 
 /**
  * Where a link from docs/install.md points on the web page: in-page anchors stay, https links
- * stay, relative links go to the file on GitHub. Anything else (another scheme) is refused and
- * shown as plain text.
+ * stay, relative links go to the file on GitHub. Anything else (another scheme, a backslash,
+ * which browsers read as a slash, or a relative link that leaves GitHub, such as `//x`) is
+ * refused and shown as plain text.
  */
 export function resolveHref(href: string): string | null {
+  if (href.includes("\\")) {
+    return null;
+  }
   if (href.startsWith("#")) {
     return href;
   }
   if (/^[a-z][a-z0-9+.-]*:/i.test(href)) {
     return href.startsWith("https://") ? href : null;
   }
-  return new URL(href, DOCS_BASE).href;
+  try {
+    const url = new URL(href, DOCS_BASE);
+    return url.origin === new URL(DOCS_BASE).origin ? url.href : null;
+  } catch {
+    return null;
+  }
 }
 
 export function plainText(content: readonly Inline[]): string {

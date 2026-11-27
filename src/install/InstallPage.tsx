@@ -6,8 +6,9 @@ import { isSelfHosted, STATUS, type Video } from "./status";
 const guide = guideForWeb(installGuide);
 
 /**
- * The download and install page of the demo site (SPEC §2, decided 28 Nov 2026): the content of
- * docs/install.md, the state of the first release and a place for the two videos.
+ * The download and install page of the demo site (SPEC §2, decided 28 Nov 2026; its shape is a
+ * proposal, SPEC §10): the content of docs/install.md, the state of the first release and a
+ * place for the two videos.
  */
 export function InstallPage() {
   const { release, demoVideo, installVideo } = STATUS;
