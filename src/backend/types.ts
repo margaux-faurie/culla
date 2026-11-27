@@ -109,6 +109,11 @@ export interface PhotoRoute {
   readonly keptTo: string | null;
   /** `moved to E:\2026\_rejected\Barcelona`, or `copied to …` for a camera-protected photo. */
   readonly rejectedTo: string;
+  /**
+   * A file that goes with the decision is read-only (camera "protect"), so the group is copied, not
+   * moved (SPEC §2). A read-only NEF that stays because RAW does not follow does not count.
+   */
+  readonly cameraProtected: boolean;
 }
 
 /** One group, the unit of decision (SPEC §3.1). Display data only, apart from the opaque `id`. */
@@ -119,7 +124,10 @@ export interface PhotoSummary {
   readonly name: string;
   /** What the group holds, for the caption: `JPEG + NEF`, `JPEG` or `NEF`. */
   readonly kind: string;
-  /** Read-only attribute set by the camera: the group is copied, never moved (SPEC §2). */
+  /**
+   * A file of the group has the read-only attribute set by the camera. Whether that makes the group
+   * copied depends on which files go: see `PhotoRoute.cameraProtected` (SPEC §2).
+   */
   readonly cameraProtected: boolean;
   /** `culla://preview/<id>` in the app; a bundled image in the demo. */
   readonly previewUrl: string;

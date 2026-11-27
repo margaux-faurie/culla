@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { DestinationSummary, KeepMode, RouteExample, SourceSummary } from "../backend/types";
+import { stayVerb } from "./staying";
 
 export interface RouteViewProps {
   readonly source: SourceSummary;
@@ -108,17 +109,18 @@ interface ExampleProps {
 
 /** One real example path: the files that go, where they go, and the files that stay. */
 function Example({ example, to }: ExampleProps) {
-  const { photo, route } = example;
+  const { route } = example;
   return (
     <span className="route-example">
       <span>
         <span className="visually-hidden">Example: </span>
         {route.origin} <b>{route.going.extensions}</b> → {to}
-        {photo.cameraProtected && " (camera-protected: copied, original kept)"}
+        {route.cameraProtected && " (camera-protected: copied, original kept)"}
       </span>
       {route.staying !== null && (
         <span>
-          {route.staying.name} <b>{route.staying.extensions}</b> stay in {route.folder}
+          {route.staying.name} <b>{route.staying.extensions}</b> {stayVerb(route.staying)} in{" "}
+          {route.folder}
         </span>
       )}
     </span>

@@ -2,6 +2,7 @@ import { type Dispatch, useEffect, useMemo, useRef, useState } from "react";
 import type { SessionInfo, SessionPhoto } from "../backend/types";
 import type { GroupState, Verdict } from "../decisions/events";
 import { CheckIcon, CrossIcon } from "../route/RouteView";
+import { stayVerb } from "../route/staying";
 import { HelpDialog } from "./HelpDialog";
 import { type Command, commandFor } from "./keys";
 import {
@@ -421,8 +422,8 @@ function Actions({ photo, decision, onCommand }: ActionsProps) {
       )}
       {staying !== null && (
         <p className="action-note">
-          RAW and edit files do not follow: {staying.name} {staying.extensions} stay in{" "}
-          {photo.route.folder}.
+          RAW and edit files do not follow: {staying.name} {staying.extensions}{" "}
+          {stayVerb(staying)} in {photo.route.folder}.
         </p>
       )}
     </div>
