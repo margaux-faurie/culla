@@ -321,10 +321,10 @@ function KeepControls(props: KeepControlsProps) {
               {destination.folder.path}
             </span>
             <button
-            type="button"
-            className="button button-outline"
-            onClick={props.onChooseDestination}
-          >
+              type="button"
+              className="button button-outline"
+              onClick={props.onChooseDestination}
+            >
               Change
             </button>
           </>

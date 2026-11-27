@@ -6,13 +6,7 @@ import { CheckIcon, CrossIcon } from "../route/RouteView";
 import { keepVerb, keptFolder, photoFolder, rejectedFolder, rejectVerb } from "../route/route";
 import { HelpDialog } from "./HelpDialog";
 import { type Command, commandFor } from "./keys";
-import {
-  counts,
-  currentPhoto,
-  type Feedback,
-  type SwipeAction,
-  type SwipeState,
-} from "./session";
+import { counts, currentPhoto, type Feedback, type SwipeAction, type SwipeState } from "./session";
 
 export interface SwipeScreenProps {
   readonly session: SessionInfo;
@@ -355,12 +349,13 @@ function Actions({ session, photo, decision, onCommand }: ActionsProps) {
           <button
             type="button"
             className="button button-reject"
+            aria-label="Reject"
             aria-keyshortcuts="ArrowLeft"
             onClick={() => onCommand("reject")}
           >
             <CrossIcon />
             Reject
-            <kbd aria-hidden="true">←</kbd>
+            <kbd>←</kbd>
           </button>
           {!decided && <span className="action-route">{rejectTo}</span>}
         </div>
@@ -368,12 +363,13 @@ function Actions({ session, photo, decision, onCommand }: ActionsProps) {
           <button
             type="button"
             className="button button-keep"
+            aria-label="Keep"
             aria-keyshortcuts="ArrowRight"
             onClick={() => onCommand("keep")}
           >
             <CheckIcon />
             Keep
-            <kbd aria-hidden="true">→</kbd>
+            <kbd>→</kbd>
           </button>
           {!decided && <span className="action-route">{keepTo}</span>}
         </div>
@@ -381,11 +377,12 @@ function Actions({ session, photo, decision, onCommand }: ActionsProps) {
           <button
             type="button"
             className="button button-undo"
+            aria-label="Undo"
             aria-keyshortcuts="U"
             onClick={() => onCommand("clear")}
           >
             Undo
-            <kbd aria-hidden="true">U</kbd>
+            <kbd>U</kbd>
           </button>
         )}
       </div>
@@ -421,8 +418,7 @@ function EndCard(props: {
       <p className="muted">
         {props.kept} kept, {props.rejected} rejected, {props.undecided} undecided.
       </p>
-      <p className="muted">No files have moved yet.
-      </p>
+      <p className="muted">No files have moved yet.</p>
       <div className="action-row">
         {props.undecided > 0 && (
           <button type="button" className="button button-quiet" onClick={props.onJump}>

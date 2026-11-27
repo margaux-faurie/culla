@@ -2,8 +2,8 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { useBackend } from "../backend/context";
 import type { SessionInfo } from "../backend/types";
 import { ReviewPlaceholder } from "../review/ReviewPlaceholder";
-import { initialState, swipeReducer } from "../swipe/session";
 import { SwipeScreen } from "../swipe/SwipeScreen";
+import { initialState, swipeReducer } from "../swipe/session";
 
 /**
  * One session: the swipe reducer, autosave, and the switch between swipe and review. The reducer
