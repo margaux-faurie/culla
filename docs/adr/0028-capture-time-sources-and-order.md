@@ -20,20 +20,20 @@ SPEC §5.1 sorts the list by capture time once the EXIF pass ends, and US-06 lea
 
 ## Decision outcome
 
-Chosen option: "fallback chain, camera-local order, ties by path", because it gives every photo a place, is total and deterministic, and fits the `photo_group.capture_time` column (ms): camera-local for the EXIF sources, UTC for the file time.
+Chosen option: "fallback chain, camera-local order, ties by path", because it gives every photo a place, is total and deterministic, and fits the `photo_group.capture_time` column (ms, camera-local).
 
-* Sources, first valid one wins: `DateTimeOriginal` + `SubSecTimeOriginal` + `OffsetTimeOriginal`; then `DateTimeDigitized` (`CreateDate`) with its own sub-second and offset tags; then the file's modification time from the listing, in UTC. A blank or all-zero value counts as absent; an unreadable one is recorded as an issue and skipped.
+* Sources, first valid one wins: `DateTimeOriginal` + `SubSecTimeOriginal` + `OffsetTimeOriginal`; then `DateTimeDigitized` (`CreateDate`) with its own sub-second and offset tags; then the file's modification time from the listing, read in the PC's local time zone (interim: UTC until the time-zone lookup lands with the drive-identity slice). A blank or all-zero value counts as absent; an unreadable one is recorded as an issue and skipped.
 * A group sorts by its primary's time: the JPEG of a pair (its NEF is not read in the pass), the NEF of a lone NEF.
 * Order by camera-local milliseconds. Equal times by the primary's relative path, folded component by component, then as written. A group with no time at all (no EXIF time and no file time) goes right after the dated group that precedes it in filename order, even when other groups share that group's time, and before them in filename order when nothing dated precedes it; this is US-06's "keeps its filename position".
 * The pass reads the first 128 KiB of each file (`EXIF_HEAD_BYTES`, SPEC's ~128 KB) and parses with `continue_on_error`: on the Z6III the tags end before 36.2 KB, while the MakerNote (from ~36 KB to 225–266 KB) and the GPS IFD after it run past the cap and are skipped.
-* Only TIFF data reaches `kamadak-exif` (`read_raw`): the adapter recognises TIFF and JPEG by their magic bytes and extracts the JPEG's APP1 Exif payload itself; any other container has no EXIF for Culla.
+* Implementation detail added in PR #23, not part of the author's decision: only TIFF data reaches `kamadak-exif` (`read_raw`): the adapter recognises TIFF and JPEG by their magic bytes and extracts the JPEG's APP1 Exif payload itself; any other container has no EXIF for Culla.
 * Orientation outside 1..=8 is treated as 1. The lens is `LensModel`, else a name built from `LensSpecification` (`24-200mm f/4-6.3`), else none.
 
 ### Consequences
 
 * Good, because a burst stays in shutter order (sub-seconds) and a counter rollover across `100NIKON`/`101NIKON` sorts by time.
 * Good, because the order never depends on scan order or case.
-* Bad, because the file-time fallback is UTC while EXIF times are camera-local: such a photo can land off by the camera's offset (11 hours on the author's samples). Reading the PC's time zone would fix most of it; to decide.
+* Bad, until the time-zone lookup lands: the file time is still read as UTC, so such a photo can be off by the PC's offset.
 * Bad, because a trip across time zones sorts by wall clock, not by instant, when the camera clock was changed.
 
 Source: [SPEC.md §5.1](../SPEC.md), [stories.md US-06](../stories.md), [z6iii-nef-layout.md](../research/z6iii-nef-layout.md), [design/file-engine.md §2.3](../design/file-engine.md).

@@ -48,6 +48,7 @@ A Windows desktop app that culls a folder of Nikon photos (JPEG + NEF) one photo
 | Update check | On by default, once a day; can be turned off in settings (decided 27 Nov 2026) |
 | Success criteria | The PRD §7 targets are confirmed: 1,000 pairs from SD with zero lost files, recovery after a card pull, 30 minutes or less of swiping for 1,000 pairs (decided 27 Nov 2026) |
 | Licence and name | GPL-3.0-only (not "or later"), copyright Margaux Faurie; the "Culla" name and logo are reserved and forks must rename; issues are welcome but outside pull requests are not merged, so the code keeps one author (decided 27 Nov 2026, ADR 0026) |
+| Capture time | DateTimeOriginal, then CreateDate, then the file time in the PC's local time zone; camera-local order with filename tie-breaks (decided 27 Nov 2026, ADR 0028) |
 | Subfolders | Included (recursive scan) |
 | Volume | Thousands of photos, often on SD card or external drive |
 | v1 extras | Zoom to 100%, EXIF overlay, resume a session later |

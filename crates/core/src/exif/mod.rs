@@ -15,8 +15,9 @@
 //!    `OffsetTimeOriginal` (0x9011);
 //! 2. `CreateDate`, EXIF's `DateTimeDigitized` (0x9004), with `SubSecTimeDigitized` (0x9292)
 //!    and `OffsetTimeDigitized` (0x9012);
-//! 3. the file's modification time, supplied by the caller from the scan listing. It is an
-//!    instant in UTC, so its offset is `+00:00` (see [`TimeSource::FileModified`]).
+//! 3. the file's modification time, supplied by the caller from the scan listing. ADR 0028 reads it in
+//!    the PC's local time zone; interim: it is an instant in UTC, offset `+00:00`, until the
+//!    time-zone lookup lands (see [`TimeSource::FileModified`]).
 //!
 //! A date and time is `YYYY:MM:DD HH:MM:SS` (a `-` is accepted in the date and a `T` between
 //! the date and the time). A blank value (spaces, colons, NULs) or the all-zero
@@ -203,7 +204,8 @@ pub enum TimeSource {
     DateTimeOriginal,
     /// `DateTimeDigitized` (`CreateDate`).
     CreateDate,
-    /// The file's modification time from the listing, in UTC. Cameras write it from their
+    /// The file's modification time from the listing. Interim: UTC; ADR 0028 reads it in the
+    /// PC's local time zone once the time-zone lookup lands. Cameras write it from their
     /// clock, so it can be off by the camera's UTC offset against the EXIF times of other
     /// photos (ADR 0028).
     FileModified,
@@ -213,7 +215,7 @@ pub enum TimeSource {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CaptureTime {
     /// Milliseconds since 1970-01-01 00:00:00 in the camera's local time (the date and time
-    /// as written, read as if it were UTC). For [`TimeSource::FileModified`] it is UTC.
+    /// as written, read as if it were UTC). For [`TimeSource::FileModified`] it is UTC for now (interim, ADR 0028).
     pub local_ms: i64,
     /// The camera's offset from UTC in minutes, when known.
     pub offset_minutes: Option<i16>,
