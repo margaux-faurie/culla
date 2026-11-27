@@ -10,7 +10,9 @@
 //! `pending` with nothing in the way, the cell is [`Cell::Restart`], which is normal execution.
 //!
 //! `finish` operations (redo plans, §9.6) have no partial: from `verifying` on they use the
-//! `xmove` rows with P = 0, and from `pending` their own row ([`FINISH_PENDING`]).
+//! `xmove` rows with P = 0, except S1F0, which is `failed (lost)` as from `pending`: the target
+//! the finish relies on is gone, so there is nothing to start again (proposed, SPEC §10); from
+//! `pending` they use their own row ([`FINISH_PENDING`]).
 
 use super::{FailReason, Kind, OpState};
 
@@ -34,19 +36,22 @@ pub enum Cell {
     /// between the partial's rename and its flush.
     ToCommitted(&'static Cell),
     /// Rename P into place and flush 2 (the rename was reverted or never journaled); from
-    /// `verifying` → `committed`, otherwise the state stays; then the cell.
+    /// `verifying` → `committed`, otherwise the state stays; then the cell, F now durable.
     CommitP(&'static Cell),
     /// Continue normal execution from `committed`: a copy → `done`; a cross-volume move waits
     /// for its group, then is re-verified (H2 from F, H3 from S) and its source removed; a
     /// rename stays `committed` until the plan closes.
     Continue,
     /// From `committed`, the source being gone already: a copy → `done`; a cross-volume move →
-    /// `source_removed` → `done`.
+    /// `source_removed` → `done`. F is secured first (matched against H1 and flushed, unless
+    /// this run made it durable); a mismatch is `failed (lost)`.
     Finish,
-    /// From `source_removed` with S back (the removal was reverted): re-verify (H2 from F, H3
-    /// from S): match: remove S, → `done`; mismatch: `failed (verify_mismatch)`, keep both.
+    /// From `source_removed` with S back (the removal was reverted): once every member of the
+    /// group is committed and none failed, re-verify (H2 from F, H3 from S, F flushed): match:
+    /// remove S, → `done`; mismatch: `failed (verify_mismatch)`, keep both. A group that fails
+    /// keeps both (`failed (group_failed)`).
     RemoveAgain,
-    /// → `done`.
+    /// → `done`, F secured first as for [`Cell::Finish`].
     ToDone,
     /// P = H1: the first cell, else the second.
     IfP(&'static Cell, &'static Cell),
@@ -158,6 +163,10 @@ pub fn cell(kind: Kind, state: OpState, s: bool, p: bool, f: bool) -> Option<&'s
             let col = match (kind, state) {
                 (Kind::Finish, OpState::Pending) => return Some(&FINISH_PENDING[sf]),
                 (Kind::Finish, OpState::Copying) => return None,
+                (
+                    Kind::Finish,
+                    OpState::Verifying | OpState::Committed | OpState::SourceRemoved,
+                ) if sf == 0 => return Some(&FINISH_PENDING[0]),
                 (_, OpState::Pending | OpState::Copying) => 0,
                 (_, OpState::Verifying) => 1,
                 (_, OpState::Committed) => 2,

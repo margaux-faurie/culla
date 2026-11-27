@@ -712,6 +712,9 @@ pub enum Reverted {
     SourceBack,
     /// Both or neither (a torn rename): reported, never offered.
     Torn,
+    /// The target of a cross-volume move or `finish` is gone (with or without its source), or a
+    /// rename's source is back but not as planned: an alarm, reported, never offered.
+    Lost,
 }
 
 /// The launch check of §9.6 on one `done` operation of a closed plan. `None` when the disk
@@ -725,19 +728,20 @@ pub fn reverted(op: &Op, progress: &Progress, seen: &Seen) -> Option<Reverted> {
     match op.kind {
         Kind::Rename => match (s, f) {
             (true, false) if seen.source_as_planned(op) => Some(Reverted::Rename),
+            (true, false) => Some(Reverted::Lost),
             (true, true) | (false, false) => Some(Reverted::Torn),
-            _ => None,
+            (false, true) => None,
         },
-        Kind::XMove | Kind::Finish => match (s, f) {
-            (true, true)
-                if seen
-                    .target
-                    .is_some_and(|t| t.file && t.size == op.expected_size) =>
-            {
-                Some(Reverted::SourceBack)
+        Kind::XMove | Kind::Finish => {
+            let planned = seen
+                .target
+                .is_some_and(|t| t.file && t.size == op.expected_size);
+            match (s, f) {
+                (true, true) if planned => Some(Reverted::SourceBack),
+                (_, false) => Some(Reverted::Lost),
+                _ => None,
             }
-            _ => None,
-        },
+        }
         Kind::Copy => None,
     }
 }

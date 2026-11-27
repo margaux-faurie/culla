@@ -1,15 +1,19 @@
 //! A fake disk and journal store for the executor tests, modelling durability (file-engine §1):
 //! every change is unflushed until a flush covers it, and a simulated crash may revert any
 //! unflushed change. Partial writes are flushed at the end of `copy` (flush 1) and their rename
-//! at the end of `commit` (flush 2); user-file renames, source removals and partial removals
-//! are never flushed while the plan is open.
+//! at the end of `commit` (flush 2), or later by `flush_target` and `prove`; user-file renames,
+//! source removals and partial removals are never flushed while the plan is open. Folders that
+//! `make_dirs` creates (in `rename` and `copy`) are unflushed until `flush_dirs`, and a file in
+//! an unflushed folder is not durable. Not modelled (proposed, deferred, file-engine §1): torn
+//! FAT renames, and a lost folder taking its files with it.
 //!
 //! The fake also checks, on every call, the rules the core must keep: a source is removed only
 //! with a proof made in this process run, after every member of its group is committed and none
-//! failed (INV-01, INV-12); a partial is removed only if the journal recorded it and the source
-//! is there (INV-01); every changed path belongs to the operation (S, F or one of its partials);
-//! and, after every call, each planned file is durably in S, in F, or in a partial the journal
-//! holds at `verifying` or later with its H1 (INV-11).
+//! failed (INV-01, INV-12), with F and its folders durable; a partial is removed only if the
+//! journal recorded it and the source is there (INV-01); every changed path belongs to the
+//! operation (S, F or one of its partials); the journal says `source_removed` or `done` for a
+//! copy only with F durable; and, after every call, each planned file is durably in S, in F, or
+//! in a partial the journal holds at `verifying` or later with its H1 (INV-11).
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -97,11 +101,23 @@ impl Rng {
 pub(super) struct World {
     pub(super) files: BTreeMap<String, FileRec>,
     unflushed: Vec<Change>,
+    /// Folders `make_dirs` created, and those of them not flushed yet.
+    dirs: BTreeSet<String>,
+    pub(super) unflushed_dirs: BTreeSet<String>,
+    /// The mode of the next crash, instead of a random one.
+    pub(super) crash_mode: Option<Mode>,
+    /// A crash reverts every unflushed change (true) or none (false), instead of each at
+    /// random.
+    pub(super) revert_all: Option<bool>,
+    /// Ops whose source another process removes during the named step, which then fails.
+    pub(super) vanish: BTreeSet<(OpId, &'static str)>,
+    /// One-shot errors: the named step of the op fails with this error before doing anything.
+    pub(super) fail_with: BTreeMap<(OpId, &'static str), DiskError>,
     /// The journal as the store holds it.
     pub(super) journal: Journal,
     pub(super) entries: Vec<Entry>,
     /// Ops whose `VerifiedMove` this process run holds.
-    proofs: BTreeSet<OpId>,
+    pub(super) proofs: BTreeSet<OpId>,
     pub(super) calls: u64,
     pub(super) crash_at: Option<u64>,
     pub(super) crashed: bool,
@@ -137,6 +153,12 @@ impl World {
         let mut w = World {
             files: BTreeMap::new(),
             unflushed: Vec::new(),
+            dirs: BTreeSet::new(),
+            unflushed_dirs: BTreeSet::new(),
+            crash_mode: None,
+            revert_all: None,
+            vanish: BTreeSet::new(),
+            fail_with: BTreeMap::new(),
             journal,
             entries: Vec::new(),
             proofs: BTreeSet::new(),
@@ -208,6 +230,48 @@ impl World {
     /// Everything unflushed is now durable (the plan closed and the file system wrote back).
     pub(super) fn flush_all(&mut self) {
         self.unflushed.clear();
+        self.unflushed_dirs.clear();
+    }
+
+    /// The folders of the target's path, outermost first.
+    fn target_dirs(op: &Op) -> Vec<String> {
+        (1..op.dst.len())
+            .map(|n| dst_key_of(op.root, &op.dst[..n]))
+            .collect()
+    }
+
+    /// `make_dirs`: a folder that has no file in it and was not made before is created,
+    /// unflushed.
+    fn make_dirs(&mut self, op: &Op) {
+        for d in Self::target_dirs(op) {
+            let prefix = format!("{d}\\");
+            let there = self.dirs.contains(&d) || self.files.keys().any(|k| k.starts_with(&prefix));
+            if !there {
+                self.unflushed_dirs.insert(d.clone());
+            }
+            self.dirs.insert(d);
+        }
+    }
+
+    /// F and its folders are durable.
+    fn target_durable(&self, op: &Op) -> bool {
+        let k = dst_key(op);
+        !self
+            .unflushed
+            .iter()
+            .any(|c| c.paths.iter().any(|(p, _, _)| *p == k))
+            && Self::target_dirs(op)
+                .iter()
+                .all(|d| !self.unflushed_dirs.contains(d))
+    }
+
+    /// F itself (not its folders) is durable.
+    fn target_file_durable(&self, op: &Op) -> bool {
+        let k = dst_key(op);
+        !self
+            .unflushed
+            .iter()
+            .any(|c| c.paths.iter().any(|(p, _, _)| *p == k))
     }
 
     /// The process dies: each unflushed change may be reverted, newest first; proofs are gone.
@@ -222,7 +286,11 @@ impl World {
                 .paths
                 .iter()
                 .all(|(k, _, after)| self.files.get(k).copied() == *after);
-            if applies && self.rng.chance(50) {
+            let revert = match self.revert_all {
+                Some(r) => r,
+                None => self.rng.chance(50),
+            };
+            if applies && revert {
                 for (k, before, _) in &c.paths {
                     match before {
                         Some(r) => self.files.insert(k.clone(), *r),
@@ -248,6 +316,13 @@ impl World {
                 };
             }
         }
+        // A file in a folder whose creation is not durable is not durable either.
+        d.retain(|k, _| {
+            !self
+                .unflushed_dirs
+                .iter()
+                .any(|dir| k.starts_with(&format!("{dir}\\")))
+        });
         d
     }
 
@@ -288,6 +363,9 @@ impl World {
         self.calls += 1;
         if self.crash_at == Some(self.calls) {
             self.crash_at = None;
+            if let Some(m) = self.crash_mode {
+                return Ok(m);
+            }
             return Ok(match self.rng.below(3) {
                 0 => Mode::Before,
                 1 => Mode::Mid,
@@ -295,6 +373,30 @@ impl World {
             });
         }
         Ok(Mode::Normal)
+    }
+
+    fn flush_key(&mut self, k: &str) {
+        self.unflushed
+            .retain(|c| !c.paths.iter().any(|(p, _, _)| p == k));
+    }
+
+    /// An entry the store is about to commit relies on F being durable.
+    fn check_entry(&self, e: &Entry) {
+        let Some((op, _)) = self.journal.get(e.op) else {
+            return;
+        };
+        if op.kind != Kind::Rename
+            && matches!(e.to, OpState::Done | OpState::SourceRemoved)
+            && self.files.contains_key(&dst_key(op))
+        {
+            assert!(
+                self.target_file_durable(op),
+                "op {}: journaled {} → {} with its target not durable",
+                op.id,
+                e.from,
+                e.to
+            );
+        }
     }
 
     fn owned(&self, op: &Op, key: &str) {
@@ -364,6 +466,16 @@ impl FakeDisk {
             w.pull.remove(&k);
             return Err(DiskError::VolumeLost);
         }
+        let injected = w
+            .fail_with
+            .keys()
+            .find(|(id, n)| *id == op.id && *n == name)
+            .copied();
+        if let Some(k) = injected
+            && let Some(e) = w.fail_with.remove(&k)
+        {
+            return Err(e);
+        }
         let out = match mode {
             Mode::Normal => {
                 let r = f(&mut w, false);
@@ -428,6 +540,7 @@ impl Disk for FakeDisk {
             };
             w.owned(op, &src_key(op));
             w.mutations += 1;
+            w.make_dirs(op);
             w.change(vec![(src_key(op), None), (dst_key(op), Some(s))], false);
             Ok(())
         })
@@ -448,6 +561,7 @@ impl Disk for FakeDisk {
             };
             w.owned(op, &pk);
             w.mutations += 1;
+            w.make_dirs(op);
             if w.full.remove(&op.id) {
                 // Half a partial, then the disk is full.
                 let torn = FileRec {
@@ -456,6 +570,16 @@ impl Disk for FakeDisk {
                 };
                 w.change(vec![(pk, Some(torn))], false);
                 return Err(DiskError::DiskFull);
+            }
+            if w.vanish.remove(&(op.id, "copy")) {
+                // Half a partial, then another process removes the source: the read fails.
+                let torn = FileRec {
+                    content: s.content ^ 0xDEAD,
+                    ..s
+                };
+                w.change(vec![(pk, Some(torn))], false);
+                w.files.remove(&src_key(op));
+                return Err(DiskError::Io(2));
             }
             let mut content = s.content;
             if w.flaky.remove(&op.id) {
@@ -475,6 +599,11 @@ impl Disk for FakeDisk {
 
     fn verify(&mut self, op: &Op, partial: &[String], hash: &Hash) -> Result<bool, DiskError> {
         self.step("verify", op, |w, _| {
+            if w.vanish.remove(&(op.id, "verify")) {
+                // Another process removes the source before `open_source_verify`.
+                w.files.remove(&src_key(op));
+                return Err(DiskError::Io(2));
+            }
             let p = w.files.get(&dst_key_of(op.root, partial)).copied();
             let s = w.files.get(&src_key(op)).copied();
             let ok = p.is_some_and(|r| hash_of(r.content) == *hash)
@@ -506,13 +635,17 @@ impl Disk for FakeDisk {
     }
 
     fn prove(&mut self, op: &Op, hash: &Hash) -> Result<bool, DiskError> {
-        self.step("prove", op, |w, _| {
+        self.step("prove", op, |w, mid| {
             assert!(op.kind.removes_source());
             let f = w.files.get(&dst_key(op)).copied();
             let s = w.files.get(&src_key(op)).copied();
             let ok = f.is_some_and(|r| hash_of(r.content) == *hash && r.size == op.expected_size)
                 && s.is_some_and(|r| hash_of(r.content) == *hash);
             if ok {
+                // F matched H1: flushed before the proof is kept.
+                if !mid {
+                    w.flush_key(&dst_key(op));
+                }
                 w.proofs.insert(op.id);
             }
             Ok(ok)
@@ -529,6 +662,11 @@ impl Disk for FakeDisk {
             let c = w.content[&op.id];
             assert_eq!(w.files.get(&src_key(op)).map(|r| r.content), Some(c));
             assert_eq!(w.files.get(&dst_key(op)).map(|r| r.content), Some(c));
+            assert!(
+                w.target_durable(op),
+                "op {}: source removed while its target or its folders are not durable",
+                op.id
+            );
             w.group_ok_for_removal(op);
             w.owned(op, &src_key(op));
             w.mutations += 1;
@@ -558,10 +696,23 @@ impl Disk for FakeDisk {
     }
 
     fn flush_target(&mut self, op: &Op) -> Result<(), DiskError> {
-        self.step("flush_target", op, |w, _| {
+        self.step("flush_target", op, |w, mid| {
             let k = dst_key(op);
-            w.unflushed
-                .retain(|c| !c.paths.iter().any(|(p, _, _)| *p == k));
+            assert!(w.files.contains_key(&k), "op {}: flush of no target", op.id);
+            if !mid {
+                w.flush_key(&k);
+            }
+            Ok(())
+        })
+    }
+
+    fn flush_dirs(&mut self, op: &Op) -> Result<(), DiskError> {
+        self.step("flush_dirs", op, |w, mid| {
+            if !mid {
+                for d in World::target_dirs(op) {
+                    w.unflushed_dirs.remove(&d);
+                }
+            }
             Ok(())
         })
     }
@@ -579,6 +730,7 @@ impl Store for FakeStore {
         };
         let persist = |w: &mut World| {
             for e in entries {
+                w.check_entry(e);
                 w.journal
                     .apply(e)
                     .expect("the store only gets legal entries");

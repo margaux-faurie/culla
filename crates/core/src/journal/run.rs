@@ -109,7 +109,10 @@ pub trait Disk {
 
     /// A fresh `VerifiedMove` for a committed cross-volume move or a `finish` operation: H2 from
     /// F and H3 from S (through a new `hS`), both unbuffered, equal to `hash`, F a regular file
-    /// with the planned size. True when it holds; the adapter keeps the proof.
+    /// with the planned size. When it holds, F (just matched against H1) is flushed (flush 2
+    /// again, as [`Disk::flush_target`]) before the proof is kept, so a source is never removed
+    /// while the rename that put F in place may still be lost (proposed, SPEC §10). True when
+    /// it holds; the adapter keeps the proof.
     ///
     /// # Errors
     ///
@@ -117,7 +120,9 @@ pub trait Disk {
     fn prove(&mut self, op: &Op, hash: &Hash) -> Result<bool, DiskError>;
 
     /// `remove_verified_source` with the proof [`Disk::verify`] or [`Disk::prove`] made in this
-    /// run (§9.7). Asked only when every operation of the group is committed and none failed.
+    /// run (§9.7). Asked only when every operation of the group is committed and none failed,
+    /// F is durable (flushed by this run's commit or by [`Disk::prove`]) and its folders too
+    /// ([`Disk::flush_dirs`]).
     ///
     /// # Errors
     ///
@@ -125,21 +130,36 @@ pub trait Disk {
     fn remove_source(&mut self, op: &Op) -> Result<(), DiskError>;
 
     /// `remove_own_partial` (§9.7) for a partial this operation's journal recorded. Asked only
-    /// while S is present (INV-01). An absent partial is not an error.
+    /// after a fresh [`Disk::probe`] found S there as planned (INV-01). The adapter checks again
+    /// itself: it opens S read-only through a handle it holds across the removal, checks size
+    /// and mtime against the plan through it, and refuses (keeps the partial, reports an error)
+    /// when S is absent or changed, because the partial may then be the only copy. An absent
+    /// partial is not an error.
     ///
     /// # Errors
     ///
-    /// As the removal reports; the partial is then kept and reported.
+    /// As the removal reports, or the refusal above; the partial is then kept and reported.
     fn remove_partial(&mut self, op: &Op, partial: &[String]) -> Result<(), DiskError>;
 
-    /// Flush 2 again, on the target: opens Culla's own committed copy and flushes it, so a
-    /// rename of the partial that happened just before a crash, before its flush, is durable
-    /// (recovery, `verifying` with F = H1).
+    /// Flush 2 again, on the target: opens Culla's own committed copy (`FILE_OPEN`, never
+    /// create or truncate, reparse points refused) and flushes it, so a rename of the partial
+    /// that happened before a crash, before its flush, is durable. Asked only for a target just
+    /// matched against H1 (recovery) and never written (proposed, file-engine INV-02, §9.3).
     ///
     /// # Errors
     ///
     /// As the open or flush reports.
     fn flush_target(&mut self, op: &Op) -> Result<(), DiskError>;
+
+    /// Flushes the folders `make_dirs` created for the target, and their parent, so the
+    /// target's directory entries are durable before its source is removed (proposed; whether
+    /// a folder handle can be flushed on FAT32 and exFAT is open, file-engine §13). Asked before
+    /// every [`Disk::remove_source`]; a folder that already existed needs nothing.
+    ///
+    /// # Errors
+    ///
+    /// As the open or flush reports.
+    fn flush_dirs(&mut self, op: &Op) -> Result<(), DiskError>;
 
     /// Drops any proof and handle held for `op` (its group failed).
     fn release(&mut self, op: &Op);
@@ -256,22 +276,14 @@ pub fn run<D: Disk + ?Sized, S: Store + ?Sized>(
         disk,
         store,
         proved: BTreeSet::new(),
+        fresh: BTreeSet::new(),
+        deferred: BTreeSet::new(),
         halt,
     };
-    for g in r.j.groups() {
-        if let Some(h) = (r.halt)() {
-            return Ok(match h {
-                Halt::Pause => End::Paused(PauseReason::User),
-                Halt::Cancel => End::Cancelled,
-            });
-        }
-        match r.group(g) {
-            Ok(()) => {}
-            Err(Brk::Stop(end)) => return Ok(end),
-            Err(Brk::Err(e)) => return Err(e),
-        }
-    }
-    Ok(End::Finished)
+    let out = r.groups();
+    // Whatever stopped the run, no proof outlives it (its `hS` would keep the source open).
+    r.release_all();
+    out
 }
 
 /// Closes the plan (`completed` or `cancelled`, §9.1): every rename still `committed` is
@@ -315,6 +327,12 @@ struct Runner<'a, D: Disk + ?Sized, S: Store + ?Sized> {
     store: &'a mut S,
     /// Operations whose `VerifiedMove` the adapter holds, made in this run.
     proved: BTreeSet<OpId>,
+    /// Operations whose target this run made durable: by its own commit (flush 2), by
+    /// [`Disk::flush_target`] or by [`Disk::prove`].
+    fresh: BTreeSet<OpId>,
+    /// `source_removed` operations whose source came back: removed again by `remove_sources`,
+    /// under the same gate as a first removal.
+    deferred: BTreeSet<OpId>,
     halt: &'a mut dyn FnMut() -> Option<Halt>,
 }
 
@@ -351,6 +369,31 @@ fn call<T>(r: Result<T, DiskError>) -> Result<Result<T, DiskError>, Brk> {
 }
 
 impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
+    fn groups(&mut self) -> Result<End, RunError> {
+        for g in self.j.groups() {
+            if let Some(h) = (self.halt)() {
+                return Ok(match h {
+                    Halt::Pause => End::Paused(PauseReason::User),
+                    Halt::Cancel => End::Cancelled,
+                });
+            }
+            match self.group(g) {
+                Ok(()) => {}
+                Err(Brk::Stop(end)) => return Ok(end),
+                Err(Brk::Err(e)) => return Err(e),
+            }
+        }
+        Ok(End::Finished)
+    }
+
+    /// Drops every proof still held.
+    fn release_all(&mut self) {
+        let held = std::mem::take(&mut self.proved);
+        for op in self.j.ops().iter().filter(|o| held.contains(&o.id)) {
+            self.disk.release(op);
+        }
+    }
+
     fn op(&self, i: usize) -> Op {
         self.j.ops()[i].clone()
     }
@@ -411,16 +454,23 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
         }
     }
 
-    /// Removes this operation's partial, S being present. A removal that fails for another
-    /// reason than a lost volume leaves it in place (reported with the operation).
+    /// Removes this operation's partial if a fresh probe finds S there as planned (INV-01:
+    /// after a failed step the partial may be the only copy). Otherwise, or when the removal
+    /// fails for another reason than a lost volume, it is left in place (reported with the
+    /// operation).
     fn cleanup(&mut self, i: usize, partial: &[String]) -> Step {
         let op = self.op(i);
-        let _ = call(self.disk.remove_partial(&op, partial))?;
+        match call(self.disk.probe(&op, &[]))? {
+            Ok(seen) if seen.source_as_planned(&op) => {
+                let _ = call(self.disk.remove_partial(&op, partial))?;
+            }
+            _ => {}
+        }
         Ok(())
     }
 
-    /// A step failed with `e`: pause, back to pending (disk full), or fail with its reason.
-    /// `partial` is ours to remove (S is present).
+    /// A step failed with `e`: pause, back to pending (disk full while copying or verifying),
+    /// or fail with its reason. `partial` is ours to remove if S is still there as planned.
     fn on_error(&mut self, i: usize, e: DiskError, partial: Option<&[String]>) -> Step {
         if let Some(end) = stop_for(e) {
             return Err(Brk::Stop(end));
@@ -428,16 +478,57 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
         let op = self.op(i);
         self.disk.release(&op);
         self.proved.remove(&op.id);
-        if let Some(p) = partial {
-            self.cleanup(i, p)?;
-        }
         if e == DiskError::DiskFull {
-            if self.state(i) != OpState::Pending {
+            // Only an attempt in progress goes back to the start; any other state pauses as it
+            // is and the recovery table takes it on resume.
+            if matches!(self.state(i), OpState::Copying | OpState::Verifying) {
+                if let Some(p) = partial {
+                    self.cleanup(i, p)?;
+                }
                 self.record(i, OpState::Pending, Detail::None)?;
             }
             return Err(Brk::Stop(End::Paused(PauseReason::DiskFull)));
         }
+        if let Some(p) = partial {
+            self.cleanup(i, p)?;
+        }
         self.fail(i, reason_for(e))
+    }
+
+    /// Before the journal relies on F (→ `done` or `source_removed` without a removal of its
+    /// own): F must be ours and durable. A target this run made durable needs nothing; any
+    /// other is matched against H1 and flushed (flush 2 again, proposed, SPEC §10). False when
+    /// the operation has been failed (`mismatch` when F ≠ H1) or the run stops.
+    fn secure_target(&mut self, i: usize, mismatch: FailReason) -> Result<bool, Brk> {
+        let op = self.op(i);
+        if op.kind == Kind::Rename || self.fresh.contains(&op.id) {
+            return Ok(true);
+        }
+        let Some(h) = self.hash(i) else {
+            self.fail(i, FailReason::Lost)?;
+            return Ok(false);
+        };
+        match call(self.disk.matches(&op, At::Target, &h))? {
+            Ok(true) => {}
+            Ok(false) => {
+                self.fail(i, mismatch)?;
+                return Ok(false);
+            }
+            Err(e) => {
+                self.on_error(i, e, None)?;
+                return Ok(false);
+            }
+        }
+        match call(self.disk.flush_target(&op))? {
+            Ok(()) => {
+                self.fresh.insert(op.id);
+                Ok(true)
+            }
+            Err(e) => {
+                self.on_error(i, e, None)?;
+                Ok(false)
+            }
+        }
     }
 
     fn group(&mut self, g: Range<usize>) -> Step {
@@ -543,12 +634,12 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
             Cell::ToCommitted(next) => {
                 // From `verifying` the partial's rename may have come just before the crash,
                 // before flush 2: flush the target before the journal says committed.
-                if op.kind.has_partial()
-                    && self.state(i) == OpState::Verifying
-                    && let Err(e) = call(self.disk.flush_target(&op))?
-                {
-                    self.on_error(i, e, None)?;
-                    return Ok(false);
+                if op.kind != Kind::Rename && self.state(i) == OpState::Verifying {
+                    if let Err(e) = call(self.disk.flush_target(&op))? {
+                        self.on_error(i, e, None)?;
+                        return Ok(false);
+                    }
+                    self.fresh.insert(op.id);
                 }
                 self.record(i, OpState::Committed, Detail::None)?;
                 self.act(i, next, seen)
@@ -560,6 +651,7 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
                 };
                 match call(self.disk.commit(&op, &p))? {
                     Ok(()) => {
+                        self.fresh.insert(op.id);
                         if self.state(i) == OpState::Verifying {
                             self.record(i, OpState::Committed, Detail::None)?;
                         }
@@ -578,6 +670,10 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
                 Ok(false)
             }
             Cell::Finish => {
+                // S is gone: F must be ours and durable before the journal says so.
+                if !self.secure_target(i, FailReason::Lost)? {
+                    return Ok(false);
+                }
                 match op.kind {
                     Kind::Copy => self.record(i, OpState::Done, Detail::None)?,
                     Kind::XMove | Kind::Finish => {
@@ -589,28 +685,15 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
                 Ok(false)
             }
             Cell::RemoveAgain => {
-                let Some(h) = self.hash(i) else {
-                    self.fail(i, FailReason::Lost)?;
-                    return Ok(false);
-                };
-                let range = self.group_of(i);
-                if self.group_failed(&range) {
-                    // INV-12: no source is removed once a member failed; both are kept.
-                    self.fail(i, FailReason::GroupFailed)?;
-                    return Ok(false);
-                }
-                match call(self.disk.prove(&op, &h))? {
-                    Ok(true) => match call(self.disk.remove_source(&op))? {
-                        Ok(()) => self.record(i, OpState::Done, Detail::None)?,
-                        Err(e) => self.on_error(i, e, None)?,
-                    },
-                    Ok(false) => self.fail(i, FailReason::VerifyMismatch)?,
-                    Err(e) => self.on_error(i, e, None)?,
-                }
+                // Removed again by `remove_sources`, once every member is committed and none
+                // failed (INV-12); a failed group keeps both files (`fail_group`).
+                self.deferred.insert(op.id);
                 Ok(false)
             }
             Cell::ToDone => {
-                self.record(i, OpState::Done, Detail::None)?;
+                if self.secure_target(i, FailReason::Lost)? {
+                    self.record(i, OpState::Done, Detail::None)?;
+                }
                 Ok(false)
             }
             Cell::IfP(a, b) => {
@@ -648,14 +731,6 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
         }
     }
 
-    fn group_of(&self, i: usize) -> Range<usize> {
-        self.j
-            .groups()
-            .into_iter()
-            .find(|g| g.contains(&i))
-            .unwrap_or(i..i + 1)
-    }
-
     /// Step 3 and 4 on the current partial: verify, then rename into place.
     fn verify_commit(&mut self, i: usize, p: &[String], h: &Hash) -> Step {
         let op = self.op(i);
@@ -674,6 +749,7 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
         }
         match call(self.disk.commit(&op, p))? {
             Ok(()) => {
+                self.fresh.insert(op.id);
                 self.record(i, OpState::Committed, Detail::None)?;
                 self.continue_committed(i)
             }
@@ -684,10 +760,13 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
         }
     }
 
-    /// From `committed`: a copy is done; a rename waits for the plan to close; a cross-volume
-    /// move waits for its group.
+    /// From `committed`: a copy is done once its target is secured; a rename waits for the
+    /// plan to close; a cross-volume move waits for its group.
     fn continue_committed(&mut self, i: usize) -> Step {
-        if self.j.ops()[i].kind == Kind::Copy && self.state(i) == OpState::Committed {
+        if self.j.ops()[i].kind == Kind::Copy
+            && self.state(i) == OpState::Committed
+            && self.secure_target(i, FailReason::VerifyMismatch)?
+        {
             self.record(i, OpState::Done, Detail::None)?;
         }
         Ok(())
@@ -735,6 +814,7 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
                 match call(self.disk.prove(&op, &h))? {
                     Ok(true) => {
                         self.proved.insert(op.id);
+                        self.fresh.insert(op.id);
                         self.record(i, OpState::Verifying, Detail::None)?;
                         self.record(i, OpState::Committed, Detail::None)
                     }
@@ -746,7 +826,9 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
     }
 
     /// §9.3 step 6 for a group whose members are all committed: a proof for each (from this
-    /// run, or made afresh), then every source removed, then each target re-checked.
+    /// run, or made afresh, which also flushes F), then each target's folders flushed and every
+    /// source removed, then each target re-checked. A `source_removed` member whose source came
+    /// back ([`Cell::RemoveAgain`]) is proved and removed again here, under the same gate.
     fn remove_sources(&mut self, g: &Range<usize>) -> Step {
         let all_committed = g.clone().all(|i| {
             matches!(
@@ -757,12 +839,18 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
         if !all_committed {
             return Ok(());
         }
+        let to_remove = |r: &Self, i: usize| {
+            let op = &r.j.ops()[i];
+            op.kind.removes_source()
+                && match r.state(i) {
+                    OpState::Committed => true,
+                    OpState::SourceRemoved => r.deferred.contains(&op.id),
+                    _ => false,
+                }
+        };
         for i in g.clone() {
             let op = self.op(i);
-            if !op.kind.removes_source()
-                || self.state(i) != OpState::Committed
-                || self.proved.contains(&op.id)
-            {
+            if !to_remove(self, i) || self.proved.contains(&op.id) {
                 continue;
             }
             let Some(h) = self.hash(i) else {
@@ -772,6 +860,7 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
             match call(self.disk.prove(&op, &h))? {
                 Ok(true) => {
                     self.proved.insert(op.id);
+                    self.fresh.insert(op.id);
                 }
                 Ok(false) => {
                     self.fail(i, FailReason::VerifyMismatch)?;
@@ -785,13 +874,19 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
         }
         for i in g.clone() {
             let op = self.op(i);
-            if !op.kind.removes_source() || self.state(i) != OpState::Committed {
+            if !to_remove(self, i) {
                 continue;
+            }
+            if let Err(e) = call(self.disk.flush_dirs(&op))? {
+                self.on_error(i, e, None)?;
+                return self.fail_group(g);
             }
             match call(self.disk.remove_source(&op))? {
                 Ok(()) => {
                     self.proved.remove(&op.id);
-                    self.record(i, OpState::SourceRemoved, Detail::None)?;
+                    if !self.deferred.remove(&op.id) {
+                        self.record(i, OpState::SourceRemoved, Detail::None)?;
+                    }
                 }
                 Err(e) => {
                     self.on_error(i, e, None)?;
@@ -879,10 +974,20 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
                         Kind::XMove => {
                             self.record(i, OpState::CopiedSourceKept, Detail::None)?;
                         }
-                        Kind::Copy => self.record(i, OpState::Done, Detail::None)?,
+                        Kind::Copy => {
+                            if self.secure_target(i, FailReason::VerifyMismatch)? {
+                                self.record(i, OpState::Done, Detail::None)?;
+                            }
+                        }
                         Kind::Finish => self.fail(i, FailReason::GroupFailed)?,
                         Kind::Rename => {}
                     }
+                }
+                // A source that came back is not removed again: both files are kept (INV-12).
+                OpState::SourceRemoved if self.deferred.remove(&op.id) => {
+                    self.disk.release(&op);
+                    self.proved.remove(&op.id);
+                    self.fail(i, FailReason::GroupFailed)?;
                 }
                 OpState::SourceRemoved => self.target_check(i)?,
                 OpState::Renaming | OpState::Done | OpState::CopiedSourceKept | OpState::Failed => {

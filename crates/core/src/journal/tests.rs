@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::fake::{
-    FakeDisk, FakeStore, FileRec, Rng, Shared, World, dst_key, dst_key_of, hash_of, src_key,
+    FakeDisk, FakeStore, FileRec, Mode, Rng, Shared, World, dst_key, dst_key_of, hash_of, src_key,
 };
 use super::recovery::{COPY, Cell, FINISH_PENDING, RENAME, cell};
 use super::*;
@@ -426,13 +426,9 @@ fn path_to(op: &Op, state: OpState) -> Vec<Entry> {
     out
 }
 
-/// Runs every kind, state and (S, P, F) through the executor with the files set up as the row
-/// says, P and F either matching H1 or not: no invariant of the fake breaks, the run ends with
-/// the operation final (or a rename `committed`), a cell that fails touches nothing, and a
-/// second run does nothing.
-#[test]
-fn every_cell_runs_on_the_fake_disk() {
-    let mut outcomes: BTreeMap<String, u64> = BTreeMap::new();
+/// Every set-up of the recovery table: kind, state, (S, P, F), and whether P and F match H1.
+fn cell_setups() -> Vec<(Kind, OpState, bool, bool, bool, bool)> {
+    let mut out = Vec::new();
     for kind in KINDS {
         for state in states_of(kind) {
             for bits in 0..8u8 {
@@ -444,89 +440,122 @@ fn every_cell_runs_on_the_fake_disk() {
                     continue;
                 }
                 for matching in [true, false] {
-                    let root = if kind == Kind::Rename {
-                        Root::Rejected
-                    } else {
-                        Root::Dest
-                    };
-                    let o = ops(&[(1, kind, root)]);
-                    let op = o[0].clone();
-                    let w = world(o);
-                    let c = content(&w, 1);
-                    let entries = path_to(&op, state);
-                    {
-                        let mut wb = w.borrow_mut();
-                        for e in &entries {
-                            wb.journal.apply(e).unwrap();
-                            wb.entries.push(e.clone());
-                        }
-                        if !s {
-                            wb.files.remove(&src_key(&op));
-                        }
-                        let rec = |content| FileRec {
-                            content,
-                            size: op.expected_size,
-                            mtime: op.src_mtime_ns,
-                        };
-                        if p {
-                            let pc = if matching { c } else { c ^ 1 };
-                            wb.files
-                                .insert(dst_key_of(op.root, &op.partial(1)), rec(pc));
-                        }
-                        if f {
-                            if matching {
-                                wb.files.insert(dst_key(&op), rec(c));
-                            } else {
-                                wb.put_foreign(dst_key(&op), 77);
-                            }
-                        }
-                    }
-                    let what = format!(
-                        "{kind:?} {state} S{} P{} F{} {matching}",
-                        s as u8, p as u8, f as u8
-                    );
-                    // INV-11 holds from here on only if the photo is still at S.
-                    w.borrow_mut().check_inv11 = s;
-                    let mut j = w.borrow().reload();
-                    let before = w.borrow().mutations;
-                    let end = go(&w, &mut j).unwrap_or_else(|e| panic!("{what}: {e}"));
-                    assert_eq!(end, End::Finished, "{what}");
-                    assert!(j.finished(), "{what}");
-                    let st = state_of(&j);
-                    if let Some(Cell::Fail(r)) = cell(kind, state, s, p, f) {
-                        assert_eq!(
-                            w.borrow().mutations,
-                            before,
-                            "{what}: a failing cell touched"
-                        );
-                        assert_eq!((st, err(&j, 1)), (OpState::Failed, Some(*r)), "{what}");
-                    }
-                    // Our content is still somewhere, if it was anywhere.
-                    if s || (p && matching) || (f && matching) {
-                        let wb = w.borrow();
-                        assert!(
-                            wb.files.values().any(|r| r.content == c),
-                            "{what}: the photo is gone"
-                        );
-                    }
-                    // With S there, nothing of ours is left over.
-                    if s && err(&j, 1) != Some(FailReason::FsInconsistent) {
-                        assert!(
-                            partial_files(&w).is_empty(),
-                            "{what}: {:?}",
-                            partial_files(&w)
-                        );
-                    }
-                    // Idempotent.
-                    let (m, a) = (w.borrow().mutations, w.borrow().appends);
-                    go(&w, &mut j).unwrap();
-                    assert_eq!((w.borrow().mutations, w.borrow().appends), (m, a), "{what}");
-                    *outcomes
-                        .entry(format!("{st} {:?}", err(&j, 1)))
-                        .or_default() += 1;
+                    out.push((kind, state, s, p, f, matching));
                 }
             }
         }
+    }
+    out
+}
+
+/// A one-op world with the journal at `state` and the files as (S, P, F) say, durable.
+fn cell_world(
+    (kind, state, s, p, f, matching): (Kind, OpState, bool, bool, bool, bool),
+    seed: u64,
+) -> (Shared, Op, String) {
+    let root = if kind == Kind::Rename {
+        Root::Rejected
+    } else {
+        Root::Dest
+    };
+    let o = ops(&[(1, kind, root)]);
+    let op = o[0].clone();
+    let w = World::new(Journal::new(o).unwrap(), seed);
+    let c = content(&w, 1);
+    {
+        let mut wb = w.borrow_mut();
+        for e in &path_to(&op, state) {
+            wb.journal.apply(e).unwrap();
+            wb.entries.push(e.clone());
+        }
+        if !s {
+            wb.files.remove(&src_key(&op));
+        }
+        let rec = |content| FileRec {
+            content,
+            size: op.expected_size,
+            mtime: op.src_mtime_ns,
+        };
+        if p {
+            let pc = if matching { c } else { c ^ 1 };
+            wb.files
+                .insert(dst_key_of(op.root, &op.partial(1)), rec(pc));
+        }
+        if f {
+            if matching {
+                wb.files.insert(dst_key(&op), rec(c));
+            } else {
+                wb.put_foreign(dst_key(&op), 77);
+            }
+        }
+        // INV-11 holds from here on only if the photo is still at S.
+        wb.check_inv11 = s;
+    }
+    let what = format!(
+        "{kind:?} {state} S{} P{} F{} {matching}",
+        s as u8, p as u8, f as u8
+    );
+    (w, op, what)
+}
+
+/// After a run of a cell set-up that ended: the operation is final (or a rename `committed`),
+/// our content is still somewhere if it was anywhere, nothing of ours is left over while S is
+/// there, and a second run does nothing.
+fn check_cell_end(w: &Shared, j: &mut Journal, op: &Op, had_copy: bool, what: &str) {
+    assert!(j.finished(), "{what}");
+    let c = content(w, 1);
+    if had_copy {
+        let wb = w.borrow();
+        assert!(
+            wb.files.values().any(|r| r.content == c),
+            "{what}: the photo is gone"
+        );
+    }
+    if file(w, &src_key(op)) == Some(c) && err(j, 1) != Some(FailReason::FsInconsistent) {
+        assert!(
+            partial_files(w).is_empty(),
+            "{what}: {:?}",
+            partial_files(w)
+        );
+    }
+    let (m, a) = (w.borrow().mutations, w.borrow().appends);
+    assert_eq!(go(w, j), Ok(End::Finished), "{what}");
+    assert_eq!((w.borrow().mutations, w.borrow().appends), (m, a), "{what}");
+}
+
+/// Runs every kind, state and (S, P, F) through the executor with the files set up as the row
+/// says, P and F either matching H1 or not: no invariant of the fake breaks, the run ends with
+/// the operation final (or a rename `committed`), a cell that fails touches nothing, and a
+/// second run does nothing.
+#[test]
+fn every_cell_runs_on_the_fake_disk() {
+    let mut outcomes: BTreeMap<String, u64> = BTreeMap::new();
+    for setup in cell_setups() {
+        let (kind, state, s, p, f, matching) = setup;
+        let (w, op, what) = cell_world(setup, 1);
+        let mut j = w.borrow().reload();
+        let before = w.borrow().mutations;
+        let end = go(&w, &mut j).unwrap_or_else(|e| panic!("{what}: {e}"));
+        assert_eq!(end, End::Finished, "{what}");
+        let st = state_of(&j);
+        if let Some(Cell::Fail(r)) = cell(kind, state, s, p, f) {
+            assert_eq!(
+                w.borrow().mutations,
+                before,
+                "{what}: a failing cell touched"
+            );
+            assert_eq!((st, err(&j, 1)), (OpState::Failed, Some(*r)), "{what}");
+        }
+        check_cell_end(
+            &w,
+            &mut j,
+            &op,
+            s || (p && matching) || (f && matching),
+            &what,
+        );
+        *outcomes
+            .entry(format!("{st} {:?}", err(&j, 1)))
+            .or_default() += 1;
     }
     for want in [
         "done None",
@@ -542,6 +571,52 @@ fn every_cell_runs_on_the_fake_disk() {
             "{want} never came up: {outcomes:?}"
         );
     }
+}
+
+/// Every cell, from every set-up, crashed at each of its disk calls and appends in turn (before
+/// the call, half-way with its effect unflushed, after it), then resumed: the fake's checks
+/// hold throughout (a source is removed only with F and its folders durable, the journal says
+/// `done` or `source_removed` only with F durable, INV-01, INV-11, INV-12), and the resume ends
+/// as an uninterrupted run would.
+#[test]
+fn every_cell_survives_a_crash_at_each_call() {
+    let mut crashed_runs = 0u64;
+    for setup in cell_setups() {
+        let (_, _, s, p, f, matching) = setup;
+        // Revert every unflushed change, none, or each at random (two seeds).
+        for (seed, revert) in [(1, Some(true)), (1, Some(false)), (1, None), (2, None)] {
+            for mode in [Mode::Before, Mode::Mid, Mode::After] {
+                for k in 1.. {
+                    let (w, op, what) = cell_world(setup, seed);
+                    let what = format!("{what} {revert:?}/{seed} {mode:?} at call {k}");
+                    {
+                        let mut wb = w.borrow_mut();
+                        wb.crash_mode = Some(mode);
+                        wb.revert_all = revert;
+                        wb.crash_at = Some(k);
+                    }
+                    let mut j = w.borrow().reload();
+                    let _ = go(&w, &mut j);
+                    if !w.borrow().crashed {
+                        break;
+                    }
+                    crashed_runs += 1;
+                    w.borrow_mut().crashed = false;
+                    let mut j = w.borrow().reload();
+                    let end = go(&w, &mut j).unwrap_or_else(|e| panic!("{what}: {e}"));
+                    assert_eq!(end, End::Finished, "{what}");
+                    check_cell_end(
+                        &w,
+                        &mut j,
+                        &op,
+                        s || (p && matching) || (f && matching),
+                        &what,
+                    );
+                }
+            }
+        }
+    }
+    assert!(crashed_runs > 1000, "{crashed_runs}");
 }
 
 fn state_of(j: &Journal) -> OpState {
@@ -978,19 +1053,45 @@ fn crash_loop(case: u64, seen: &mut BTreeMap<String, u64>) {
     }
     w.borrow_mut().crash_at = None;
     *seen.entry("crashes".to_owned()).or_default() += w.borrow().crashes;
-    assert_eq!(
-        j,
-        w.borrow().reload(),
-        "case {case}: journal and store differ"
-    );
+    check_end_state(&format!("case {case}"), &w, j, &all, seen);
+}
+
+fn seen_files(wb: &World, op: &Op) -> Seen {
+    let at = |k: &str| {
+        wb.files.get(k).map(|r| FileSeen {
+            file: true,
+            size: r.size,
+            mtime_ns: r.mtime,
+        })
+    };
+    Seen {
+        rule: TimeRule::Exact,
+        source: at(&src_key(op)),
+        target: at(&dst_key(op)),
+        partials: vec![],
+    }
+}
+
+/// testing.md §6.1 on a run that ended: the journal is the store's, closing and a second resume
+/// change nothing, every op is in an end state with its files where that state says, the
+/// launch check finds nothing but lost source removals, no stray files, undecided files as
+/// they were.
+fn check_end_state(
+    case: &str,
+    w: &Shared,
+    mut j: Journal,
+    all: &[Op],
+    seen: &mut BTreeMap<String, u64>,
+) {
+    assert_eq!(j, w.borrow().reload(), "{case}: journal and store differ");
     close(&mut j, &mut FakeStore(w.clone())).unwrap();
     // Idempotent: a second resume does nothing.
     let (m, a) = (w.borrow().mutations, w.borrow().appends);
-    assert_eq!(go(&w, &mut j), Ok(End::Finished));
+    assert_eq!(go(w, &mut j), Ok(End::Finished));
     assert_eq!(
         (w.borrow().mutations, w.borrow().appends),
         (m, a),
-        "case {case}: resume again changed something"
+        "{case}: resume again changed something"
     );
     w.borrow_mut().flush_all();
 
@@ -1004,7 +1105,7 @@ fn crash_loop(case: u64, seen: &mut BTreeMap<String, u64>) {
         let s = at(&src_key(op));
         let f = at(&dst_key(op));
         let what = format!(
-            "case {case}: op {} {:?} {} {:?}\nLOG {:?}\nENTRIES {:?}",
+            "{case}: op {} {:?} {} {:?}\nLOG {:?}\nENTRIES {:?}",
             op.id,
             op.kind,
             p.state(),
@@ -1021,27 +1122,13 @@ fn crash_loop(case: u64, seen: &mut BTreeMap<String, u64>) {
                 assert_eq!((s, f), (None, Some(c)), "{what}");
             }
             (OpState::Done, Kind::Copy) => assert_eq!((s, f), (Some(c), Some(c)), "{what}"),
-            (OpState::Done, Kind::XMove) => {
+            (OpState::Done, Kind::XMove | Kind::Finish) => {
                 assert_eq!(f, Some(c), "{what}");
                 if s.is_some() {
                     // A source removal the file system lost after `done` (§9.6): found by the
                     // launch check and offered as "Finish moves".
-                    let seen_now = Seen {
-                        rule: TimeRule::Exact,
-                        source: wb.files.get(&src_key(op)).map(|r| FileSeen {
-                            file: true,
-                            size: r.size,
-                            mtime_ns: r.mtime,
-                        }),
-                        target: wb.files.get(&dst_key(op)).map(|r| FileSeen {
-                            file: true,
-                            size: r.size,
-                            mtime_ns: r.mtime,
-                        }),
-                        partials: vec![],
-                    };
                     assert_eq!(
-                        reverted(op, p, &seen_now),
+                        reverted(op, p, &seen_files(&wb, op)),
                         Some(Reverted::SourceBack),
                         "{what}"
                     );
@@ -1068,6 +1155,11 @@ fn crash_loop(case: u64, seen: &mut BTreeMap<String, u64>) {
             }
             _ => panic!("{what}: not an end state"),
         }
+        // The launch check on the plan just closed: nothing reverted, lost or torn, except a
+        // lost source removal (above).
+        if !(matches!(op.kind, Kind::XMove | Kind::Finish) && s.is_some()) {
+            assert_eq!(reverted(op, p, &seen_files(&wb, op)), None, "{what}");
+        }
         *seen
             .entry(format!("{:?} {} {:?}", op.kind, p.state(), p.last_error))
             .or_default() += 1;
@@ -1085,7 +1177,7 @@ fn crash_loop(case: u64, seen: &mut BTreeMap<String, u64>) {
         if wb.foreign.contains_key(k) {
             continue;
         }
-        assert!(ours.contains(k), "case {case}: stray file {k}");
+        assert!(ours.contains(k), "{case}: stray file {k}");
         if k.ends_with(".culla-partial") {
             let (i, op) = all
                 .iter()
@@ -1097,7 +1189,7 @@ fn crash_loop(case: u64, seen: &mut BTreeMap<String, u64>) {
             let _ = i;
             assert!(
                 !wb.files.contains_key(&src_key(op)),
-                "case {case}: partial {k} left with its source there"
+                "{case}: partial {k} left with its source there"
             );
             *seen
                 .entry("partial kept, source gone".to_owned())
@@ -1148,4 +1240,330 @@ fn prop_crash_loop_reaches_the_end_state() {
 #[ignore = "long run: 10,000 cases"]
 fn prop_crash_loop_10k() {
     run_crash_loop(10_000);
+}
+
+// --- Exhaustive crash points over small plans ----------------------------------------------
+
+/// Small plans, each kind alone and the groups that matter (a cross-volume pair, a split
+/// rename group, a copy next to a move).
+fn small_plans() -> Vec<Vec<Op>> {
+    vec![
+        ops(&[(1, Kind::Rename, Root::Rejected)]),
+        ops(&[(1, Kind::Copy, Root::Dest)]),
+        ops(&[(1, Kind::XMove, Root::Dest)]),
+        ops(&[(1, Kind::Finish, Root::Dest)]),
+        ops(&[(1, Kind::XMove, Root::Dest), (1, Kind::XMove, Root::Dest)]),
+        ops(&[
+            (1, Kind::Rename, Root::Rejected),
+            (1, Kind::Rename, Root::Rejected),
+            (2, Kind::Copy, Root::Dest),
+        ]),
+        ops(&[(1, Kind::Copy, Root::Dest), (2, Kind::XMove, Root::Dest)]),
+    ]
+}
+
+/// A fresh world for a small plan; a `finish` op gets its target in place, as a lost source
+/// removal leaves it.
+fn small_world(all: &[Op], seed: u64) -> Shared {
+    let w = World::new(Journal::new(all.to_vec()).unwrap(), seed);
+    {
+        let mut wb = w.borrow_mut();
+        for op in all.iter().filter(|o| o.kind == Kind::Finish) {
+            let s = wb.files[&src_key(op)];
+            wb.files.insert(dst_key(op), s);
+        }
+        for k in 0..3 {
+            wb.put_foreign(format!("S:100NIKON\\UNDECIDED_{k}.JPG"), 500 + k);
+        }
+    }
+    w
+}
+
+/// Runs to the end, crashing at the calls in `at` (one per process run, counted from that run's
+/// first call): true when every crash fired.
+fn run_with_crashes(w: &Shared, at: &[(u64, Mode)]) -> (Journal, bool) {
+    let mut j = w.borrow().reload();
+    for &(k, mode) in at {
+        {
+            let mut wb = w.borrow_mut();
+            wb.crash_mode = Some(mode);
+            wb.crash_at = Some(wb.calls + k);
+        }
+        let _ = go(w, &mut j);
+        if !w.borrow().crashed {
+            return (j, false);
+        }
+        w.borrow_mut().crashed = false;
+        j = w.borrow().reload();
+    }
+    assert_eq!(go(w, &mut j), Ok(End::Finished));
+    (j, true)
+}
+
+/// Every crash point k (each of the three modes; all unflushed changes reverted, none, or each
+/// at random), then every second crash point k2 in the recovery that follows: each ends in the
+/// end state (file-engine §1, proposed: exhaustive rather than random crash points).
+#[test]
+fn exhaustive_crash_at_every_call_of_small_plans() {
+    const MODES: [Mode; 3] = [Mode::Before, Mode::Mid, Mode::After];
+    let mut seen = BTreeMap::new();
+    let mut runs = 0u64;
+    for (n, all) in small_plans().into_iter().enumerate() {
+        for (seed, revert) in [(1, Some(true)), (1, Some(false)), (3, None)] {
+            for m1 in MODES {
+                for k1 in 1.. {
+                    let w = small_world(&all, seed);
+                    w.borrow_mut().revert_all = revert;
+                    let (j, fired) = run_with_crashes(&w, &[(k1, m1)]);
+                    if !fired {
+                        break;
+                    }
+                    runs += 1;
+                    check_end_state(
+                        &format!("plan {n} {revert:?} {m1:?}@{k1}"),
+                        &w,
+                        j,
+                        &all,
+                        &mut seen,
+                    );
+                    // A second crash: `after` call k2 is `before` call k2 + 1, so two modes
+                    // cover it; with nothing reverted it adds little, so it is skipped then.
+                    if revert == Some(false) {
+                        continue;
+                    }
+                    for m2 in [Mode::Before, Mode::Mid] {
+                        for k2 in 1.. {
+                            let w = small_world(&all, seed);
+                            w.borrow_mut().revert_all = revert;
+                            let (j, fired) = run_with_crashes(&w, &[(k1, m1), (k2, m2)]);
+                            if !fired {
+                                break;
+                            }
+                            runs += 1;
+                            check_end_state(
+                                &format!("plan {n} {revert:?} {m1:?}@{k1} {m2:?}@{k2}"),
+                                &w,
+                                j,
+                                &all,
+                                &mut seen,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(runs > 10_000, "{runs}");
+}
+
+// --- Review fixes ------------------------------------------------------------------------------
+
+#[test]
+fn a_partial_is_kept_when_the_source_vanishes_during_its_step() {
+    // INV-01: after a failed copy or verify the partial may be the only copy; it is removed
+    // only if a fresh probe finds S there as planned.
+    for step in ["copy", "verify"] {
+        let o = ops(&[(1, Kind::XMove, Root::Dest)]);
+        let w = world(o.clone());
+        {
+            let mut wb = w.borrow_mut();
+            wb.vanish.insert((1, step));
+            // S goes away by another hand; INV-11 cannot hold for this op.
+            wb.check_inv11 = false;
+        }
+        let mut j = w.borrow().reload();
+        assert_eq!(go(&w, &mut j).unwrap(), End::Finished, "{step}");
+        assert_eq!(
+            (state(&j, 1), err(&j, 1)),
+            (OpState::Failed, Some(FailReason::Io(2))),
+            "{step}"
+        );
+        assert_eq!(
+            partial_files(&w),
+            vec![dst_key_of(o[0].root, &o[0].partial(1))],
+            "{step}"
+        );
+        if step == "verify" {
+            // The partial holds the photo: the only copy left, kept and reported.
+            assert_eq!(
+                file(&w, &dst_key_of(o[0].root, &o[0].partial(1))),
+                Some(content(&w, 1))
+            );
+        }
+        assert!(
+            !w.borrow()
+                .log
+                .iter()
+                .any(|l| l.starts_with("remove_partial"))
+        );
+    }
+}
+
+#[test]
+fn a_full_disk_outside_an_attempt_pauses_without_a_journal_entry() {
+    // committed, S1 P1 F0 (the rename reverted): the commit meets a full disk.
+    let o = ops(&[(1, Kind::Copy, Root::Dest)]);
+    let op = o[0].clone();
+    let w = world(o);
+    {
+        let mut wb = w.borrow_mut();
+        for e in path_to(&op, OpState::Committed) {
+            wb.journal.apply(&e).unwrap();
+            wb.entries.push(e);
+        }
+        let s = wb.files[&src_key(&op)];
+        wb.files.insert(dst_key_of(op.root, &op.partial(1)), s);
+        wb.fail_with.insert((1, "commit"), DiskError::DiskFull);
+    }
+    let mut j = w.borrow().reload();
+    let appends = w.borrow().appends;
+    assert_eq!(go(&w, &mut j).unwrap(), End::Paused(PauseReason::DiskFull));
+    assert_eq!(state(&j, 1), OpState::Committed);
+    assert_eq!(w.borrow().appends, appends);
+    assert_eq!(partial_files(&w).len(), 1);
+    assert_eq!(go(&w, &mut j).unwrap(), End::Finished);
+    assert_eq!(state(&j, 1), OpState::Done);
+    assert!(partial_files(&w).is_empty());
+}
+
+/// A two-member cross-volume group: member 1 at `source_removed` with its source back (the
+/// removal reverted), member 2 not started.
+fn source_back_world() -> (Shared, Vec<Op>) {
+    let o = ops(&[(1, Kind::XMove, Root::Dest), (1, Kind::XMove, Root::Dest)]);
+    let w = world(o.clone());
+    {
+        let mut wb = w.borrow_mut();
+        for e in path_to(&o[0], OpState::SourceRemoved) {
+            wb.journal.apply(&e).unwrap();
+            wb.entries.push(e);
+        }
+        let s = wb.files[&src_key(&o[0])];
+        wb.files.insert(dst_key(&o[0]), s);
+    }
+    (w, o)
+}
+
+#[test]
+fn a_source_back_at_source_removed_waits_for_its_group() {
+    let (w, o) = source_back_world();
+    let mut j = w.borrow().reload();
+    assert_eq!(go(&w, &mut j).unwrap(), End::Finished);
+    assert_eq!((state(&j, 1), state(&j, 2)), (OpState::Done, OpState::Done));
+    for op in &o {
+        assert_eq!(file(&w, &src_key(op)), None);
+    }
+    let log = w.borrow().log.clone();
+    let removal = log.iter().position(|l| l == "remove_source 1").unwrap();
+    let commit = log.iter().position(|l| l == "commit 2").unwrap();
+    assert!(commit < removal, "{log:?}");
+    // Each removal comes right after its target's folders are flushed.
+    for id in [1, 2] {
+        let r = log
+            .iter()
+            .position(|l| *l == format!("remove_source {id}"))
+            .unwrap();
+        assert_eq!(log[r - 1], format!("flush_dirs {id}"), "{log:?}");
+    }
+}
+
+#[test]
+fn a_source_back_at_source_removed_is_kept_when_its_group_fails() {
+    let (w, o) = source_back_world();
+    w.borrow_mut().locked.insert(2);
+    let mut j = w.borrow().reload();
+    assert_eq!(go(&w, &mut j).unwrap(), End::Finished);
+    assert_eq!(
+        (state(&j, 1), err(&j, 1)),
+        (OpState::Failed, Some(FailReason::GroupFailed))
+    );
+    assert_eq!(err(&j, 2), Some(FailReason::Locked));
+    assert_eq!(file(&w, &src_key(&o[0])), Some(content(&w, 1)));
+    assert_eq!(file(&w, &dst_key(&o[0])), Some(content(&w, 1)));
+    assert!(
+        !w.borrow()
+            .log
+            .iter()
+            .any(|l| l.starts_with("remove_source"))
+    );
+}
+
+#[test]
+fn a_stopped_run_releases_every_proof() {
+    let o = ops(&[(1, Kind::XMove, Root::Dest), (1, Kind::XMove, Root::Dest)]);
+    let w = world(o);
+    w.borrow_mut().pull.insert((2, "commit"));
+    let mut j = w.borrow().reload();
+    assert_eq!(
+        go(&w, &mut j).unwrap(),
+        End::Paused(PauseReason::VolumeLost)
+    );
+    // Member 1 was verified (its proof held) and committed before the pull.
+    assert_eq!(state(&j, 1), OpState::Committed);
+    assert!(w.borrow().proofs.is_empty(), "{:?}", w.borrow().proofs);
+}
+
+#[test]
+fn a_finish_whose_target_is_gone_is_lost_from_every_state() {
+    for state in [
+        OpState::Pending,
+        OpState::Verifying,
+        OpState::Committed,
+        OpState::SourceRemoved,
+    ] {
+        assert_eq!(
+            cell(Kind::Finish, state, true, false, false),
+            Some(&Cell::Fail(FailReason::Lost)),
+            "{state}"
+        );
+    }
+    // An `xmove` in the same row starts again: S is there and nothing else.
+    assert_eq!(
+        cell(Kind::XMove, OpState::Verifying, true, false, false),
+        Some(&Cell::Restart)
+    );
+}
+
+#[test]
+fn the_launch_check_reports_a_lost_target() {
+    let o = ops(&[
+        (1, Kind::Rename, Root::Rejected),
+        (2, Kind::XMove, Root::Dest),
+        (3, Kind::Finish, Root::Dest),
+    ]);
+    let done = Progress {
+        state: Some(OpState::Done),
+        ..Progress::default()
+    };
+    let at = |size, mtime| {
+        Some(FileSeen {
+            file: true,
+            size,
+            mtime_ns: Some(mtime),
+        })
+    };
+    let seen = |s: Option<FileSeen>, t: Option<FileSeen>| Seen {
+        rule: TimeRule::Exact,
+        source: s,
+        target: t,
+        partials: vec![],
+    };
+    for op in &o[1..] {
+        let planned = at(op.expected_size, MTIME);
+        assert_eq!(
+            reverted(op, &done, &seen(planned, None)),
+            Some(Reverted::Lost)
+        );
+        assert_eq!(reverted(op, &done, &seen(None, None)), Some(Reverted::Lost));
+        assert_eq!(reverted(op, &done, &seen(None, planned)), None);
+    }
+    // A rename's source back, but changed: not offered as a redo.
+    let r = &o[0];
+    assert_eq!(
+        reverted(r, &done, &seen(at(r.expected_size + 1, MTIME), None)),
+        Some(Reverted::Lost)
+    );
+    assert_eq!(
+        reverted(r, &done, &seen(at(r.expected_size, MTIME), None)),
+        Some(Reverted::Rename)
+    );
 }
