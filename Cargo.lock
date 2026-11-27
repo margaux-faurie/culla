@@ -521,6 +521,7 @@ version = "0.0.0"
 dependencies = [
  "culla-core",
  "kamadak-exif",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
