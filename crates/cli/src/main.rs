@@ -1,6 +1,6 @@
 //! `culla`: headless Culla (ADR 0020). Wiring only: every read goes through
 //! `culla-adapters`, every rule is in `culla-core`. Nothing is written anywhere but stdout and
-//! stderr; `plan`, `apply` and `resume` come with M2, `preview` later in M1.
+//! stderr; `plan`, `apply` and `resume` come with M2.
 //!
 //! Exit codes (provisional, SPEC §10): 0 done, 1 usage error, 2 the folder is refused, 3 the
 //! folder cannot be read.
@@ -8,6 +8,7 @@
 mod args;
 mod json;
 mod labels;
+mod preview;
 mod scan;
 mod text;
 
@@ -54,6 +55,20 @@ fn run() -> u8 {
                         out(&text::render(&report))
                     }
                 }
+                Err(Failure::Refused(why)) => {
+                    let _ = writeln!(io::stderr(), "culla: {shown}: {why}");
+                    EXIT_REFUSED
+                }
+                Err(Failure::Io(why)) => {
+                    let _ = writeln!(io::stderr(), "culla: {shown}: {why}");
+                    EXIT_IO
+                }
+            }
+        }
+        Command::Preview(a) => {
+            let shown = text::shown(&a.folder.to_string_lossy()).into_owned();
+            match preview::run(&a, &mut Progress::stderr()) {
+                Ok(report) => out(&preview::render(&report)),
                 Err(Failure::Refused(why)) => {
                     let _ = writeln!(io::stderr(), "culla: {shown}: {why}");
                     EXIT_REFUSED

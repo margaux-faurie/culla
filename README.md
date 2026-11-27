@@ -179,6 +179,7 @@ pnpm install                             # install UI dependencies
 pnpm dev:demo                            # run the web demo in a browser
 cargo test --workspace                   # run the Rust tests
 cargo run -p culla-cli -- scan <folder>  # list a folder's photos, read-only
+cargo run -p culla-cli -- preview <folder>  # time each photo's preview, read-only
 pnpm tauri dev                           # run the desktop app (Windows)
 ```
 

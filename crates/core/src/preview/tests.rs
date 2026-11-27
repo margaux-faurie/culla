@@ -778,3 +778,75 @@ fn progressive_frames_have_the_multi_scan_cap() {
     };
     assert!(check_frame(&jpeg_with(0xC2, 8, 8256, 5504), &open).is_ok());
 }
+
+#[test]
+fn working_bytes_is_the_largest_step_plus_slack() {
+    // 24 MP, upright: the resize holds the 1/2 decode (3024x2016), the 2700x1800 buffer and
+    // the separable convolution's intermediate (2700 wide, 2016 high).
+    let p = g14(Z6, Orientation::Normal);
+    assert_eq!(
+        p.working_bytes(),
+        3024 * 2016 * 3 + 2700 * 1800 * 3 + 2700 * 2016 * 3 + DECODER_SLACK_BYTES
+    );
+    // 45 MP turned: the 3/8 decode (3096x2064) and the resized buffer still dominate.
+    let p = g14(Z8, Orientation::Rotate90);
+    assert_eq!(
+        p.working_bytes(),
+        3096 * 2064 * 3 + 2700 * 1800 * 3 + 2700 * 2064 * 3 + DECODER_SLACK_BYTES
+    );
+    // A small JPEG, not resized: the encode step (MCU-padded output buffer) dominates.
+    let p = g14(Size::new(100, 80), Orientation::Normal);
+    assert!(!p.needs_resize());
+    assert_eq!(
+        p.working_bytes(),
+        100 * 80 * 3 + 112 * 80 * 3 + 2048 + DECODER_SLACK_BYTES
+    );
+    // Turned and not resized: the encode (the turned buffer and its padded output buffer)
+    // outweighs the turn (two buffers).
+    let p = g14(Size::new(100, 80), Orientation::Rotate270);
+    assert_eq!(
+        p.working_bytes(),
+        100 * 80 * 3 + 80 * 112 * 3 + 2048 + DECODER_SLACK_BYTES
+    );
+}
+
+#[test]
+fn working_bytes_stays_bounded_for_every_size_under_the_cap() {
+    // Whatever the aspect ratio, the scale is the smallest covering M/8, so the decode is less
+    // than twice the preview on each side: one call stays under about 100 MB on the G14.
+    let bound = 100 * 1024 * 1024;
+    for w in (500..=40_000).step_by(1_499) {
+        for h in (500..=40_000).step_by(1_733) {
+            let s = Size::new(w, h);
+            if s.pixels() > Limits::DEFAULT.max_pixels {
+                continue;
+            }
+            for o in [Orientation::Normal, Orientation::Rotate90] {
+                let p = g14(s, o);
+                assert!(
+                    p.working_bytes() < bound,
+                    "{s:?} {o:?}: {}",
+                    p.working_bytes()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn coefficients_count_only_for_a_multi_scan_frame() {
+    let frame = |multi_scan, components| JpegFrame {
+        length: 0,
+        width: 6000,
+        height: 4000,
+        progressive: multi_scan,
+        multi_scan,
+        components,
+    };
+    assert_eq!(coefficient_bytes(&frame(false, 3)), 0);
+    assert_eq!(coefficient_bytes(&frame(true, 3)), 6016 * 4000 * 3 * 2);
+    assert_eq!(coefficient_bytes(&frame(true, 1)), 6016 * 4000 * 2);
+    // At the 25 MP multi-scan cap, three components: about 150 MB.
+    let at_cap = coefficient_bytes(&frame(true, 3));
+    assert!(at_cap < 150_000_000);
+}

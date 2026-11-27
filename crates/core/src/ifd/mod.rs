@@ -391,6 +391,10 @@ pub struct JpegFrame {
     /// (`has_multiple_scans` in jdinput.c), so the preview check gives it a lower pixel cap
     /// (threat model T5).
     pub multi_scan: bool,
+    /// Components in the frame (Nf in the SOFn header, 1 to 255 as parsed; libjpeg-turbo
+    /// takes at most 10). Sizes a multi-scan decode's coefficient buffer
+    /// (`preview::coefficient_bytes`).
+    pub components: u8,
 }
 
 /// Checks a whole JPEG in memory with the same rules as an embedded candidate: at most
@@ -413,6 +417,7 @@ pub fn check_jpeg(jpeg: &[u8], limits: &Limits) -> Result<JpegFrame, Reject> {
             height: f.height,
             progressive: f.marker == 0xC2,
             multi_scan: f.marker == 0xC2 || f.scan_components < f.components,
+            components: f.components,
         }),
         Ok(Err(reject)) => Err(reject),
         Err(_) => Err(Reject::OutOfBounds),
