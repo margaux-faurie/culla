@@ -35,6 +35,8 @@ flowchart LR
 
 ## Promises
 
+These are design rules. Lints enforce them now; tests enforce more of them as the engine lands (see [Safety and quality](#safety-and-quality)).
+
 - **Nothing moves before you confirm.** Swiping only records decisions. Files are touched only after you press Apply and confirm the counts.
 - **Nothing is ever overwritten.** If a target name is taken, the whole group gets a suffix (`_1`, `_2`). A rename that would replace a file fails instead.
 - **Nothing is deleted.** Rejects are moved to `_rejected`, not removed. The only file Culla ever removes is the original of a move to another drive, and only after the copy and the original have both been read back from disk and their hashes match. (It also cleans up its own unfinished `*.culla-partial` files.)
@@ -119,7 +121,7 @@ stateDiagram-v2
   done --> [*]
 ```
 
-Hash 1 is taken while copying, hash 2 by reading the copy back from disk and hash 3 by reading the original again, both bypassing the Windows cache, so a flaky card reader cannot fool the check. Because the journal is never ahead of the disk, Culla can roll an interrupted apply forward the next time it opens. There is no rollback: a file is always in exactly one known place. The full state machine, including same-drive renames, is in the [file engine design](docs/design/file-engine.md).
+Hash 1 is taken while copying, hash 2 by reading the copy back from disk and hash 3 by reading the original again, both bypassing the Windows cache, so a flaky card reader cannot fool the check. Because the journal is never ahead of the disk, Culla can roll an interrupted apply forward the next time it opens. There is no rollback: every photo always has at least one complete, verified copy, and the journal says where it is. The full state machine, including same-drive renames, is in the [file engine design](docs/design/file-engine.md).
 
 | Folder | What lives there |
 |---|---|
@@ -139,10 +141,10 @@ Hash 1 is taken while copying, hash 2 by reading the copy back from disk and has
 
 In place now:
 
-- **Lints that make unsafe file calls fail the build.** Clippy bans `std::fs::remove_*`, `std::fs::rename`, `std::fs::copy` and `std::fs::write` in the core, adapters, CLI and app crates; removal is allowed only in the audited `winfs` module, and a CI script checks every lint exception.
-- **CI on every pull request,** on Linux and Windows: rustfmt, clippy with warnings as errors, `cargo deny`, Rust tests, Biome, TypeScript, Vitest and Playwright with axe. CodeQL and OpenSSF Scorecard run as well, and actions are pinned.
-- **Independent review.** Every pull request is read by separate read-only reviewer agents (spec, file safety and security) before it is merged. Changes to protected paths, such as CI and lint configuration, are blocked for agents and reserved for the author.
-- **A bounded NEF parser.** The NEF preview reader checks every offset, caps every count, size and pixel total, detects loops, and has a fuzz target; it never panics on a broken file.
+- **Lints that make unsafe file calls fail the build.** Clippy bans `std::fs::remove_*`, `std::fs::rename`, `std::fs::copy` and `std::fs::write` in the core, adapters, CLI and app crates; in product code, removal is allowed only in the audited `winfs` module (benchmarks and tests may clean up their own temp folders), and a CI script checks every lint exception.
+- **CI on every pull request:** on Linux, rustfmt, clippy with warnings as errors, `cargo deny`, Rust tests, Biome, TypeScript, Vitest and Playwright with axe; on Windows, clippy, Rust tests and the app build. CodeQL runs on pull requests and weekly, OpenSSF Scorecard weekly and on main, and actions are pinned by SHA.
+- **Independent review.** Every pull request is read by separate read-only reviewer agents (spec, file safety and security) before it is merged. Changes to protected paths, such as CI and lint configuration, are blocked for agents and need the author's go-ahead.
+- **A bounded NEF parser.** The NEF preview reader checks every offset, caps every count, size and pixel total, detects loops and reports broken structures instead of crashing; its fuzz target exists, and nightly fuzz runs are still to come.
 - **Decisions on record** as [architecture decision records](docs/adr/README.md).
 
 Planned, as the engine is built:
@@ -169,7 +171,7 @@ What could go wrong and how each risk is handled is in the [threat model](docs/t
 
 ## Building from source
 
-Requirements: Windows 11 with WebView2 for the desktop app, the Rust toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (rustup installs it), Node.js 22.12 or later and pnpm. The web demo and the Rust tests also run on Linux and macOS.
+Requirements: Windows 11 with WebView2 for the desktop app, the Rust toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (rustup installs it), Node.js 22.12 or later and pnpm. The web demo and the Rust tests also run on Linux (untested on macOS); there, install `libwebkit2gtk-4.1-dev` or run the tests with `--exclude culla-app`.
 
 ```sh
 pnpm install            # install UI dependencies

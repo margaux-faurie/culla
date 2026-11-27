@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted; licence superseded by 0026
 date: 2026-11-24
 ---
 

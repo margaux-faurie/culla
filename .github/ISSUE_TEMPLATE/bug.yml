@@ -30,4 +30,5 @@ body:
     id: logs
     attributes:
       label: Logs or error text
+      description: Remove your user name and folder names from paths before pasting.
       render: text

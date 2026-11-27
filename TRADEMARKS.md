@@ -15,6 +15,6 @@ Culla's code is licensed under the [GNU GPL v3.0 only](LICENSE). The licence cov
 - Using the name or logo in a way that suggests Margaux Faurie made, endorses or supports your version.
 - Using the name or logo for a product, service or domain name.
 
-To ask, open an issue or write through the contact on [margauxfaurie.com](https://margauxfaurie.com).
+To ask, open an issue in this repository.
 
 The name is not a registered trademark yet. This page states how the author asks it to be used.
