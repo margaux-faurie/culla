@@ -1,6 +1,9 @@
 /**
  * Sample photos for the web demo. The author's photos (about 25 at 1600 px, SPEC §5.5) are not
- * chosen yet (SPEC §10), so the demo draws simple scenes as inline SVG: no network, no file.
+ * chosen yet (SPEC §10), so the demo shows simple drawn scenes. They are SVG files in
+ * `demo-scenes/`, bundled by Vite under /assets/, because the demo's CSP allows images from its
+ * own origin only (`img-src 'self'`, public-demo/_headers): a `data:` URL would be blocked.
+ * `sceneSvg` is their one source; `demo-photos.test.ts` fails if a file drifts from it.
  */
 import { type DemoGroup, kindOf, type Sidecar } from "./demo-routes";
 import type { PhotoSummary } from "./types";
@@ -72,7 +75,12 @@ const SCENES: readonly Scene[] = [
   },
 ];
 
-const svg = (scene: Scene, n: number): string => {
+/** How many scene files there are: one per photo of the largest demo source (`source2026`). */
+export const SCENE_COUNT = 24;
+
+/** The markup of scene file `n` (0-based): `demo-scenes/scene-01.svg` is `sceneSvg(0)`. */
+export const sceneSvg = (n: number): string => {
+  const scene = SCENES[n % SCENES.length] ?? (SCENES[0] as Scene);
   const [w, h] = scene.portrait ? [1067, 1600] : [1600, 1067];
   const sunX = 200 + ((n * 173) % (w - 400));
   const horizon = Math.round(h * (0.55 + ((n * 37) % 20) / 100));
@@ -80,12 +88,32 @@ const svg = (scene: Scene, n: number): string => {
   const sunR = Math.round(w / 12);
   const markup = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`,
+    // The alt text is plain words (no markup characters), so it goes in as is.
+    `<title>${scene.alt}</title>`,
     `<rect width="${w}" height="${h}" fill="${scene.sky}"/>`,
     `<circle cx="${sunX}" cy="${sunY}" r="${sunR}" fill="${scene.sun}"/>`,
     `<rect y="${horizon}" width="${w}" height="${h - horizon}" fill="${scene.ground}"/>`,
     "</svg>",
   ].join("");
-  return `data:image/svg+xml,${encodeURIComponent(markup)}`;
+  return `${markup}\n`;
+};
+
+/** The scene file name for photo `n` (0-based). */
+export const sceneFileName = (n: number): string =>
+  `scene-${String((n % SCENE_COUNT) + 1).padStart(2, "0")}.svg`;
+
+// Vite emits each file under /assets/ with a hashed name and gives its URL.
+const SCENE_URLS: Readonly<Record<string, string>> = import.meta.glob<string>(
+  "./demo-scenes/*.svg",
+  { eager: true, query: "?url", import: "default" },
+);
+
+const sceneUrl = (n: number): string => {
+  const url = SCENE_URLS[`./demo-scenes/${sceneFileName(n)}`];
+  if (url === undefined) {
+    throw new Error(`missing demo scene ${sceneFileName(n)}`);
+  }
+  return url;
 };
 
 export interface DemoPhotoSpec {
@@ -122,7 +150,7 @@ export function demoPhoto(id: string, spec: DemoPhotoSpec, n: number): PhotoSumm
     name: group.name,
     kind: kindOf(group),
     cameraProtected: group.readOnly.length > 0,
-    previewUrl: svg(scene, n),
+    previewUrl: sceneUrl(n),
     alt: spec.lone === true ? `${scene.alt}, from the NEF's embedded preview` : scene.alt,
   };
 }

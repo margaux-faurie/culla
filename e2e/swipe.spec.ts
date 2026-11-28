@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { blockingViolations, keydown, startSorting, tally } from "./helpers";
+import { blockingViolations, demoCsp, keydown, startSorting, tally, withDemoCsp } from "./helpers";
 
 test.describe("swipe screen (US-22 to US-32, US-42)", () => {
   test("keeps with → and rejects with ←, then shows the next photo", async ({ page }) => {
@@ -23,6 +23,39 @@ test.describe("swipe screen (US-22 to US-32, US-42)", () => {
     const keepRoute = page.getByText("moved to D:\\Photos\\Selects 2026", { exact: true });
     await expect(keepRoute).toBeVisible();
     await expect(page.getByText("No files have moved yet")).toBeVisible();
+  });
+
+  test("the photo loads under the deployed demo's CSP (img-src 'self')", async ({ page }) => {
+    const blocked: string[] = [];
+    page.on("console", (message) => {
+      if (/Content Security Policy/i.test(message.text())) {
+        blocked.push(message.text());
+      }
+    });
+    // Positive control: the page itself must have been served with the demo's CSP.
+    const policies: string[] = [];
+    page.on("response", (response) => {
+      if (response.request().resourceType() === "document") {
+        policies.push(response.headers()["content-security-policy"] ?? "");
+      }
+    });
+    await withDemoCsp(page);
+    await startSorting(page);
+    expect(policies.length).toBeGreaterThan(0);
+    for (const policy of policies) {
+      expect(policy).toBe(demoCsp());
+    }
+    const photo = page.locator(".card-current img");
+    await expect(photo).toHaveAttribute("src", /^\/assets\/scene-\d{2}-[^/]+\.svg$/);
+    // A string, so the e2e tsconfig needs no DOM types.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          `(() => { const img = document.querySelector(".card-current img"); return img !== null && img.complete ? img.naturalWidth : 0; })()`,
+        ),
+      )
+      .toBeGreaterThan(0);
+    expect(blocked).toEqual([]);
   });
 
   test("before move or copy is chosen, Keep says so; with no destination, where comes later", async ({

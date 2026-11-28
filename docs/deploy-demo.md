@@ -10,7 +10,7 @@ Margaux decided (27 Nov 2026): the Worker `culla` deployed by Workers Builds, th
 |---|---|
 | `wrangler.jsonc` | The Worker: name `culla`, assets only (no script, no bindings), `dist-demo/` as the asset directory, unknown paths answer 404, `workers_dev` and `preview_urls` off. `wrangler deploy` applies these on every deploy. |
 | `public-demo/_headers` | Response headers: CSP, `nosniff`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, COOP, CORP, HSTS (no preload), and a one-year immutable cache for the hashed files under `/assets/`. Vite copies it into `dist-demo/` in demo mode only (`vite.config.ts`). |
-| `tests/demo-site.test.ts` | Fails if a built page (`index.html`, `install.html`) gains an inline script or style, a `style=` or `on…=` attribute, a `data:` URL, or a script or link outside `/assets/`, or if the CSS gains a `data:` URL, an `@import`, or a `url()` other than the two self-hosted font files under `/assets/` (the CSP would block them), if `public-demo/` reaches the desktop build, or if `_headers` loses a header or sets one twice. |
+| `tests/demo-site.test.ts` | Fails if a built page (`index.html`, `install.html`) gains an inline script or style, a `style=` or `on…=` attribute, a `data:` URL, or a script or link outside `/assets/`; if any built HTML, CSS or JS holds a `data:` URL (the placeholder photos are SVG files under `/assets/`); if the CSS gains an `@import` or a `url()` other than the two self-hosted font files under `/assets/` (the CSP would block them); if `public-demo/` reaches the desktop build; or if `_headers` loses a header or sets one twice. |
 
 Wrangler is not a dependency of the repository: Workers Builds runs it with `npx`.
 
@@ -56,7 +56,7 @@ Workers Builds deploys the demo on every push to `main`, so a merged PR is live 
 2. Signed in through Access, `curl -sI https://culla.margauxfaurie.com/` (with the `CF_Authorization` cookie) shows the headers from `_headers`, and a file under `/assets/` shows `Cache-Control: public, max-age=31536000, immutable`.
 3. `curl -sI https://culla.margauxfaurie.com/assets/nope.js`, through Access (a browser session or a service token), answers 404 without `Cache-Control: ... immutable`. If a 404 carries the immutable header, a missing asset would be cached for a year: drop `immutable` from `/assets/*` in `_headers` and shorten its `max-age`.
 4. Without a session, the same requests are redirected to the Access sign-in page.
-5. The browser console on the demo and on `/install` shows no CSP violation from the demo's own files. This manual check is the only test of the CSP itself: `pnpm e2e` runs on `vite preview`, which ignores `_headers`, so the e2e tests run without the CSP or the other headers; `tests/demo-site.test.ts` only checks that the build stays inside the CSP and that `_headers` is well formed.
+5. The browser console on the demo and on `/install` shows no CSP violation from the demo's own files. `pnpm e2e` runs on `vite preview`, which ignores `_headers`: one e2e test (the swipe photo, `e2e/swipe.spec.ts`) injects the CSP read from `_headers` and checks the photo loads with no violation, but every other screen and the other headers run without them, so this manual check stays; `tests/demo-site.test.ts` only checks that the build stays inside the CSP and that `_headers` is well formed.
 
 ## Known limits
 
