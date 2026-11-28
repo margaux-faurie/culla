@@ -20,8 +20,8 @@
 //            AAC stereo, video copied. With --master, only that, on an existing master.
 //
 // Nothing here or in its output may be committed when it holds Margaux's photos, the wall's
-// thumbnails or the music
-// (docs/videos.md): keep --capture and --out outside the repository.
+// thumbnails or the music (docs/videos.md): --out (also with --master), --capture, --wall and --audio
+// must be outside the repository, or it stops (outside.mjs); --name is a plain file name.
 //
 // Every picture is drawn by Chromium at 1920×1080 and sent to ffmpeg as JPEG (quality 92); one
 // H.264 file per scene (30 fps, -preset veryfast, CRF 18, no audio), written to a .tmp.mp4 name
@@ -32,6 +32,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "@playwright/test";
+import { assertOutside, assertPlainName } from "./outside.mjs";
 
 const args = process.argv.slice(2);
 const arg = (name) => {
@@ -54,7 +55,7 @@ const FPS = 30;
 const W = 1920;
 const H = 1080;
 const BEAT = 60 / BPM;
-const NAME = arg("name") ?? "culla-demo-30s";
+const NAME = assertPlainName(arg("name") ?? "culla-demo-30s", "--name");
 
 /** Seconds from the start of the video to beat `b` (beat 0 is the first downbeat). */
 const T = (b) => OFFSET + b * BEAT;
@@ -534,6 +535,19 @@ async function main() {
     rmSync(work, { recursive: true, force: true });
   }
   console.log(`wrote ${join(OUT, `${NAME}.mp4`)}`);
+}
+
+// Nothing made from her photos, the wall or the music is written inside the repository, and
+// nothing filmed from them is read from there (outside.mjs).
+for (const [value, what] of [
+  [OUT, "--out"],
+  [CAPTURE, "--capture"],
+  [WALL, "--wall"],
+  [AUDIO, "--audio"],
+]) {
+  if (value !== null) {
+    assertOutside(value, what);
+  }
 }
 
 if (MASTER !== null) {

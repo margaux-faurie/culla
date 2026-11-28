@@ -28,9 +28,17 @@ import { readdirSync, readFileSync, mkdirSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
+import { assertOutside } from "./outside.mjs";
 
-const OUT = process.env.CULLA_VIDEO_CAPTURE ?? join(tmpdir(), "culla-video-capture");
-const PHOTOS = process.env.CULLA_VIDEO_PHOTOS ?? null;
+// Checked before anything is written or removed: the capture folder is emptied shot by shot.
+const OUT = assertOutside(
+  process.env.CULLA_VIDEO_CAPTURE ?? join(tmpdir(), "culla-video-capture"),
+  "CULLA_VIDEO_CAPTURE",
+);
+const PHOTOS =
+  process.env.CULLA_VIDEO_PHOTOS === undefined
+    ? null
+    : assertOutside(process.env.CULLA_VIDEO_PHOTOS, "CULLA_VIDEO_PHOTOS");
 const BPM = Number(process.env.CULLA_VIDEO_BPM ?? "120");
 const BEAT = 60 / BPM;
 const VIEW = { width: 1920, height: 1080 } as const;
@@ -49,6 +57,12 @@ function photoFiles(): string[] {
   }
   const all = readdirSync(PHOTOS).filter((f) => /\.jpe?g$/i.test(f)).sort();
   const order = (process.env.CULLA_VIDEO_PHOTO_ORDER ?? "").split(",").filter((f) => f !== "");
+  // Only names from the folder's own listing: no path, no "..", nothing from elsewhere.
+  for (const name of order) {
+    if (!all.includes(name)) {
+      throw new Error(`CULLA_VIDEO_PHOTO_ORDER names ${JSON.stringify(name)}, not a .jpg in ${PHOTOS}`);
+    }
+  }
   return [...order, ...all.filter((f) => !order.includes(f))];
 }
 

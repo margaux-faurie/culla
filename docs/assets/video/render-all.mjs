@@ -3,26 +3,31 @@
 //
 //   node docs/assets/video/render-all.mjs --photos <dir> --wall <dir> --out <dir> [--fonts <dir>]
 //        [--order <file,file,...>] [--bpm 120] [--offset 0] [--name culla-demo-30s]
-//        [--audio <file>] [--wall-keep-out <files>] [--wall-centre <files>] [--check] [--build]
+//        [--audio <file>] [--wall-keep-out <files>] [--wall-centre <files>] [--check] [--no-build]
 //
 // --photos  the JPEGs shown in the app (CULLA_VIDEO_PHOTOS); --order their session order
 // --wall    the thumbnails of the opening wall
 // --fonts   Bricolage Grotesque (.ttf, .woff or .woff2); by default the app's own
-// --out     where the video goes; the frames are filmed into <out>/capture. Keep it outside the
-//           repository: everything there is made from Margaux's photos.
-// --build   runs `pnpm build:demo` first (the capture serves dist-demo/ with `pnpm preview:demo`,
-//           or reuses a server already on port 4173)
-// Last, `hash.mjs --write` records the screens it filmed (docs/videos.md, "Keeping the video
-// current"): commit screens.json and pending.md with the published video. Not with --check.
+// --out     where the video goes; the frames are filmed into <out>/capture. --photos, --wall and
+//           --out must be outside the repository (symlinks resolved; another drive is fine), or it
+//           stops: everything there is Margaux's or made from her photos (outside.mjs).
+// It first builds the demo (`pnpm build:demo`; --no-build skips it), and the capture serves that
+// build itself (`pnpm preview:demo`, never a server already running).
+// Last, `hash.mjs --write` certifies that the screens of the working tree that was just built
+// and filmed are in the video (docs/videos.md, "Keeping the video current"): render from a clean
+// tree at the commit you publish, publish the files, then commit them with screens.json and
+// pending.md. It is skipped with --check, with --no-build (the build may be older than the tree)
+// and with CULLA_VIDEO_BASE_URL (another server was filmed); run it by hand once you are sure.
 // Everything else is passed on to compose.mjs. The Playwright command is `pnpm exec playwright`
 // unless CULLA_VIDEO_PLAYWRIGHT names another (for example `node node_modules/playwright/cli.js`).
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertOutside, assertPlainName, REPO } from "./outside.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repo = resolve(here, "../../..");
+const repo = REPO;
 const args = process.argv.slice(2);
 const arg = (name) => {
   const i = args.indexOf(`--${name}`);
@@ -32,17 +37,27 @@ const need = (name) => {
   const value = arg(name);
   if (value === undefined) {
     console.error(
-      "usage: node docs/assets/video/render-all.mjs --photos <dir> --wall <dir> --out <dir> [--fonts <dir>] [--order <files>] [--bpm 120] [--offset 0] [--audio <file>] [--check] [--build]",
+      "usage: node docs/assets/video/render-all.mjs --photos <dir> --wall <dir> --out <dir> [--fonts <dir>] [--order <files>] [--bpm 120] [--offset 0] [--audio <file>] [--check] [--no-build]",
     );
     process.exit(2);
   }
   return resolve(value);
 };
-const photos = need("photos");
-const wall = need("wall");
-const out = need("out");
-if (!relative(repo, out).startsWith("..")) {
-  console.error(`--out must be outside the repository (${repo}): it holds frames of real photos`);
+let photos;
+let wall;
+let out;
+try {
+  photos = assertOutside(need("photos"), "--photos");
+  wall = assertOutside(need("wall"), "--wall");
+  out = assertOutside(need("out"), "--out");
+  if (arg("name") !== undefined) {
+    assertPlainName(arg("name"), "--name");
+  }
+  if (arg("audio") !== undefined) {
+    assertOutside(arg("audio"), "--audio");
+  }
+} catch (error) {
+  console.error(error.message);
   process.exit(2);
 }
 const capture = join(out, "capture");
@@ -58,7 +73,8 @@ function run(command, argv, env = {}) {
   });
 }
 
-if (args.includes("--build")) {
+const built = !args.includes("--no-build");
+if (built) {
   await run("pnpm", ["build:demo"]);
 }
 const [pw, ...pwArgs] = (process.env.CULLA_VIDEO_PLAYWRIGHT ?? "pnpm exec playwright").split(" ");
@@ -85,6 +101,12 @@ await run(process.execPath, [
   ...["--capture", capture, "--wall", wall, "--out", out, "--bpm", bpm],
   ...passOn,
 ]);
-if (!args.includes("--check")) {
+if (args.includes("--check")) {
+  // Check frames only: nothing to certify.
+} else if (!built || process.env.CULLA_VIDEO_BASE_URL !== undefined) {
+  console.log(
+    "Not recorded in screens.json: the demo filmed was not built from this tree here. Once sure it was, run node docs/assets/video/hash.mjs --write",
+  );
+} else {
   await run(process.execPath, [join(here, "hash.mjs"), "--write"]);
 }

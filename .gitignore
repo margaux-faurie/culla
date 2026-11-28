@@ -23,3 +23,8 @@ blob-report/
 .env.*
 # Cloudflare (wrangler local state)
 .wrangler/
+# Demo video tooling output (docs/videos.md): the tools refuse to write inside the repository
+# (docs/assets/video/outside.mjs); this is only a backstop for stray copies.
+culla-demo-30s*
+*.music.mp4
+culla-video-capture/

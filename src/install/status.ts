@@ -56,7 +56,7 @@ export const STATUS: InstallStatus = {
     transcript: [
       "600 photos. One evening.",
       "Sorting them? Painful.",
-      "Keep. Reject. Keep.",
+      "Keep. Reject. Keep. Keep.",
       "The RAW follows.",
       "Nothing moves until you say so.",
       "Web demo: the apply is simulated.",
