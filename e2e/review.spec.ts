@@ -243,6 +243,28 @@ test.describe("confirm dialog (US-35)", () => {
     await expect(heading(page)).toBeVisible();
   });
 
+  test("a close event that arrives after the dialog opened again leaves it open", async ({
+    page,
+  }) => {
+    await startWith(page, null);
+    await decideAndReview(page, 1);
+    await applyButton(page).click();
+    const dialog = page.getByRole("dialog", { name: "Move 1 photo?" });
+    await expect(dialog).toBeVisible();
+    // Go back, then Apply before the browser dispatches the `close` event of the first close,
+    // which it queues as a task: a fast Esc then Enter does the same.
+    await page.evaluate(`(async () => {
+      document.querySelector("dialog.confirm .button-outline").click();
+      await new Promise((resolve) => queueMicrotask(resolve));
+      document.querySelector(".apply-box .button-primary").click();
+    })()`);
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Go back" })).toBeFocused();
+    // Still open once every queued task has run.
+    await page.evaluate("new Promise((resolve) => setTimeout(resolve, 50))");
+    await expect(dialog).toBeVisible();
+  });
+
   test("a dialog the browser closed on its own opens again from Apply", async ({ page }) => {
     await startWith(page, null);
     await decideAndReview(page, 1);
