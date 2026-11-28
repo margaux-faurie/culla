@@ -5,7 +5,7 @@
  * so Z and Ctrl+Z stay on the Z key on AZERTY and QWERTZ. Arrows, Enter and Esc match by position
  * (`KeyboardEvent.code`), as does Space; `?` matches by character. Z toggles zoom and a held
  * Space zooms until released (US-39); while zoomed the arrows pan and never decide, and Shift with
- * an arrow still browses. The EXIF overlay (I) arrives with US-40 and maps to nothing yet.
+ * an arrow still browses. I shows or hides the photo details, the EXIF overlay (US-40).
  */
 
 export type Command =
@@ -28,7 +28,9 @@ export type Command =
   | "panLeft"
   | "panRight"
   | "panUp"
-  | "panDown";
+  | "panDown"
+  /** I: show or hide the photo details (EXIF overlay, US-40). */
+  | "exif";
 
 /** The fields of a `KeyboardEvent` the map reads. */
 export interface KeyInput {
@@ -48,7 +50,7 @@ export interface KeyInput {
 const CHANGES_LOG: ReadonlySet<Command> = new Set(["keep", "reject", "clear", "undo", "redo"]);
 
 /** Toggles: a held key acts once (a held Z does not zoom in and out, proposed in US-39). */
-const ONCE: ReadonlySet<Command> = new Set(["review", "zoom", "zoomHold"]);
+const ONCE: ReadonlySet<Command> = new Set(["review", "zoom", "zoomHold", "exif"]);
 
 /** `zoomed`: the photo is at 100 %, so the arrows pan instead of deciding. */
 export function commandFor(input: KeyInput, zoomed = false): Command | null {
@@ -102,6 +104,8 @@ function match(input: KeyInput, zoomed: boolean): Command | null {
       return "filter";
     case "z":
       return input.shiftKey ? null : "zoom";
+    case "i":
+      return "exif";
     default:
       return null;
   }
@@ -124,9 +128,10 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: ["Ctrl", "Shift", "Z"], action: "Redo" },
   { keys: ["F"], action: "Filter: all, undecided, kept, rejected" },
   { keys: ["Z"], action: "Zoom to 100 % at the pointer, or back" },
+  { keys: ["I"], action: "Photo details: date, camera, lens, exposure" },
   { keys: ["Space"], action: "Hold to zoom to 100 %" },
   { keys: ["←", "↑", "→", "↓"], action: "While zoomed: move around the photo" },
   { keys: ["Enter"], action: "Open the review" },
   { keys: ["?"], action: "Show this list" },
-  { keys: ["Esc"], action: "Close this list, or leave zoom" },
+  { keys: ["Esc"], action: "Close this list, leave zoom, or hide the photo details" },
 ];

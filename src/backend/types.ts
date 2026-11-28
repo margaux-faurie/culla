@@ -36,6 +36,11 @@ export interface Backend {
    * pulled, damaged file); the preview stays.
    */
   fullImage(photoId: string): Promise<FullImage>;
+  /**
+   * The EXIF overlay's display strings for a photo (US-40), or `pending` until the EXIF pass has
+   * read it; the overlay asks again. Read-only.
+   */
+  photoExif(photoId: string): Promise<PhotoExif>;
   /** Mirrors one decision event, already committed in the UI reducer (autosave, ADR 0005). */
   recordEvent(sessionId: string, event: DecisionEvent): Promise<void>;
   /**
@@ -201,6 +206,35 @@ export interface FullImage {
    */
   readonly embeddedPreview: boolean;
 }
+
+/**
+ * What the EXIF overlay shows (US-40), as display strings the backend writes; null for a field the
+ * file does not record. Text from the card (camera, lens) is cleaned by the core first (control and
+ * format characters dropped). There is no GPS position and no body serial here, by design.
+ */
+export type PhotoExif =
+  | { readonly kind: "pending" }
+  | {
+      readonly kind: "ready";
+      /** `NIKON Z 6_3` */
+      readonly camera: string | null;
+      /** `NIKKOR Z 24-70mm f/4 S`, or `24-200mm f/4-6.3` from `LensSpecification`. */
+      readonly lens: string | null;
+      /** `1/250 s` */
+      readonly shutter: string | null;
+      /** `f/4` */
+      readonly aperture: string | null;
+      /** `ISO 400` */
+      readonly iso: string | null;
+      /** `50 mm` */
+      readonly focalLength: string | null;
+      /** `−0.3 EV` */
+      readonly exposureCompensation: string | null;
+      /** `28 Nov 2026, 14:03:22`, in the camera's local time. */
+      readonly captured: string | null;
+      /** The time is the file's, not the camera's (no DateTimeOriginal or CreateDate, ADR 0028). */
+      readonly capturedFromFile: boolean;
+    };
 
 export interface DestinationSummary {
   /** Opaque destination id. */

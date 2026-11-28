@@ -695,6 +695,47 @@ kbd {
   pointer-events: none;
 }
 
+/* The EXIF overlay (US-40): in the photo area, top right, above zoom; never over the buttons. */
+.exif {
+  position: absolute;
+  top: 0;
+  right: 40px;
+  z-index: 4;
+  width: min(340px, calc(100% - 80px));
+  padding: var(--space-3) var(--space-4);
+  border: var(--line-hair) solid var(--ink);
+  border-radius: var(--radius-card);
+  background: var(--paper);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.exif-title {
+  margin: 0 0 var(--space-2);
+  font-size: 15px;
+}
+
+.exif-list {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  font-size: 14px;
+}
+
+.exif-row {
+  display: grid;
+  grid-template-columns: 6em 1fr;
+  gap: var(--space-2);
+}
+
+.exif-row dt {
+  color: var(--ink-muted);
+}
+
+.exif-row dd {
+  margin: 0;
+}
+
 .card-caption {
   position: absolute;
   left: var(--space-4);

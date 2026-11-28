@@ -4,6 +4,7 @@ import type { SessionInfo, SessionPhoto } from "../backend/types";
 import type { GroupState, Verdict } from "../decisions/events";
 import { CheckIcon, CrossIcon } from "../route/RouteView";
 import { stayVerb } from "../route/staying";
+import { ExifOverlay } from "./ExifOverlay";
 import { HelpDialog } from "./HelpDialog";
 import { type Command, commandFor } from "./keys";
 import { alreadyDecidedToast, decidedNote, keepLine } from "./route-text";
@@ -52,7 +53,10 @@ export function SwipeScreen(props: SwipeScreenProps) {
     zoomRef.current = next;
     setZoomState(next);
   };
-  const [zoomStatus, setZoomStatus] = useState("");
+  // Zoom and the photo details say when they change, in their own live region.
+  const [viewStatus, setViewStatus] = useState("");
+  // The EXIF overlay (US-40): open until I or Esc, from photo to photo (proposed).
+  const [exifOpen, setExifOpen] = useState(false);
   const [zoomNote, setZoomNote] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const byId = useMemo(() => new Map(session.photos.map((p) => [p.id, p])), [session.photos]);
@@ -96,7 +100,7 @@ export function SwipeScreen(props: SwipeScreenProps) {
           size,
           offset,
         });
-        setZoomStatus("Zoomed to 100 %");
+        setViewStatus("Zoomed to 100 %");
       },
       () => {
         const now = zoomRef.current;
@@ -112,7 +116,7 @@ export function SwipeScreen(props: SwipeScreenProps) {
     if (zoomRef.current === null) return;
     const wasShown = zoomRef.current.phase === "shown";
     setZoom(null);
-    if (wasShown) setZoomStatus("Back to the whole photo");
+    if (wasShown) setViewStatus("Back to the whole photo");
   };
 
   const panZoom = (move: (z: Extract<Zoom, { phase: "shown" }>) => Point) => {
@@ -121,6 +125,11 @@ export function SwipeScreen(props: SwipeScreenProps) {
   };
   const panTo = (direction: PanDirection) =>
     panZoom((z) => pan(z.view, z.size, z.offset, direction));
+
+  const toggleExif = () => {
+    setViewStatus(exifOpen ? "Photo details hidden" : "Photo details shown");
+    setExifOpen(!exifOpen);
+  };
 
   const run = (command: Command) => {
     const now = Date.now();
@@ -158,11 +167,19 @@ export function SwipeScreen(props: SwipeScreenProps) {
         onReview();
         return;
       case "escape":
+        // Zoom first, then the photo details, then the toast.
         if (zoomRef.current !== null) {
           endZoom();
           return;
         }
+        if (exifOpen) {
+          toggleExif();
+          return;
+        }
         dispatch({ type: "dismissFeedback" });
+        return;
+      case "exif":
+        toggleExif();
         return;
       case "zoom":
         if (zoomRef.current === null) startZoom(false);
@@ -417,6 +434,7 @@ export function SwipeScreen(props: SwipeScreenProps) {
               onDrag={(dx, dy) => panZoom((z) => panBy(z.view, z.size, z.offset, dx, dy))}
             />
           )}
+          {exifOpen && photo !== undefined && <ExifOverlay key={photo.id} photo={photo} />}
         </div>
 
         {photo !== undefined && <Actions photo={photo} decision={decision} onCommand={run} />}
@@ -438,6 +456,9 @@ export function SwipeScreen(props: SwipeScreenProps) {
             <kbd>Z</kbd> zoom
           </span>
           <span>
+            <kbd>I</kbd> details
+          </span>
+          <span>
             <kbd>?</kbd> all keys
           </span>
         </p>
@@ -448,7 +469,7 @@ export function SwipeScreen(props: SwipeScreenProps) {
           {state.announcement}
           {state.nonce % 2 === 1 ? "\u00a0" : ""}
         </output>
-        <output className="visually-hidden">{zoomStatus}</output>
+        <output className="visually-hidden">{viewStatus}</output>
       </main>
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
     </>

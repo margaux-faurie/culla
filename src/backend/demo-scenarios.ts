@@ -5,7 +5,8 @@
  * for the apply (US-36, US-38): a slow reader, a card pulled mid-apply (cleanly, or leaving a lost
  * file), a full destination, a verify mismatch, a file another app holds, and an apply found
  * interrupted at launch, with its card in or out; for the start screen, a folder with no photos; and,
- * for zoom (US-39), a full image that cannot be read or is slow to come.
+ * for zoom (US-39), a full image that cannot be read or is slow to come; for the EXIF overlay
+ * (US-40), an EXIF pass that has not reached a photo yet, or a photo whose EXIF cannot be read.
  *
  * Chosen by a query parameter, `?scenario=<name>`, read by the demo backend only (`demo.ts`): the
  * desktop backend never looks at it, and the demo bundle is the only one with this module (ADR
@@ -36,6 +37,8 @@ export const SCENARIOS = [
   "empty-folder",
   "full-image-unreadable",
   "full-image-slow",
+  "exif-pending",
+  "exif-unreadable",
 ] as const;
 
 export type ScenarioName = (typeof SCENARIOS)[number];
@@ -65,6 +68,10 @@ export interface Scenario {
   readonly fullImageUnreadable?: boolean;
   /** Zoom's full image takes this many milliseconds to come (a slow card). */
   readonly fullImageDelayMs?: number;
+  /** The EXIF pass has not reached a photo the first time the overlay asks about it. */
+  readonly exifPending?: boolean;
+  /** The overlay cannot get a photo's EXIF (the backend's lookup fails). */
+  readonly exifUnreadable?: boolean;
 }
 
 const names = (...list: string[]): ReadonlySet<string> => new Set(list);
@@ -115,6 +122,8 @@ const TABLE: Readonly<Record<ScenarioName, Scenario>> = {
   "empty-folder": { facts: NORMAL_FACTS, emptyFolder: true },
   "full-image-unreadable": { facts: NORMAL_FACTS, fullImageUnreadable: true },
   "full-image-slow": { facts: NORMAL_FACTS, fullImageDelayMs: 1500 },
+  "exif-pending": { facts: NORMAL_FACTS, exifPending: true },
+  "exif-unreadable": { facts: NORMAL_FACTS, exifUnreadable: true },
 };
 
 const NORMAL: Scenario = { facts: NORMAL_FACTS };

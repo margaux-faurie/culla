@@ -5,6 +5,7 @@
  * own origin only (`img-src 'self'`, public-demo/_headers): a `data:` URL would be blocked.
  * `sceneSvg` is their one source; `demo-photos.test.ts` fails if a file drifts from it.
  */
+import type { DemoMeta } from "./demo-exif";
 import { type DemoGroup, kindOf, type Sidecar } from "./demo-routes";
 import type { FullImage, PhotoSummary } from "./types";
 
@@ -215,6 +216,40 @@ export function demoPhoto(id: string, spec: DemoPhotoSpec, n: number): PhotoSumm
     cameraProtected: group.readOnly.length > 0,
     previewUrl: sceneUrl(n),
     alt: spec.lone === true ? `${scene.alt}, from the NEF's embedded preview` : scene.alt,
+  };
+}
+
+const LENSES = [
+  "NIKKOR Z 24-70mm f/4 S",
+  "NIKKOR Z 50mm f/1.8 S",
+  // As the core names a lens with no LensModel, from LensSpecification.
+  "24-200mm f/4-6.3",
+];
+const SHUTTER_DEN = [250, 500, 125, 1000, 60];
+const APERTURE_TENTHS = [40, 28, 56, 80, 18];
+const ISO = [100, 200, 400, 800, 64];
+const FOCAL = [24, 35, 50, 70, 105];
+const COMPENSATION_THIRDS = [0, -1, 2, -3, 0];
+/** 14 Nov 2026, 09:00:00, in the camera's local time. */
+const FIRST_SHOT = Date.UTC(2026, 10, 14, 9, 0, 0);
+
+/**
+ * A photo's metadata as the core's EXIF pass gives it, pre-extracted for the demo (SPEC §5.5). The
+ * JPEG-only MGF_7004 has no lens and no capture time of its own, so it shows "Not recorded" and the
+ * file time (ADR 0028).
+ */
+export function demoMeta(spec: DemoPhotoSpec, n: number): DemoMeta {
+  const at = <T>(list: readonly T[]): T => list[n % list.length] as T;
+  const noExifTime = spec.name === "MGF_7004";
+  return {
+    camera: "NIKON Z 6_3",
+    lens: noExifTime ? null : at(LENSES),
+    shutter: { num: 1, den: at(SHUTTER_DEN) },
+    aperture: { num: at(APERTURE_TENTHS), den: 10 },
+    iso: at(ISO),
+    focalLength: { num: at(FOCAL), den: 1 },
+    exposureCompensation: { num: at(COMPENSATION_THIRDS), den: 3 },
+    captured: { localMs: FIRST_SHOT + n * 37_000, fromFile: noExifTime },
   };
 }
 
