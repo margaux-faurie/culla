@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::decisions::Verdict;
-use crate::journal::{Detail, End, Entry, Kind, OpId};
+use crate::journal::{Detail, End, Entry, JournalError, Kind, OpId, RunError, StoreError};
 
 fn op(id: OpId, group: i64, kind: Kind, root: Root, src: &[&str], dst: &[&str]) -> Op {
     Op {
@@ -456,6 +456,10 @@ fn every_run_end_is_named() {
             RunEnd::Stopped,
             "end          stopped: the journal could not be written; resumes on the next launch\n",
         ),
+        (
+            RunEnd::InternalError,
+            "end          stopped by an internal error in Culla; report it with this log\n",
+        ),
     ] {
         assert!(render(&header(), &j, &footer(end)).contains(want), "{want}");
     }
@@ -464,6 +468,11 @@ fn every_run_end_is_named() {
     assert_eq!(
         RunEnd::from(End::Paused(PauseReason::VolumeLost)),
         RunEnd::Paused(PauseReason::VolumeLost)
+    );
+    assert_eq!(RunEnd::from(&RunError::Store(StoreError)), RunEnd::Stopped);
+    assert_eq!(
+        RunEnd::from(&RunError::Journal(JournalError::UnknownOp(1))),
+        RunEnd::InternalError
     );
 }
 
@@ -545,6 +554,49 @@ fn untrusted_names_cannot_add_lines_hide_text_or_close_quotes() {
     assert!(log.contains("source       E:\\\\u{202e}MICD\n"));
     assert!(log.contains("destination  D:\\Ph\\u{200d}otos\\u{a}source       F:\\\n"));
     assert!(log.contains("ended        10:00\\u{2029}\n"));
+
+    // `\u{` only ever starts an escape: a `{` in a name is escaped, so a name that spells an
+    // escape cannot render like a separator plus an escaped character, or like a `\` inside a
+    // name.
+    let pairs: [(&[&str], &[&str]); 2] = [
+        (&["dir", "u{a}x"], &["dir\nx"]),
+        (&["a", "u{5c}b"], &["a\\b"]),
+    ];
+    for (left, right) in pairs {
+        let render_one = |src: &[&str]| {
+            let mut j = journal(vec![op(1, 1, Kind::Rename, Root::Rejected, src, &["x"])]);
+            walk(&mut j, 1, &rename_done());
+            render(&header(), &j, &footer(RunEnd::Finished))
+        };
+        let (a, b) = (render_one(left), render_one(right));
+        assert_ne!(a, b, "{left:?} and {right:?} render alike");
+    }
+    let mut k = journal(vec![
+        op(
+            1,
+            1,
+            Kind::Rename,
+            Root::Rejected,
+            &["dir", "u{a}x"],
+            &["x"],
+        ),
+        op(2, 2, Kind::Rename, Root::Rejected, &["dir\nx"], &["y"]),
+        op(3, 3, Kind::Rename, Root::Rejected, &["a", "u{5c}b"], &["z"]),
+        op(4, 4, Kind::Rename, Root::Rejected, &["a\\b"], &["w"]),
+    ]);
+    walk(&mut k, 1, &rename_done());
+    let h = Header {
+        source: "E:\\u{a}x",
+        destination: Some("E:\n"),
+        ..header()
+    };
+    let log = render(&h, &k, &footer(RunEnd::Finished));
+    assert!(log.contains("source \"dir\\u\\u{7b}a}x\""), "{log}");
+    assert!(log.contains("source \"dir\\u{a}x\""), "{log}");
+    assert!(log.contains("source \"a\\u\\u{7b}5c}b\""), "{log}");
+    assert!(log.contains("source \"a\\u{5c}b\""), "{log}");
+    assert!(log.contains("source       E:\\u\\u{7b}a}x\n"), "{log}");
+    assert!(log.contains("destination  E:\\u{a}\n"), "{log}");
 }
 
 #[test]

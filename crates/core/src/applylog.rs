@@ -20,9 +20,11 @@
 //!
 //! Every untrusted string is escaped with the shared set of [`crate::text`] (control, bidi,
 //! zero-width and other invisible characters), so a name cannot add a line, hide text or
-//! reorder a line (T6b). Paths are quoted, and a quote or a `\` inside a name is escaped too, so
-//! a name can neither end its quotes nor pose as a folder. The header's display strings are
-//! escaped but not quoted: each is alone on its line.
+//! reorder a line (T6b). Paths are quoted, and a quote, a `\` or a `{` inside a name is escaped
+//! too, so a name can neither end its quotes nor pose as a folder, and the text stays
+//! unambiguous: `\u{` only ever starts an escape, and any other `\` is a separator. The header's
+//! display strings are escaped but not quoted (each is alone on its line); a `{` in them is
+//! escaped too, for the same reason.
 //!
 //! What it never holds (NFR-PRIV-06, SPEC "Sample photos"): no EXIF (so no GPS position and no
 //! body serial), no volume serial, no hash of anything but the file contents, no user name
@@ -105,6 +107,9 @@ pub enum RunEnd {
     /// The journal could not be written: the run stopped as after a crash and resumes on the
     /// next launch ([`crate::journal::RunError::Store`]).
     Stopped,
+    /// The journal refused an entry the executor asked for: a bug in Culla, not a disk or a
+    /// card problem ([`crate::journal::RunError::Journal`]).
+    InternalError,
 }
 
 impl From<crate::journal::End> for RunEnd {
@@ -114,6 +119,16 @@ impl From<crate::journal::End> for RunEnd {
             End::Finished => Self::Finished,
             End::Paused(r) => Self::Paused(r),
             End::Cancelled => Self::Cancelled,
+        }
+    }
+}
+
+impl From<&crate::journal::RunError> for RunEnd {
+    fn from(e: &crate::journal::RunError) -> Self {
+        use crate::journal::RunError;
+        match e {
+            RunError::Store(_) => Self::Stopped,
+            RunError::Journal(_) => Self::InternalError,
         }
     }
 }
@@ -132,7 +147,7 @@ pub struct Footer<'a> {
 pub fn render(header: &Header<'_>, journal: &Journal, footer: &Footer<'_>) -> String {
     let mut o = String::new();
     let _ = writeln!(o, "Culla apply log");
-    let _ = writeln!(o, "version      {}", text::shown(header.version));
+    let _ = writeln!(o, "version      {}", display(header.version));
     let _ = writeln!(
         o,
         "plan         {} ({}, {})",
@@ -140,12 +155,12 @@ pub fn render(header: &Header<'_>, journal: &Journal, footer: &Footer<'_>) -> St
         header.purpose.as_str(),
         header.run.as_str()
     );
-    let _ = writeln!(o, "started      {}", text::shown(header.started));
-    let _ = writeln!(o, "source       {}", text::shown(header.source));
+    let _ = writeln!(o, "started      {}", display(header.started));
+    let _ = writeln!(o, "source       {}", display(header.source));
     let _ = writeln!(
         o,
         "destination  {}",
-        header.destination.map_or("none".into(), text::shown)
+        header.destination.map_or("none".into(), display)
     );
     let _ = writeln!(o, "rejected     the _rejected folder in the source");
 
@@ -193,7 +208,7 @@ pub fn render(header: &Header<'_>, journal: &Journal, footer: &Footer<'_>) -> St
         let _ = writeln!(o, "  {:<20}{n_alarms}", "alarms");
     }
     let _ = writeln!(o, "end          {}", end_text(footer.end));
-    let _ = writeln!(o, "ended        {}", text::shown(footer.ended));
+    let _ = writeln!(o, "ended        {}", display(footer.ended));
     o
 }
 
@@ -251,6 +266,9 @@ fn end_text(e: RunEnd) -> String {
         RunEnd::Stopped => {
             "stopped: the journal could not be written; resumes on the next launch".to_owned()
         }
+        RunEnd::InternalError => {
+            "stopped by an internal error in Culla; report it with this log".to_owned()
+        }
     }
 }
 
@@ -263,12 +281,20 @@ fn pause_text(r: PauseReason) -> &'static str {
     }
 }
 
+/// A caller's display string, escaped with the shared set plus `{`: its `\` stay as they are
+/// (they are the path's own separators), so a literal `\u{..}` in a name must not read as an
+/// escape.
+fn display(s: &str) -> std::borrow::Cow<'_, str> {
+    text::escaped(s, |ch| ch == '{')
+}
+
 /// Components joined with `\`, in quotes. Each component is escaped with the shared set plus
-/// the quote and the separator, so it cannot close the quotes or fake a folder.
+/// the quote, the separator and `{`, so it cannot close the quotes or fake a folder, and `\u{`
+/// can only start an escape: any other `\` is a separator.
 fn quoted(components: &[String]) -> String {
     let parts: Vec<String> = components
         .iter()
-        .map(|c| text::escaped(c, |ch| matches!(ch, '"' | '\\')).into_owned())
+        .map(|c| text::escaped(c, |ch| matches!(ch, '"' | '\\' | '{')).into_owned())
         .collect();
     format!("\"{}\"", parts.join("\\"))
 }
