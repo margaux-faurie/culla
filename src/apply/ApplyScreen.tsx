@@ -14,6 +14,7 @@ import { RouteView } from "../route/RouteView";
 import { LogDialog } from "./LogDialog";
 import {
   type Announced,
+  askFailedText,
   bytesLine,
   canContinue,
   doneLine,
@@ -37,6 +38,7 @@ import {
   runningTitle,
   STOP_LABEL,
   stepLines,
+  stopBlockedText,
   summaryParts,
   timeLeft,
 } from "./model";
@@ -172,12 +174,18 @@ export function ApplyScreen(props: ApplyScreenProps) {
     }
   }, [status]);
 
-  // A request is shown until the backend's state says it was taken.
+  // A request is shown until the backend's state says it was taken. A stop asked from a pause is
+  // taken when the run ends; the answer to the request itself clears it otherwise (`ask`).
   useEffect(() => {
     if (status === null) return;
     const s = status.state;
     if (asked === "continue" && s.kind !== "paused" && s.kind !== "interrupted") setAsked(null);
-    if ((asked === "pause" || asked === "cancel") && (s.kind !== "running" || s.halt === asked)) {
+    if (asked === "pause" && (s.kind !== "running" || s.halt === "pause")) setAsked(null);
+    if (
+      asked === "cancel" &&
+      s.kind !== "paused" &&
+      (s.kind !== "running" || s.halt === "cancel")
+    ) {
       setAsked(null);
     }
   }, [status, asked]);
@@ -192,32 +200,48 @@ export function ApplyScreen(props: ApplyScreenProps) {
     }
   }, [reportOpen]);
 
+  // Sends a request. If it does not reach the engine, the request is dropped and said so, so the
+  // button works again; a stop from a pause that the answer shows still paused is dropped too.
+  const ask = async (
+    what: "pause" | "cancel" | "continue",
+    fn: (b: Backend) => Promise<ApplyStatus>,
+  ) => {
+    setAsked(what);
+    const next = await call(fn);
+    if (next === null) {
+      setAsked(null);
+      announce(askFailedText(what));
+    } else if (what === "cancel" && next.state.kind === "paused") {
+      setAsked(null);
+    }
+  };
   const pause = () => {
     if (status?.state.kind !== "running" || status.state.halt !== null || asked !== null) return;
-    setAsked("pause");
     announce("Pausing after this file.");
-    call((b) => b.pauseApply(planId));
+    ask("pause", (b) => b.pauseApply(planId));
   };
   const stop = () => {
     const s = status?.state;
     if (s === undefined || asked === "cancel") return;
     if (s.kind === "running" && s.halt === "cancel") return;
     if (s.kind !== "running" && s.kind !== "paused") return;
-    setAsked("cancel");
+    // The engine cannot stop while the pause's volume is missing: the button says why.
+    if (s.kind === "paused" && !s.back) {
+      announce(stopBlockedText(s.volume));
+      return;
+    }
     announce(
       s.kind === "paused" ? "Stopping." : (haltText({ kind: "running", halt: "cancel" }) ?? ""),
     );
-    call((b) => b.stopApply(planId));
+    ask("cancel", (b) => b.stopApply(planId));
   };
   const carryOn = () => {
     const s = status?.state;
     if (s === undefined || asked !== null) return;
     if (s.kind === "paused" && canContinue(s)) {
-      setAsked("continue");
-      call((b) => b.continueApply(planId));
+      ask("continue", (b) => b.continueApply(planId));
     } else if (s.kind === "interrupted" && s.missing === null) {
-      setAsked("continue");
-      call((b) => b.startApply(planId));
+      ask("continue", (b) => b.startApply(planId));
     }
   };
 
@@ -285,7 +309,7 @@ export function ApplyScreen(props: ApplyScreenProps) {
         )}
         {failure === "failed" && (
           <p className="save-error" role="alert">
-            Culla lost track of the apply for a moment. It carries on: nothing is half-done.
+            Culla lost track of the apply for a moment. Its status will refresh on its own.
           </p>
         )}
         {failure === "notReady" && (
@@ -374,6 +398,7 @@ function Progress({ status, asked, onPause, onStop, onContinue }: ProgressProps)
   const stopping = asked === "cancel" || (state.kind === "running" && state.halt === "cancel");
   const paused = state.kind === "paused";
   const waiting = state.kind === "interrupted";
+  const stopBlocked = state.kind === "paused" && !state.back;
 
   return (
     <div className="apply-progress">
@@ -432,11 +457,17 @@ function Progress({ status, asked, onPause, onStop, onContinue }: ProgressProps)
             <button
               type="button"
               className="button button-outline"
-              aria-disabled={stopping}
+              aria-disabled={stopping || stopBlocked}
+              aria-describedby={stopBlocked ? "apply-stop-reason" : undefined}
               onClick={onStop}
             >
               {stopping ? "Stopping" : paused ? "Stop here" : STOP_LABEL}
             </button>
+            {state.kind === "paused" && !state.back && (
+              <span id="apply-stop-reason" className="small">
+                {stopBlockedText(state.volume)}
+              </span>
+            )}
           </>
         )}
         <span className="small">

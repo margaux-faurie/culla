@@ -164,8 +164,14 @@ test.describe("apply screen (US-36)", () => {
       /^Photos drive \(E:\) is not connected\. Connect it again/,
     );
     await expect(pauseButton(page)).toHaveAttribute("aria-disabled", "true");
+    // The engine cannot stop while the card is out: Stop says why and does nothing.
+    await expect(stopButton(page)).toHaveAttribute("aria-disabled", "true");
+    await expect(stopButton(page)).toHaveAccessibleDescription(
+      /^Connect Photos drive \(E:\) first/,
+    );
     expect(await blockingViolations(page)).toEqual([]);
     await expect(page.locator(".apply-alert")).toHaveText(/^Photos drive \(E:\) is back\./);
+    await expect(stopButton(page)).toHaveAttribute("aria-disabled", "false");
     // It does not carry on by itself.
     await expect(title(page)).toHaveText("Paused");
     await pauseButton(page).click();

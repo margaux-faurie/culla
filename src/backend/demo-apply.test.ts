@@ -280,6 +280,27 @@ describe("demo apply: a run over the confirmed plan (US-36, file-engine §9)", (
     );
   });
 
+  it("a stop waits for the card; once back, it looks at the cut file first, so no rename shows a step's state", async () => {
+    const { backend, clock } = setup("lost");
+    const planId = await confirmed(backend, [[1, "reject"]]);
+    await backend.startApply(planId);
+    await until(backend, clock, planId, (s) => s.state.kind === "paused");
+    // The card is out: the engine cannot stop then, so Stop does nothing.
+    const out = await backend.stopApply(planId);
+    expect(out.state).toMatchObject({ kind: "paused", back: false });
+    expect(out.report).toBeNull();
+    clock.t += RETURN_MS;
+    await backend.applyStatus(planId);
+    const end = await backend.stopApply(planId);
+    expect(end.state).toEqual({ kind: "ended", end: "cancelled" });
+    expect(states(group(end, "MGF_7001"))).toEqual([
+      ["failed", "lost"],
+      ["failed", "groupFailed"],
+    ]);
+    const steps = new Set(["renaming", "copying", "verifying"]);
+    expect(end.report?.groups.flatMap((g) => g.files).some((f) => steps.has(f.state))).toBe(false);
+  });
+
   it("a full destination sends the copy back to pending and pauses", async () => {
     const { backend, clock } = setup("disk-full");
     const planId = await confirmed(backend, [[1, "keep"]]);

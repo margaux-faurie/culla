@@ -7,6 +7,7 @@ import type {
   ReportGroup,
 } from "../backend/types";
 import {
+  askFailedText,
   bytesLine,
   canContinue,
   doneLine,
@@ -26,6 +27,7 @@ import {
   runningTitle,
   STOP_LABEL,
   stepLines,
+  stopBlockedText,
   summaryParts,
   timeLeft,
 } from "./model";
@@ -292,5 +294,39 @@ describe("apply report (US-36, file-engine §9.6)", () => {
     expect(fileText(file("pending"), unstarted, "cancelled")).toBe(
       "A.JPG: not started, still at E:\\2026\\A.JPG",
     );
+  });
+
+  it("words every journal state, so none is shown raw", () => {
+    const states = [
+      "pending",
+      "renaming",
+      "copying",
+      "verifying",
+      "committed",
+      "sourceRemoved",
+      "done",
+      "copiedSourceKept",
+      "failed",
+    ] as const;
+    for (const state of states) {
+      const text = fileText(file(state, state === "failed" ? "io" : null), renamed, "cancelled");
+      expect(text).not.toMatch(new RegExp(`: ${state}$`));
+      expect(text.startsWith("A.JPG: ")).toBe(true);
+    }
+    expect(fileText(file("renaming"), renamed, "cancelled")).toMatch(
+      /^A\.JPG: the apply stopped while it was being moved/,
+    );
+  });
+});
+
+describe("apply requests that cannot be taken", () => {
+  it("says why Stop waits for a missing volume, and that a failed request can be tried again", () => {
+    expect(stopBlockedText("Photos drive (E:)")).toMatch(/^Connect Photos drive \(E:\) first/);
+    expect(stopBlockedText(null)).toMatch(/^Connect the drive first/);
+    expect(askFailedText("pause")).toBe(
+      "Culla could not ask the apply to pause just now. Try again.",
+    );
+    expect(askFailedText("cancel")).toMatch(/to stop just now/);
+    expect(askFailedText("continue")).toMatch(/to carry on just now/);
   });
 });

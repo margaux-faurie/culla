@@ -113,6 +113,19 @@ export function pausedText(state: ApplyState): string | null {
   }
 }
 
+/**
+ * Why Stop is unavailable while a pause's volume is missing: a stop is a run, which first looks
+ * at the cut file, and it cannot while the volume is away (SPEC §10, proposed).
+ */
+export const stopBlockedText = (volume: string | null): string =>
+  `Connect ${volume ?? "the drive"} first: Culla can stop only once it can see the file it was working on.`;
+
+/** Said when a pause, stop or continue did not reach the engine: the button works again. */
+export function askFailedText(what: "pause" | "cancel" | "continue"): string {
+  const verb = what === "pause" ? "pause" : what === "cancel" ? "stop" : "carry on";
+  return `Culla could not ask the apply to ${verb} just now. Try again.`;
+}
+
 /** Continue is possible: a pause whose volume is present. */
 export const canContinue = (state: ApplyState): boolean => state.kind === "paused" && state.back;
 
@@ -326,8 +339,14 @@ export function fileText(f: ReportFile, g: ReportGroup, end: ApplyReport["end"])
       const still = isAlarm(f) ? "" : ` Still at ${f.from}.`;
       return `${f.fileName}: ${reasonText(reason, f.code)}.${still}`;
     }
-    default:
-      return `${f.fileName}: ${f.state}`;
+    // A report should not hold a file mid-step (the next run looks at it first, §10.2), but every
+    // journal state has words, so none is ever shown raw.
+    case "renaming":
+      return `${f.fileName}: the apply stopped while it was being moved. Culla checks where it is before it does anything else with it`;
+    case "copying":
+      return `${f.fileName}: the apply stopped while it was being copied. The original is still at ${f.from}`;
+    case "verifying":
+      return `${f.fileName}: copied, but the check did not finish. The original is still at ${f.from}`;
   }
 }
 
@@ -384,7 +403,7 @@ export function outcomeNote(outcome: Outcome, report: ApplyReport): string {
     case "copiedSourceKept":
       return "Each file is at both places: the copy is checked, and the original is kept. Finish moves checks each copy again, then lets the original go.";
     case "split":
-      return "The apply stopped between the files of these photos: some are at their new place, the others still where they were.";
+      return "Some files of these photos are at their new place and the others still where they were: the apply stopped, or another of their files failed, part-way through them.";
     case "notStarted":
       return report.end === "cancelled"
         ? "The apply stopped before these photos. They stay where they are."

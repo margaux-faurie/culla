@@ -221,46 +221,9 @@ fn mixed() -> Journal {
 
 #[test]
 fn whole_log_for_a_mixed_plan() {
-    let ab = "ab".repeat(32);
-    let one = "01".repeat(32);
-    let two = "02".repeat(32);
-    let cd = "cd".repeat(32);
-    let want = format!(
-        "\
-Culla apply log
-version      0.1.0
-plan         12 (apply, first run)
-started      2026-11-28 09:14:03 +01:00
-source       E:\\DCIM\\100NIKON
-destination  D:\\Photos\\2026
-rejected     the _rejected folder in the source
-
-alarms: a file is not where the journal says. Run chkdsk on the volume before anything else.
-  op 8  group 6  reject  rename  source \"DSC_0006.JPG\" → rejected \"DSC_0006.JPG\"  failed (lost)
-
-operations, in plan order
-  op 1  group 1  reject  rename  source \"DSC_0001.JPG\" → rejected \"DSC_0001.JPG\"  done
-  op 2  group 1  reject  rename  source \"DSC_0001.NEF\" → rejected \"DSC_0001.NEF\"  committed
-  op 3  group 2  keep  xmove  source \"DSC_0002.JPG\" → destination \"DSC_0002.JPG\"  done  blake3 {ab}
-  op 4  group 3  keep  xmove  source \"DSC_0003.JPG\" → destination \"DSC_0003.JPG\"  copied_source_kept  blake3 {one}
-  op 5  group 3  keep  xmove  source \"DSC_0003.NEF\" → destination \"DSC_0003.NEF\"  failed (verify_mismatch)  attempts 2  blake3 {two}
-  op 6  group 4  keep  copy  source \"sub\\DSC_0004.JPG\" → destination \"sub\\DSC_0004_1.JPG\"  done  blake3 {cd}
-  op 7  group 5  reject  rename  source \"DSC_0005.JPG\" → rejected \"DSC_0005.JPG\"  failed (io 1392)
-  op 8  group 6  reject  rename  source \"DSC_0006.JPG\" → rejected \"DSC_0006.JPG\"  failed (lost)
-  op 9  group 7  reject  rename  source \"DSC_0007.JPG\" → rejected \"DSC_0007.JPG\"  pending
-
-summary
-  operations          9
-  pending             1
-  committed           1
-  done                3
-  copied_source_kept  1
-  failed              3
-  alarms              1
-end          paused (the destination is full)
-ended        2026-11-28 09:15:41 +01:00
-"
-    );
+    // The same golden file is read by the demo's renderer test (tests/apply-log.test.ts), so the
+    // two renderers cannot drift apart.
+    let want = include_str!("../../../../testdata/apply-log/mixed.txt");
     let got = render(
         &header(),
         &mixed(),

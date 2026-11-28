@@ -632,17 +632,28 @@ export function advance(sim: Sim, ms: number) {
   }
 }
 
-/** Asks for a pause or a stop; a stop wins over a pause. From a pause, a stop ends at once. */
+/**
+ * Asks for a pause or a stop; a stop wins over a pause. From a pause, a stop ends at once, but
+ * only once the pause's volume is present: the stop is a run, and a run cannot look at a file on
+ * a volume that is not there (SPEC §10, proposed). While it is missing, a stop does nothing.
+ */
 export function requestHalt(sim: Sim, halt: Halt) {
   if (sim.phase === "running") {
     sim.halt = halt === "cancel" ? "cancel" : (sim.halt ?? "pause");
     return;
   }
-  if (sim.phase === "paused" && halt === "cancel") {
-    // A run starts and stops before its first operation: a cut cross-volume group fails.
+  if (sim.phase === "paused" && halt === "cancel" && sim.pause?.back !== false) {
+    // A run starts, looks at the cut group as the recovery table does (§10.2), so no file is left
+    // in a step's state (a lost file becomes an alarm), and stops before its next operation: a
+    // cut cross-volume group fails.
     newRun(sim, "resume");
     sim.phase = "running";
     sim.pause = null;
+    const g = sim.cursor;
+    if (g < sim.groups.length && inScope(sim, g)) {
+      enter(sim, g);
+      if (inGroup(sim, g).some((f) => f.state === "failed")) failGroup(sim, g);
+    }
     stop(sim, "cancel");
   }
 }

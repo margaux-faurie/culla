@@ -1,3 +1,4 @@
 # Fixtures are compared byte for byte (xtask fixtures --check) and read by Rust and TS alike.
 testdata/synthetic/** binary
 testdata/event-log/** text eol=lf
+testdata/apply-log/** text eol=lf
