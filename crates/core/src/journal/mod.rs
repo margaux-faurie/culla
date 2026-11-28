@@ -432,6 +432,15 @@ pub enum JournalError {
     /// The detail does not fit the transition (a new attempt must be the next number, a
     /// `verifying` entry must carry H1 and the plan's size, a `failed` entry its reason).
     BadDetail(Entry),
+    /// The plan cannot close: this operation was left mid-way (in a step, at
+    /// `source_removed`, `committed` other than a rename, or `pending` in a cross-volume group
+    /// that has started).
+    Unsettled {
+        /// The operation.
+        op: OpId,
+        /// Its state.
+        state: OpState,
+    },
 }
 
 impl fmt::Display for JournalError {
@@ -453,6 +462,9 @@ impl fmt::Display for JournalError {
                 "detail does not fit {} → {} for operation {}",
                 e.from, e.to, e.op
             ),
+            Self::Unsettled { op, state } => {
+                write!(f, "operation {op} is left {state}: the plan cannot close")
+            }
         }
     }
 }
