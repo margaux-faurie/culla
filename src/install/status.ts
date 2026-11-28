@@ -49,7 +49,10 @@ const SELF = "https://self.invalid";
  */
 const RELEASES = "https://github.com/margaux-faurie/culla/releases/";
 
-/** True for a page under the project's GitHub Releases, the only place the page links a download to. */
+/**
+ * True for a page under the project's GitHub Releases, the only place the page links a
+ * download to.
+ */
 export function isReleaseUrl(url: string): boolean {
   if (!url.startsWith(RELEASES) || url.includes("\\")) {
     return false;
