@@ -5,7 +5,8 @@
  *   pnpm build:demo
  *   CULLA_VIDEO_PHOTOS=<dir> CULLA_VIDEO_BPM=120 \
  *     pnpm exec playwright test -c docs/assets/video/playwright.config.ts
- *   node docs/assets/video/compose.mjs --capture <dir> --photos <dir> --fonts <dir> --out <dir>
+ *   node docs/assets/video/compose.mjs --capture <dir> --wall <dir> --fonts <dir> --out <dir>
+ *   (or both steps at once: node docs/assets/video/render-all.mjs, see there)
  *
  * Real photos (Margaux's choice, 28 Nov 2026) without committing them: with CULLA_VIDEO_PHOTOS set
  * to a folder of JPEGs (already oriented, sized and stripped of all metadata), the page's drawn

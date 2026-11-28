@@ -1,18 +1,13 @@
 // Edits the 30 s demo video (docs/videos.md (a)) from the shots capture.spec.ts filmed.
 //
-//   node docs/assets/video/compose.mjs --capture <dir> --photos <dir> --fonts <dir> --out <dir>
-//        [--hero <file>] [--flicker <file,file,...>] [--bpm 120] [--offset 0] [--check]
-//        [--still <scene>:<seconds>]... [--audio <file>]
+//   node docs/assets/video/compose.mjs --capture <dir> --wall <dir> --fonts <dir> --out <dir>
+//        [--bpm 120] [--offset 0] [--name culla-demo-30s] [--check] [--still <scene>:<seconds>]...
+//        [--audio <file>]
 //   node docs/assets/video/compose.mjs --master <mp4> --audio <file> --out <dir>
 //
 // --capture  the folder capture.spec.ts wrote (CULLA_VIDEO_CAPTURE): swipe, review, apply
-// --photos   the photo folder (the same as CULLA_VIDEO_PHOTOS); --hero is the opening photo and
-//            --flicker the photos of the fast run (similar brightness: WCAG 2.3.1). --hero takes
-//            one or more files, comma separated: one full-bleed shot each over the opening beats.
-// --framing  optional JSON file: { "<file>": { "x": 0.5, "y": 0.5, "from": 1.1, "to": 1.4 } },
-//            the subject (fractions of the photo) and the push-in, so a full-bleed shot ends
-//            tight on its subject. Kept outside the repository with the photos.
-// --no-grade turns off the light grade on full-bleed photos (contrast 1.06, saturation 1.1)
+// --wall     a folder of small landscape thumbnails (e.g. 180×120 JPEGs, no people, no metadata)
+//            for the opening wall; repeated and shuffled to fill it. Kept outside the repository.
 // --fonts    a folder holding Bricolage Grotesque (OFL) as .ttf or .woff2. Not in the repository.
 // --bpm, --offset  the music's tempo and its first downbeat in seconds: every cut and every word
 //            lands on a beat. Film again with the same CULLA_VIDEO_BPM so the decisions do too.
@@ -21,7 +16,8 @@
 //            the video, -16 LUFS (loudnorm, two passes), faded in over 1 s and out over 2.5 s,
 //            AAC stereo, video copied. With --master, only that, on an existing master.
 //
-// Nothing here or in its output may be committed when it holds Margaux's photos or the music
+// Nothing here or in its output may be committed when it holds Margaux's photos, the wall's
+// thumbnails or the music
 // (docs/videos.md): keep --capture and --out outside the repository.
 //
 // Every picture is drawn by Chromium at 1920×1080 and sent to ffmpeg as JPEG (quality 92); one
@@ -32,7 +28,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { chromium } from "playwright";
+import { chromium } from "@playwright/test";
 
 const args = process.argv.slice(2);
 const arg = (name) => {
@@ -41,14 +37,12 @@ const arg = (name) => {
 };
 const path = (name) => (arg(name) ? resolve(arg(name)) : null);
 const CAPTURE = path("capture");
-const PHOTOS = path("photos");
+const WALL = path("wall");
 const FONTS = path("fonts");
 const OUT = path("out");
 const MASTER = path("master");
 const AUDIO = path("audio");
 const CHECK = args.includes("--check");
-const GRADE = !args.includes("--no-grade");
-const FRAMING = path("framing");
 const BPM = Number(arg("bpm") ?? "120");
 const OFFSET = Number(arg("offset") ?? "0");
 const FFMPEG = process.env.FFMPEG ?? "ffmpeg";
@@ -56,7 +50,7 @@ const FPS = 30;
 const W = 1920;
 const H = 1080;
 const BEAT = 60 / BPM;
-const NAME = "culla-demo-30s";
+const NAME = arg("name") ?? "culla-demo-30s";
 
 /** Seconds from the start of the video to beat `b` (beat 0 is the first downbeat). */
 const T = (b) => OFFSET + b * BEAT;
@@ -70,26 +64,37 @@ const shot = (name) => {
   return { dir, ...timeline };
 };
 
-const photoUrl = (file) => pathToFileURL(join(PHOTOS, file)).href;
-const framing = FRAMING === null ? {} : JSON.parse(readFileSync(FRAMING, "utf8"));
-/** A full-bleed photo: where its subject is and how far the push-in goes. */
-const framed = (file, from = 1.04, to = 1.1) => ({
-  src: photoUrl(file),
-  x: 0.5,
-  y: 0.5,
-  from,
-  to,
-  ...framing[file],
-});
+/** The wall: COLS × ROWS tiles of 180×120 with 8 px gaps, thumbnails shuffled (seeded). */
+const COLS = 34;
+const ROWS = 24;
+function wallTiles() {
+  const files = readdirSync(WALL).filter((f) => /\.(jpe?g|png|webp)$/i.test(f)).sort();
+  if (files.length === 0) {
+    throw new Error(`no thumbnails in ${WALL}`);
+  }
+  let seed = 7;
+  const rand = () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
+  const tiles = [];
+  while (tiles.length < COLS * ROWS) {
+    const round = [...files];
+    for (let i = round.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(rand() * (i + 1));
+      [round[i], round[j]] = [round[j], round[i]];
+    }
+    tiles.push(...round);
+  }
+  return tiles.slice(0, COLS * ROWS).map((f) => pathToFileURL(join(WALL, f)).href);
+}
 
 /**
- * The cut list, in beats (Margaux's storyboard of 28 Nov 2026): hero, fast run, the problem,
- * the swipe with real photos, review, apply, end card. 60 beats: 30 s at 120 BPM.
+ * The cut list, in beats (Margaux's storyboard of 28 Nov 2026, opener changed by her the same
+ * day): the thumbnail wall, the problem, the swipe with real photos, review, apply, end card.
+ * 60 beats: 30 s at 120 BPM.
  */
 function scenes() {
-  const jpgs = readdirSync(PHOTOS).filter((f) => /\.jpe?g$/i.test(f)).sort();
-  const heroes = (arg("hero") ?? jpgs[0]).split(",");
-  const flicker = (arg("flicker") ?? jpgs.slice(1, 9).join(",")).split(",");
   const swipe = shot("swipe");
   const review = shot("review");
   const apply = shot("apply");
@@ -105,36 +110,16 @@ function scenes() {
     };
   });
   return [
-    // One full-bleed shot per hero photo over the first 6 beats, each pushing in on its subject.
-    ...heroes.map((file, i) => {
-      const from = i === 0 ? 0 : T((6 * i) / heroes.length);
-      const to = T((6 * (i + 1)) / heroes.length);
-      // The two lines slam in on beats 1 and 4 and stay through the later hero shots.
-      const words = [
-        [1, "600 photos.", 0],
-        [4, "One evening.", 1],
-      ]
-        .filter(([b]) => T(b) < to)
-        .map(([b, text, line]) => ({
-          at: Math.max(0, T(b) - from),
-          text,
-          style: "slam",
-          line,
-          settled: T(b) < from,
-        }));
-      return {
-        id: `1-hero-${i + 1}`,
-        from,
-        to,
-        photo: framed(file),
-        words,
-      };
-    }),
     {
-      id: "2-flicker",
-      from: T(6),
+      // Tight on a few tiles, a fast pull-back to hundreds of photos, then a slow drift.
+      id: "1-wall",
+      from: 0,
       to: T(10),
-      run: flicker.map((f, i) => ({ ...framed(f, 1.08, 1.08), at: i * 0.5 * BEAT })),
+      wall: { tiles: wallTiles(), hold: 1 * BEAT, pull: 3 * BEAT, from: 1.5, to: 0.44 },
+      words: [
+        { at: T(4), text: "600 photos.", style: "slam-center", line: 0 },
+        { at: T(6), text: "One evening.", style: "slam-center", line: 1 },
+      ],
     },
     {
       id: "3-painful",
@@ -201,23 +186,17 @@ function frameAt(sh, t) {
 function stateAt(scene, t) {
   const r3 = (x) => Math.round(x * 1000) / 1000;
   const st = { id: scene.id };
-  if (scene.photo) {
-    // Ease out: the push-in slows down and settles on the subject.
-    const k = 1 - (1 - Math.min(1, t / (scene.to - scene.from))) ** 3;
-    const p = scene.photo;
-    st.photo = { src: p.src, x: p.x, y: p.y, s: r3(p.from + (p.to - p.from) * k) };
-  }
-  if (scene.run) {
-    // Two-frame crossfade from one photo to the next: no hard flash (WCAG 2.3.1).
-    const i = scene.run.findLastIndex((p) => t >= p.at - 1e-6);
-    const layer = (p) => ({ src: p.src, x: p.x, y: p.y, s: p.from });
-    st.photo = layer(scene.run[i]);
-    const next = scene.run[i + 1];
-    const k = next === undefined ? 0 : 1 - (next.at - t) / (2 / FPS);
-    if (next !== undefined && k > 0) {
-      st.next = layer(next);
-      st.mix = r3(Math.min(1, k));
-    }
+  if (scene.wall) {
+    const w = scene.wall;
+    const k = Math.min(1, Math.max(0, (t - w.hold) / w.pull));
+    const e = k < 0.5 ? 4 * k * k * k : 1 - (-2 * k + 2) ** 3 / 2;
+    // Scale eases from tight to the whole wall; a slow drift and turn run all along.
+    st.wall = {
+      s: r3(w.from * (w.to / w.from) ** e),
+      x: r3(-14 * t),
+      y: r3(-6 * t),
+      r: r3(-2.5 + 0.25 * t),
+    };
   }
   if (scene.shot) {
     st.src = frameAt(scene.shot, t);
@@ -226,7 +205,6 @@ function stateAt(scene, t) {
   st.words = (scene.words ?? [])
     .filter((w) => t >= w.at - 1e-6 && t < (w.until ?? 99))
     .map((w) => ({ ...w, k: w.settled ? 1 : r3(Math.min(1, (t - w.at) / 0.15)) }));
-  st.grade = GRADE;
   return st;
 }
 
@@ -269,7 +247,13 @@ html, body { width: ${W}px; height: ${H}px; background: var(--paper); color: var
 .end-line, .end-url { position: absolute; left: 0; right: 0; text-align: center; font-size: 64px; line-height: 1.1; }
 .end-line { top: 600px; }
 .end-url { top: 700px; color: var(--muted); }
-</style></head><body><div id="root"></div>
+#wall { position: absolute; inset: 0; overflow: hidden; display: none; }
+.wall { position: absolute; left: 50%; top: 50%; display: grid; gap: 8px; transform-origin: 50% 50%; }
+.wall img { width: 180px; height: 120px; border-radius: 6px; display: block; }
+.slam-center { position: absolute; left: 0; right: 0; text-align: center; }
+.slam-center span { display: inline-block; font-weight: 700; letter-spacing: -0.03em; line-height: 1; font-size: 150px;
+  padding: 18px 40px 28px; background: var(--paper); border-radius: 32px; white-space: nowrap; }
+</style></head><body><div id="wall"></div><div id="root"></div>
 <script>
 const ease = (k) => 1 - Math.pow(1 - Math.max(0, Math.min(1, k)), 3);
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
@@ -280,6 +264,10 @@ function word(w) {
     case "slam": {
       const top = 640 + w.line * 200;
       return '<div class="slam" style="top:' + top + 'px;opacity:' + e + ';transform:scale(' + (1.35 - 0.35 * e) + ')">' + esc(w.text) + "</div>";
+    }
+    case "slam-center": {
+      const top = 300 + w.line * 230;
+      return '<div class="slam-center" style="top:' + top + 'px;opacity:' + e + ';transform:scale(' + (1.35 - 0.35 * e) + ')"><span>' + esc(w.text) + "</span></div>";
     }
     case "big": {
       const top = 300 + w.line * 260;
@@ -307,26 +295,35 @@ async function img(src) {
   }
   return loaded.get(src);
 }
-/** A photo filling the frame at scale s of "cover", its subject (x, y) as near the middle as fits. */
-function placed(p, size, grade, opacity) {
-  const cover = Math.max(${W} / size.w, ${H} / size.h) * p.s;
-  const w = size.w * cover, h = size.h * cover;
-  const left = Math.min(0, Math.max(${W} - w, ${W} / 2 - p.x * w));
-  const top = Math.min(0, Math.max(${H} - h, ${H} / 2 - p.y * h));
-  const filter = grade ? "filter:contrast(1.06) saturate(1.1);" : "";
-  return '<img src="' + p.src + '" style="position:absolute;left:' + left + 'px;top:' + top + 'px;width:' + w + 'px;height:' + h + 'px;' + filter + 'opacity:' + opacity + '">';
+let wallBuilt = false;
+function wall(st) {
+  const layer = document.getElementById("wall");
+  if (!st.wall) {
+    layer.style.display = "none";
+    return;
+  }
+  layer.style.display = "block";
+  const box = layer.firstElementChild;
+  box.style.transform = "translate(-50%, -50%) translate(" + st.wall.x + "px," + st.wall.y + "px) rotate(" + st.wall.r + "deg) scale(" + st.wall.s + ")";
 }
+window.buildWall = async (tiles, cols) => {
+  const layer = document.getElementById("wall");
+  layer.innerHTML = '<div class="wall" style="grid-template-columns:repeat(' + cols + ',180px)">' +
+    tiles.map((t) => '<img src="' + t + '">').join("") + "</div>";
+  await Promise.all([...layer.querySelectorAll("img")].map((i) => i.decode().catch(() => undefined)));
+  wallBuilt = true;
+};
 window.render = async (st) => {
+  wall(st);
   const parts = [];
-  if (st.photo) parts.push(placed(st.photo, await img(st.photo.src), st.grade, 1));
-  if (st.next) parts.push(placed(st.next, await img(st.next.src), st.grade, st.mix));
   if (st.src) {
     await img(st.src);
     parts.push('<img class="full" src="' + st.src + '">');
   }
   parts.push('<div class="layer">' + st.words.map(word).join("") + "</div>");
-  document.getElementById("root").innerHTML = parts.join("");
-  await Promise.all([...document.images].map((i) => i.decode().catch(() => undefined)));
+  const root = document.getElementById("root");
+  root.innerHTML = parts.join("");
+  await Promise.all([...root.querySelectorAll("img")].map((i) => i.decode().catch(() => undefined)));
   await document.fonts.ready;
 };
 </script></body></html>`;
@@ -421,11 +418,14 @@ async function main() {
   const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
   await page.goto(pathToFileURL(html).href);
   await page.evaluate(() => document.fonts.load('700 100px "Bricolage"'));
+  const wallScene = all.find((s) => s.wall);
+  await page.evaluate(([tiles, cols]) => window.buildWall(tiles, cols), [wallScene.wall.tiles, COLS]);
 
   // The busiest moments, to look at before the full render.
   const checks = [
-    ["1-hero-1", 2.9 * BEAT],
-    ["1-hero-2", 2.9 * BEAT],
+    ["1-wall", 0.5 * BEAT],
+    ["1-wall", 2.5 * BEAT],
+    ["1-wall", 7 * BEAT],
     ["4-swipe", 3.2 * BEAT],
     ["4-swipe", 12 * BEAT],
     ["6-apply", 6 * BEAT],
@@ -450,7 +450,7 @@ async function main() {
   for (const scene of all) {
     files.push(await encodeScene(page, scene, work));
   }
-  await still(page, all[0], 2.9 * BEAT, join(OUT, `${NAME}-poster.jpg`));
+  await still(page, all[0], 7 * BEAT, join(OUT, `${NAME}-poster.jpg`));
   await browser.close();
 
   const list = join(work, "concat.txt");
@@ -478,8 +478,8 @@ if (MASTER !== null) {
   const [, h, mi, se] = info.match(/Duration: (\d+):(\d+):([\d.]+)/);
   mkdirSync(OUT, { recursive: true });
   await addMusic(MASTER, Number(h) * 3600 + Number(mi) * 60 + Number(se), join(OUT, `${NAME}.music.mp4`));
-} else if ([CAPTURE, PHOTOS, FONTS, OUT].includes(null)) {
-  console.error("usage: node compose.mjs --capture <dir> --photos <dir> --fonts <dir> --out <dir> [--bpm 120] [--offset 0]");
+} else if ([CAPTURE, WALL, FONTS, OUT].includes(null)) {
+  console.error("usage: node compose.mjs --capture <dir> --wall <dir> --fonts <dir> --out <dir> [--bpm 120] [--offset 0]");
   process.exit(2);
 } else if (!existsSync(join(CAPTURE, "swipe", "timeline.json"))) {
   console.error(`no capture at ${CAPTURE}`);
