@@ -616,7 +616,21 @@ fn keep_by_copy_and_rejects_with_suffixes_change_nothing() {
         ),
         "{out}"
     );
-    assert!(out.contains("not looked up"), "{out}");
+    assert!(out.contains("  unknown, preflight fails closed:"), "{out}");
+    assert!(out.contains("  not checked:"), "{out}");
+    assert!(
+        out.contains("locks held by other programs are not checked: P12 never warns"),
+        "{out}"
+    );
+    let closed: Vec<(&str, bool)> = j
+        .get("preflight")
+        .get("unchecked")
+        .arr()
+        .iter()
+        .map(|u| (u.get("id").str(), u.get("fails_closed").bool()))
+        .collect();
+    assert!(closed.contains(&("free_space", true)), "{closed:?}");
+    assert!(closed.contains(&("locks", false)), "{closed:?}");
 }
 
 #[test]
@@ -684,34 +698,63 @@ fn missing_targets_are_not_created() {
 }
 
 #[test]
-fn a_destination_inside_the_source_is_left_out_of_the_scan() {
+fn a_destination_inside_the_source_is_numbered_like_scan_and_not_planned() {
+    // The destination's photo sorts first in capture-time order, so the log's ids only match
+    // `culla scan` if the destination is scanned and numbered too.
     let src = TempTree::new("inside");
-    src.file("DSC_0101.JPG", &fixture("exif/DSC_0101.JPG"));
-    src.file("kept/DSC_0102.JPG", &fixture("exif/DSC_0102.JPG"));
+    src.file("kept/DSC_0101.JPG", &fixture("exif/DSC_0101.JPG"));
+    src.file("DSC_0102.JPG", &fixture("exif/DSC_0102.JPG"));
+    let pos = positions(src.path(), &[]);
+    let in_dest = id_of(&pos, "kept\\DSC_0101.JPG");
+    let outside = id_of(&pos, "DSC_0102.JPG");
+    assert!(in_dest < outside, "{pos:?}");
     let logs = TempTree::new("inside-log");
-    let log = logs.file("d.jsonl", decided(1, 1, "keep").as_bytes());
-    let dest = src.path().join("kept");
-    let o = unchanged(&[src.path(), logs.path()], || {
-        plan(
-            src.path(),
-            &log,
-            &[
-                os("--keep"),
-                os("copy"),
-                os("--dest"),
-                dest.as_os_str(),
-                os("--json"),
-            ],
+    let log = logs.file(
+        "d.jsonl",
+        format!(
+            "{}{}",
+            decided(1, outside, "keep"),
+            decided(2, in_dest, "reject")
         )
+        .as_bytes(),
+    );
+    let dest = src.path().join("kept");
+    let args = [os("--keep"), os("copy"), os("--dest"), dest.as_os_str()];
+    let mut json_args = args.to_vec();
+    json_args.push(os("--json"));
+    let o = unchanged(&[src.path(), logs.path()], || {
+        plan(src.path(), &log, &json_args)
     });
     assert_eq!(code(&o), 0, "{}", stderr(&o));
     let j = parse_json(&stdout(&o));
     assert!(j.get("settings").get("dest_inside_source").bool());
     assert_eq!(j.get("totals").get("groups").num(), 1);
+    assert_eq!(j.get("totals").get("kept").num(), 1);
+    assert_eq!(j.get("totals").get("rejected").num(), 0);
     assert_eq!(
         ops(&j),
-        [op("keep", "copy", "DSC_0101.JPG", "dest", "DSC_0101.JPG")]
+        [op("keep", "copy", "DSC_0102.JPG", "dest", "DSC_0102.JPG")]
     );
+    let ignored: Vec<i128> = j
+        .get("decisions")
+        .get("destination_groups")
+        .arr()
+        .iter()
+        .map(J::num)
+        .collect();
+    assert_eq!(ignored, [in_dest]);
+    assert!(j.get("decisions").get("unknown_groups").arr().is_empty());
+
+    let o = unchanged(&[src.path(), logs.path()], || plan(src.path(), &log, &args));
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    let out = stdout(&o);
+    assert!(
+        out.contains(&format!(
+            "decisions for groups inside the destination (ignored): {in_dest}"
+        )),
+        "{out}"
+    );
+    assert!(!out.contains("_rejected"), "{out}");
 }
 
 #[test]

@@ -476,7 +476,9 @@ The decision log is the core text form, one JSON event per line, for example
   {\"seq\":1,\"ts\":0,\"cause\":\"user\",\"type\":\"decided\",\"group_id\":3,\"verdict\":\"keep\"}
 A group id is the position culla scan prints for the same folder and options
 (1 is the first photo in capture-time order). Decisions for ids the scan does not have
-are listed and ignored.
+are listed and ignored. A destination inside the folder is scanned and numbered like
+culla scan does, but its photos are never planned: decisions on them are listed and
+ignored.
 
 Options:
   --decisions <file>    the decision log (required; read only, at most 64 MiB)
@@ -489,10 +491,12 @@ Options:
   -h, --help            show this help
   --                    treat what follows as the folder, even if it starts with '-'
 
-Facts the dry run does not look up are treated as unknown and fail closed: free space
-(copies and cross-volume moves then show a blocker), whether the destination is in a
-cloud-synced folder (a warning), locks held by other programs (not checked) and, off
-Windows, the volumes (the volume checks then block). The output says which.
+Some facts the dry run does not look up are treated as unknown and fail closed: free
+space (copies and cross-volume moves then show a blocker), whether the destination is in
+a cloud-synced folder (a warning) and, off Windows, the volumes (the volume checks then
+block). Others are not checked at all: locks held by other programs (no lock warning is
+ever shown) and, on Windows, a second mounted volume with the same serial as the source
+or the destination (only those two are looked up, by path). The output lists both apart.
 
 The output is unstable until M2 and may change: the JSON says so with
 \"schema\": \"unstable\".

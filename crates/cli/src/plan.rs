@@ -11,10 +11,13 @@
 //!
 //! Group ids: the log's `group_id` is the position `culla scan` prints for the same folder and
 //! options (1 is the first group in capture-time order), since there is no session database
-//! yet. Member ids follow from it, in the order primary, raw, sidecars.
+//! yet. Member ids follow from it, in the order primary, raw, sidecars. The scan is the one
+//! `culla scan` does, so a destination inside the source is scanned too and numbered with the
+//! rest; its groups are then left out of the plan, and decisions on them listed as ignored.
 //!
-//! Facts the adapters cannot look up yet are left unknown, so preflight fails closed on them
-//! (file-engine §8), and the report lists them ([`Unchecked`]).
+//! Facts the adapters cannot look up yet are either left unknown, so preflight fails closed on
+//! them (file-engine §8), or not checked at all (locks, a second volume with the same serial);
+//! the report lists both, apart ([`Unchecked`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
@@ -26,6 +29,7 @@ use culla_adapters::winfs::{VolumeError, resolve_folder};
 use culla_core::decisions::codec::parse_log;
 use culla_core::decisions::{GroupId, GroupState, fold};
 use culla_core::grouping::ScanPolicy;
+use culla_core::names::eq_folded;
 use culla_core::plan::{
     Existing, Held, KeepMode, KeepTo, MemberId, OpKind, Plan, PlanError, PlanGroup, Root, Settings,
     plan,
@@ -64,14 +68,16 @@ impl From<Failure> for PlanFailure {
     }
 }
 
-/// A fact the dry run did not look up, so preflight treats it as unknown.
+/// A fact the dry run did not look up: either preflight treats it as unknown and fails closed
+/// ([`Unchecked::fails_closed`]), or it is not checked at all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Unchecked {
     /// Free space is not looked up: P5 blocks any copy or cross-volume move.
     FreeSpace,
     /// Whether the destination is in a cloud-synced folder: P17 warns.
     SyncRoot,
-    /// Locks held by other programs (P12) are not checked: opening the files is left to apply.
+    /// Locks held by other programs (P12) are not checked (`SourceFact::locked` is always
+    /// false, so P12 never warns): opening the files is left to apply.
     Locks,
     /// Windows: only the source's and the destination's volumes are looked up, by path, so a
     /// second mounted volume with the same serial is not seen (P1, P2).
@@ -96,6 +102,15 @@ impl Unchecked {
         }
     }
 
+    /// Whether preflight treats the fact as unknown and fails closed on it (a blocker, a hold or
+    /// a warning). The others are simply not checked: no finding can come from them.
+    pub(crate) fn fails_closed(self) -> bool {
+        match self {
+            Self::FreeSpace | Self::SyncRoot | Self::Volumes | Self::VolumeRelation => true,
+            Self::Locks | Self::MountedVolumes => false,
+        }
+    }
+
     /// The text.
     pub(crate) fn text(self) -> &'static str {
         match self {
@@ -105,10 +120,12 @@ impl Unchecked {
             Self::SyncRoot => {
                 "whether the destination is in a cloud-synced folder is not looked up (P17)"
             }
-            Self::Locks => "locks held by other programs are not checked (P12)",
+            Self::Locks => {
+                "locks held by other programs are not checked: P12 never warns, apply finds them"
+            }
             Self::MountedVolumes => {
                 "only the source and destination volumes are looked up, by path: a second \
-                 volume with the same serial is not seen (P1, P2)"
+                 mounted volume with the same serial is not detected (P1, P2)"
             }
             Self::Volumes => {
                 "volumes are not looked up off Windows: the volume checks block (P1, P2)"
@@ -132,19 +149,22 @@ pub(crate) struct Report {
     pub events: usize,
     /// Decided group ids the scan does not have (ignored).
     pub unknown_ids: Vec<GroupId>,
+    /// Decided group ids of groups inside the destination (ignored: never planned).
+    pub dest_ids: Vec<GroupId>,
     /// Keep mode and destination as given.
     pub keep: Option<(KeepMode, PathBuf)>,
     /// The destination's final path, when it could be resolved.
     pub dest_resolved: Option<PathBuf>,
-    /// The destination lies inside the source: left out of the scan.
+    /// The destination lies inside the source: its groups are left out of the plan.
     pub dest_inside_source: bool,
     /// "RAW follows JPEG".
     pub raw_follows: bool,
     /// The destination is on the source's volume; `None` when unknown.
     pub same_volume: Option<bool>,
-    /// The groups, by id (position in capture-time order, from 1).
+    /// The groups planned, by id (position in capture-time order, from 1), the destination's
+    /// left out.
     pub groups: Vec<PlanGroup>,
-    /// Each group's state after the fold, by id.
+    /// Each group's state after the fold, by id, the destination's left out.
     pub states: BTreeMap<GroupId, GroupState>,
     /// The plan.
     pub plan: Plan,
@@ -232,30 +252,41 @@ pub(crate) fn run(args: &PlanArgs, progress: &mut Progress) -> Result<Report, Pl
         include_subfolders: args.include_subfolders,
         json: args.json,
     };
-    let report = scan::run_resolved(
-        &scan_args,
-        scanned.clone(),
-        identity,
-        inside.clone(),
-        progress,
-    )?;
+    // The same scan as `culla scan` (no destination left out), so the log's ids are the
+    // positions it prints; the destination's groups are dropped afterwards.
+    let report = scan::run_resolved(&scan_args, scanned.clone(), identity, None, progress)?;
 
     // Groups by position in capture-time order, as `culla scan` prints them.
     let mut groups = Vec::with_capacity(report.order.len());
+    let mut in_dest: BTreeSet<GroupId> = BTreeSet::new();
     let mut next_member: MemberId = 1;
     for (pos, &i) in report.order.iter().enumerate() {
         let id = GroupId::try_from(pos + 1).unwrap_or(GroupId::MAX);
-        let g = PlanGroup::from_group(id, &report.grouping.groups[i], next_member);
+        let group = &report.grouping.groups[i];
+        let g = PlanGroup::from_group(id, group, next_member);
         next_member += MemberId::try_from(g.members.len()).unwrap_or(0);
-        groups.push(g);
+        if inside
+            .as_deref()
+            .is_some_and(|d| under_folder(&group.folder, d))
+        {
+            in_dest.insert(id);
+        } else {
+            groups.push(g);
+        }
     }
     let known: BTreeSet<GroupId> = groups.iter().map(|g| g.id).collect();
-    let states: BTreeMap<GroupId, GroupState> = decisions.decided().collect();
+    let mut states: BTreeMap<GroupId, GroupState> = decisions.decided().collect();
     let unknown_ids: Vec<GroupId> = states
         .keys()
         .copied()
-        .filter(|g| !known.contains(g))
+        .filter(|g| !known.contains(g) && !in_dest.contains(g))
         .collect();
+    let dest_ids: Vec<GroupId> = states
+        .keys()
+        .copied()
+        .filter(|g| in_dest.contains(g))
+        .collect();
+    states.retain(|g, _| !in_dest.contains(g));
 
     // Volumes and roots.
     let mut unchecked = vec![Unchecked::FreeSpace, Unchecked::SyncRoot, Unchecked::Locks];
@@ -408,6 +439,7 @@ pub(crate) fn run(args: &PlanArgs, progress: &mut Progress) -> Result<Report, Pl
         decisions_path: args.decisions.clone(),
         events: events.len(),
         unknown_ids,
+        dest_ids,
         keep: args.keep.clone(),
         dest_resolved: dest.map(|d| d.path),
         dest_inside_source: inside.is_some(),
@@ -557,6 +589,14 @@ fn add_ancestor_facts(facts: &mut Facts, root: &Source, path: &Path) {
     }
 }
 
+/// Whether `folder` is `dest` or below it (components from the source root, folded). An empty
+/// `dest` (the source itself) holds nothing here: preflight refuses it (P6).
+fn under_folder(folder: &[String], dest: &[String]) -> bool {
+    !dest.is_empty()
+        && folder.len() >= dest.len()
+        && folder.iter().zip(dest).all(|(a, b)| eq_folded(a, b))
+}
+
 fn path_of(root: &Path, components: &[String]) -> PathBuf {
     let mut p = root.to_path_buf();
     p.extend(components);
@@ -566,7 +606,7 @@ fn path_of(root: &Path, components: &[String]) -> PathBuf {
 /// Counts shown under "totals".
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Totals {
-    /// Groups scanned.
+    /// Groups scanned, the destination's left out.
     pub groups: usize,
     /// Groups kept, after the fold (ids the scan has).
     pub kept: usize,
@@ -801,7 +841,7 @@ pub(crate) fn render(r: &Report) -> String {
                 line(format!("dest:        {}", shown(&p.to_string_lossy())));
             }
             if r.dest_inside_source {
-                line("             inside the source: left out of the scan".to_owned());
+                line("             inside the source: its photos are not planned".to_owned());
             }
             line(format!(
                 "same volume: {}",
@@ -833,6 +873,14 @@ pub(crate) fn render(r: &Report) -> String {
         let ids: Vec<String> = r.unknown_ids.iter().map(ToString::to_string).collect();
         line(format!(
             "decisions for groups the scan does not have (ignored): {}",
+            ids.join(", ")
+        ));
+        line(String::new());
+    }
+    if !r.dest_ids.is_empty() {
+        let ids: Vec<String> = r.dest_ids.iter().map(ToString::to_string).collect();
+        line(format!(
+            "decisions for groups inside the destination (ignored): {}",
             ids.join(", ")
         ));
         line(String::new());
@@ -940,9 +988,21 @@ pub(crate) fn render(r: &Report) -> String {
             }
         }
     }
-    line("  not looked up (unknown, so preflight fails closed on them):".to_owned());
-    for u in &r.unchecked {
-        line(format!("    {}", u.text()));
+    for (closed, heading) in [
+        (true, "  unknown, preflight fails closed:"),
+        (false, "  not checked:"),
+    ] {
+        let items: Vec<_> = r
+            .unchecked
+            .iter()
+            .filter(|u| u.fails_closed() == closed)
+            .collect();
+        if !items.is_empty() {
+            line(heading.to_owned());
+            for u in items {
+                line(format!("    {}", u.text()));
+            }
+        }
     }
 
     let t = Totals::of(r);
@@ -1097,6 +1157,7 @@ pub(crate) fn to_json(r: &Report) -> Value {
             Value::Obj(vec![
                 ("id", Value::str(u.id())),
                 ("text", Value::str(u.text())),
+                ("fails_closed", Value::Bool(u.fails_closed())),
             ])
         })
         .collect();
@@ -1143,6 +1204,10 @@ pub(crate) fn to_json(r: &Report) -> Value {
                 (
                     "unknown_groups",
                     Value::Arr(r.unknown_ids.iter().map(|g| Value::int(*g)).collect()),
+                ),
+                (
+                    "destination_groups",
+                    Value::Arr(r.dest_ids.iter().map(|g| Value::int(*g)).collect()),
                 ),
             ]),
         ),

@@ -139,7 +139,8 @@ impl From<io::Error> for ReadTextError {
 
 /// The text of the regular file at `path`, at most `max` bytes. Read-only: it is looked at
 /// without following a link, then opened for reading only. A link, a folder or a cloud
-/// placeholder is refused before anything is opened.
+/// placeholder is refused before anything is opened, and the open handle is checked again
+/// (a regular file, not a placeholder, at most `max` bytes) before anything is read.
 ///
 /// # Errors
 ///
@@ -160,10 +161,21 @@ pub fn read_text(path: &Path, max: u64) -> Result<String, ReadTextError> {
         Lookup::Unreadable(why) => return Err(ReadTextError::Io(io::Error::other(why))),
         Lookup::Folder(_) | Lookup::Other(_) => return Err(ReadTextError::NotAFile),
     }
+    let file = File::open(path)?;
+    // Again on the handle: the path may name another entry since the lookup (threat model
+    // T2b). A link swapped in is followed by the open, so its target is checked here.
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        return Err(ReadTextError::NotAFile);
+    }
+    if attributes(&meta).cloud_placeholder {
+        return Err(ReadTextError::Placeholder);
+    }
+    if meta.len() > max {
+        return Err(ReadTextError::TooLarge { max });
+    }
     let mut bytes = Vec::new();
-    File::open(path)?
-        .take(max.saturating_add(1))
-        .read_to_end(&mut bytes)?;
+    file.take(max.saturating_add(1)).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > max {
         return Err(ReadTextError::TooLarge { max });
     }
@@ -174,10 +186,9 @@ pub fn read_text(path: &Path, max: u64) -> Result<String, ReadTextError> {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TargetFacts {
     /// The facts of the folders it looked at, as components from the target root; the root
-    /// itself is the empty path. A folder it found missing has no entry.
+    /// itself is the empty path. A folder it found missing has no entry; a root that is a
+    /// file is recorded as unreadable, which holds everything under it.
     pub folders: Vec<(Vec<String>, FolderFact)>,
-    /// The root itself is a file: everything under it is blocked.
-    pub root_is_file: bool,
 }
 
 /// Records into `existing` what lies under the target root `root` (at `root_dir`) on the way
@@ -212,12 +223,7 @@ pub fn snapshot_targets(
             out.folders.push((Vec::new(), FolderFact::Exists(a)));
             return out;
         }
-        Lookup::File { .. } => {
-            out.root_is_file = true;
-            out.folders.push((Vec::new(), FolderFact::Unreadable));
-            return out;
-        }
-        Lookup::Unreadable(_) => {
+        Lookup::File { .. } | Lookup::Unreadable(_) => {
             out.folders.push((Vec::new(), FolderFact::Unreadable));
             return out;
         }
