@@ -66,6 +66,10 @@ describe("demo backend", () => {
     const id = other.photos[1]?.id ?? "";
     expect((await slow.photoExif(id)).kind).toBe("pending");
     expect((await slow.photoExif(id)).kind).toBe("ready");
+    const broken = createBackend({ storage: null, scenario: "exif-unreadable" });
+    await broken.chooseSource();
+    const third = await broken.startSession({ sourceId, includeSubfolders: true });
+    await expect(broken.photoExif(third.photos[0]?.id ?? "")).rejects.toThrow();
   });
 
   it("lists recent folders with their status (US-44)", async () => {

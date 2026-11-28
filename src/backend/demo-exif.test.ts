@@ -43,6 +43,10 @@ describe("EXIF overlay strings (US-40)", () => {
     expect(shutterText({ num: 1, den: 8000 })).toBe("1/8000 s");
     expect(shutterText({ num: 10, den: 1250 })).toBe("1/125 s");
     expect(shutterText({ num: 1, den: 3 })).toBe("1/3 s");
+    expect(shutterText({ num: 77, den: 100 })).toBe("1/1.3 s");
+    expect(shutterText({ num: 5, den: 8 })).toBe("1/1.6 s");
+    expect(shutterText({ num: 1, den: 2 })).toBe("1/2 s");
+    expect(shutterText({ num: 4, den: 10 })).toBe("1/2.5 s");
     expect(shutterText({ num: 13, den: 10 })).toBe("1.3 s");
     expect(shutterText({ num: 30, den: 1 })).toBe("30 s");
     expect(shutterText({ num: 0, den: 1 })).toBeNull();

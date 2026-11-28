@@ -35,11 +35,16 @@ const value = (r: Ratio): number | null =>
 /** One decimal at most: `4`, `2.8`, `1.3`. */
 const short = (n: number): string => String(Math.round(n * 10) / 10);
 
-/** `1/250 s` under a second, `2 s` or `1.3 s` from a second up. */
+/**
+ * `1/250 s` under a second, `2 s` or `1.3 s` from a second up. Between 1/3 s and a second the
+ * denominator keeps one decimal, as cameras show it: 0.77 s is `1/1.3 s`, 0.625 s is `1/1.6 s`.
+ */
 export function shutterText(r: Ratio): string | null {
   const t = value(r);
   if (t === null || t <= 0) return null;
-  return t >= 1 ? `${short(t)} s` : `1/${Math.round(1 / t)} s`;
+  if (t >= 1) return `${short(t)} s`;
+  const d = 1 / t;
+  return `1/${d >= 3 ? Math.round(d) : short(d)} s`;
 }
 
 /** `f/4`, `f/2.8`. */

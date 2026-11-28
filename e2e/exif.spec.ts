@@ -19,7 +19,8 @@ test.describe("EXIF overlay (US-40)", () => {
     await expect(row(page, "Lens")).toHaveText("NIKKOR Z 24-70mm f/4 S");
     await expect(row(page, "Exposure")).toHaveText("1/250 s · f/4 · ISO 100 · 24 mm · 0 EV");
     await expect(page.locator("output", { hasText: "Photo details shown" })).toHaveCount(1);
-    // No GPS position and no body serial, ever.
+    // A smoke check only: the guarantee is the PhotoExif type, which has no field for a GPS
+    // position or a body serial (and a Rust test on the command's output when it lands).
     await expect(details(page)).not.toContainText(/GPS|serial|latitude/i);
     expect(await blockingViolations(page)).toEqual([]);
     await page.keyboard.press("i");
@@ -57,6 +58,15 @@ test.describe("EXIF overlay (US-40)", () => {
     await expect(details(page)).toHaveAccessibleName("Photo details · MGF_7004");
     await expect(row(page, "Taken")).toHaveText("14 Nov 2026, 09:01:51, from the file time");
     await expect(row(page, "Lens")).toHaveText("Not recorded");
+  });
+
+  test("says so when the photo details cannot be read, and sorting goes on", async ({ page }) => {
+    await startSorting(page, { scenario: "exif-unreadable" });
+    await page.keyboard.press("i");
+    await expect(details(page).getByText("Could not read the photo details.")).toBeVisible();
+    await page.keyboard.press("ArrowRight");
+    await expect(tally(page, "kept")).toHaveText("1 kept");
+    await expect(details(page)).toHaveAccessibleName("Photo details · MGF_7002");
   });
 
   test("shows loading dots until the EXIF pass reaches the photo", async ({ page }) => {

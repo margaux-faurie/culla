@@ -650,6 +650,9 @@ export function createBackend(options: DemoOptions = {}): Backend {
     },
 
     photoExif: async (photoId) => {
+      if (scenario.exifUnreadable === true) {
+        throw new Error("EXIF unreadable");
+      }
       for (const session of sessions.values()) {
         const entry = session.entries.find((e) => e.photo.id === photoId);
         if (entry === undefined) continue;

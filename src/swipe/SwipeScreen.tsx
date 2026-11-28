@@ -434,7 +434,7 @@ export function SwipeScreen(props: SwipeScreenProps) {
               onDrag={(dx, dy) => panZoom((z) => panBy(z.view, z.size, z.offset, dx, dy))}
             />
           )}
-          {exifOpen && photo !== undefined && <ExifOverlay photo={photo} />}
+          {exifOpen && photo !== undefined && <ExifOverlay key={photo.id} photo={photo} />}
         </div>
 
         {photo !== undefined && <Actions photo={photo} decision={decision} onCommand={run} />}
