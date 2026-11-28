@@ -210,6 +210,13 @@ describe("isReleaseUrl", () => {
     expect(isReleaseUrl("https://github.com/margaux-faurie/culla/releases/../../../x")).toBe(false);
     expect(isReleaseUrl("https://github.com/margaux-faurie/culla/releases\\x")).toBe(false);
     expect(isReleaseUrl("/releases/")).toBe(false);
+    expect(isReleaseUrl("https://github.com@evil.org/margaux-faurie/culla/releases/")).toBe(false);
+    expect(isReleaseUrl("https://github.com:x@evil.org/margaux-faurie/culla/releases/")).toBe(
+      false,
+    );
+    expect(isReleaseUrl("https://github.com/margaux-faurie/culla/releases/%2e%2e/%2e%2e/x")).toBe(
+      false,
+    );
   });
 
   it("holds for the release in STATUS, if any", () => {

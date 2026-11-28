@@ -42,11 +42,6 @@ export const STATUS: InstallStatus = {
 /** Stands in for the page's own origin: only the origin comparison matters, not its value. */
 const SELF = "https://self.invalid";
 
-/**
- * A video source must be a path on the demo site itself: no third-party host, no embed. Browsers
- * read a backslash as a slash (`/\evil.com` is `//evil.com`), so any backslash is refused, and
- * the path must still resolve to the page's own origin.
- */
 const RELEASES = "https://github.com/margaux-faurie/culla/releases/";
 
 /**
@@ -68,6 +63,11 @@ export function isReleaseUrl(url: string): boolean {
   }
 }
 
+/**
+ * A video source must be a path on the demo site itself: no third-party host, no embed. Browsers
+ * read a backslash as a slash (`/\evil.com` is `//evil.com`), so any backslash is refused, and
+ * the path must still resolve to the page's own origin.
+ */
 export function isSelfHosted(path: string): boolean {
   if (!path.startsWith("/") || path.includes("\\")) {
     return false;
