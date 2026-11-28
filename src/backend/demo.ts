@@ -40,6 +40,7 @@ import { type DemoGroup, joinPath, type RouteOptions, rejectedRoot, routeOf } fr
 import { type Scenario, type ScenarioName, scenarioFromSearch, scenarioOf } from "./demo-scenarios";
 import {
   appliedDay,
+  openAfterApply,
   parseSessions,
   renderSessions,
   resumable,
@@ -263,10 +264,17 @@ interface DemoSession {
   confirmed: string | null;
   /** It existed before this start (US-37). */
   readonly resumed: boolean;
-  /** "Start over" archived it: it records nothing more. */
+  /** "Start over" archived it: it records and plans nothing more. */
   archived: boolean;
-  /** The day its last plan was applied, until a new decision. */
+  /**
+   * Photos this folder's closed plans applied, kept apart from `facts.applied`, which also holds a
+   * demo scenario's seeded names: only these are stored for the next visit.
+   */
+  appliedByPlans: Set<string>;
+  /** The day the folder's last plan was applied, or null. */
   appliedOn: string | null;
+  /** Opening the folder again resumes this session (`StoredSession.open`). */
+  open: boolean;
 }
 
 /** A plan being applied: its simulated run and the time it was last advanced. */
@@ -339,6 +347,9 @@ export function createBackend(options: DemoOptions = {}): Backend {
    * no new draft and confirms nothing more.
    */
   const unlocked = (session: DemoSession): DemoSession => {
+    if (session.archived) {
+      throw new Error("session archived");
+    }
     if (session.confirmed !== null) {
       throw new Error("plan already confirmed");
     }
@@ -473,7 +484,9 @@ export function createBackend(options: DemoOptions = {}): Backend {
       confirmed: null,
       resumed: from !== undefined,
       archived: false,
+      appliedByPlans: new Set(),
       appliedOn: null,
+      open: true,
     };
     sessions.set(id, session);
     return infoOf(session);
@@ -513,8 +526,9 @@ export function createBackend(options: DemoOptions = {}): Backend {
   const recordOf = (session: DemoSession): StoredSession => ({
     events: [...session.events],
     rawFollows: session.options.rawFollows,
-    applied: [...session.facts.applied],
+    applied: [...session.appliedByPlans],
     appliedOn: session.appliedOn,
+    open: session.open,
   });
 
   /** A new session with the defaults (SPEC §4.2); a resumed one also gets its stored session. */
@@ -535,12 +549,14 @@ export function createBackend(options: DemoOptions = {}): Backend {
       from,
     );
     // Photos applied by an earlier plan stay held as applied, in a fresh session too (INV-04).
-    const applied = stored.get(sourceId)?.applied ?? [];
-    if (applied.length > 0) {
+    const history = stored.get(sourceId);
+    if (history !== undefined) {
       const session = sessionOf(info.id);
+      session.appliedByPlans = new Set(history.applied);
+      session.appliedOn = history.appliedOn;
       session.facts = {
         ...session.facts,
-        applied: new Set([...session.facts.applied, ...applied]),
+        applied: new Set([...session.facts.applied, ...history.applied]),
       };
     }
     return info;
@@ -669,14 +685,21 @@ export function createBackend(options: DemoOptions = {}): Backend {
 
     startOver: async (sessionId) => {
       const session = unlocked(sessionOf(sessionId));
+      if (scenario.startOverRefused === true) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        throw new Error("start over refused");
+      }
       // The app archives the old session with its events (FE §6.1 step 4); the demo forgets it.
       session.archived = true;
       const sourceId = session.source.summary.id;
-      // Photos applied by an earlier plan stay applied: only the decisions are put aside.
-      const applied = stored.get(sourceId)?.applied ?? [];
+      // Photos applied by an earlier plan stay applied, and the folder still shows when it was
+      // applied: only the decisions are put aside.
+      const { appliedByPlans, appliedOn } = session;
       persist(
         sourceId,
-        applied.length === 0 ? null : { events: [], rawFollows: true, applied, appliedOn: null },
+        appliedByPlans.size === 0 && appliedOn === null
+          ? null
+          : { events: [], rawFollows: true, applied: [...appliedByPlans], appliedOn, open: false },
       );
       return begin(session.source, session.options.includeSubfolders);
     },
@@ -740,7 +763,7 @@ export function createBackend(options: DemoOptions = {}): Backend {
         throw new Error("session archived");
       }
       session.events.push(event);
-      session.appliedOn = null;
+      session.open = true;
       persist(session.source.summary.id, recordOf(session));
     },
 
@@ -844,12 +867,16 @@ export function createBackend(options: DemoOptions = {}): Backend {
 
     closeApply: async (planId) => {
       const { session, sim } = applyOf(planId);
+      if (session.archived) {
+        throw new Error("session archived");
+      }
       if (!closeSim(sim)) {
         throw new Error("the apply has not ended");
       }
       // The plan's applied groups are locked for good (§5.4); a new plan holds them as applied
       // and sees the files where they now are.
-      const applied = new Set([...session.facts.applied, ...appliedNames(sim)]);
+      for (const name of appliedNames(sim)) session.appliedByPlans.add(name);
+      const applied = new Set([...session.facts.applied, ...session.appliedByPlans]);
       session.facts = { ...session.facts, applied };
       for (const f of sim.files) {
         if (f.state === "done" || f.state === "copiedSourceKept")
@@ -858,6 +885,13 @@ export function createBackend(options: DemoOptions = {}): Backend {
       session.confirmed = null;
       session.latest = null;
       session.appliedOn = appliedDay(wall());
+      // A stopped apply, or a failed or held group, leaves decided photos unapplied: the folder
+      // stays open to resume, so none of those decisions is dropped unasked (proposed, SPEC §10).
+      session.open = openAfterApply(
+        session.events,
+        (group) => session.entries[group - 1]?.group.name,
+        applied,
+      );
       persist(session.source.summary.id, recordOf(session));
       if (interrupted?.planId === planId) interrupted = null;
     },

@@ -6,9 +6,9 @@ const position = (page: Page) => page.locator(".swipe-tally .strong");
 const recent2026 = (page: Page) => page.getByRole("button", { name: /^2026/ });
 
 /** Sorts the first photos of the demo folder (keep, keep, reject), then reloads the page. */
-async function sortThenReload(page: Page) {
+async function sortThenReload(page: Page, scenario: string | null = null) {
   await rememberKeepMode(page, "move");
-  await page.goto("/");
+  await page.goto(scenario === null ? "/" : `/?scenario=${scenario}`);
   await page.getByRole("button", { name: "Choose a folder" }).click();
   await expect(swipe(page)).toBeFocused();
   await page.keyboard.press("ArrowRight");
@@ -34,6 +34,9 @@ test.describe("resume a session (US-37, proposed in SPEC §10)", () => {
     await expect(page.locator(".toast")).toHaveText(
       "Picked up where you left off: 3 of 24 photos decided.",
     );
+    await expect(
+      page.locator("output", { hasText: "Picked up where you left off: 3 of 24 photos decided" }),
+    ).toHaveCount(1);
     expect(await blockingViolations(page)).toEqual([]);
     // The undo stack came back too: Ctrl+Z undoes the reject and jumps to it.
     await page.keyboard.press("Control+z");
@@ -98,5 +101,24 @@ test.describe("resume a session (US-37, proposed in SPEC §10)", () => {
     await page.getByRole("button", { name: "Choose a folder" }).click();
     await expect(swipe(page)).toBeFocused();
     await expect(page.getByRole("button", { name: "Start over" })).toHaveCount(0);
+  });
+
+  test("a refused Start over keeps the decisions and says so, even if the dialog was closed meanwhile", async ({
+    page,
+  }) => {
+    await sortThenReload(page, "start-over-refused");
+    await recent2026(page).click();
+    await page.getByRole("button", { name: "Start over" }).click();
+    const dialog = page.getByRole("dialog", { name: "Start this folder over?" });
+    await dialog.getByRole("button", { name: "Start over" }).click();
+    // What Chromium does on a second Esc: it closes the modal even though cancel was prevented.
+    await page.evaluate("document.querySelector('dialog.confirm').close()");
+    await expect(dialog.getByRole("alert")).toHaveText(
+      "Could not start over. Your decisions are kept.",
+    );
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await expect(tally(page, "kept")).toHaveText("2 kept");
   });
 });

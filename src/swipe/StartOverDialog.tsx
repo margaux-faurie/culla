@@ -19,6 +19,8 @@ export function StartOverDialog({ open, decided, onCancel, onConfirm }: StartOve
   const ref = useRef<HTMLDialogElement>(null);
   const keepRef = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState(false);
+  // Busy is read by the close handler, which may run before a render.
+  const busyRef = useRef(false);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -36,16 +38,25 @@ export function StartOverDialog({ open, decided, onCancel, onConfirm }: StartOve
   }, [open]);
 
   const confirm = async () => {
-    if (busy) {
+    if (busyRef.current) {
       return;
     }
+    busyRef.current = true;
     setBusy(true);
     setFailed(false);
     try {
       await onConfirm();
     } catch {
+      busyRef.current = false;
       setFailed(true);
       setBusy(false);
+      // The browser may have closed the dialog meanwhile (a second Esc): open it again, so the
+      // failure is seen and the decisions are known to be kept.
+      const dialog = ref.current;
+      if (dialog !== null && !dialog.open) {
+        dialog.showModal();
+        keepRef.current?.focus();
+      }
     }
   };
 
@@ -58,11 +69,12 @@ export function StartOverDialog({ open, decided, onCancel, onConfirm }: StartOve
       aria-describedby="start-over-body"
       onCancel={(event: { preventDefault: () => void }) => {
         event.preventDefault();
-        if (!busy) onCancel();
+        if (!busyRef.current) onCancel();
       }}
       onClose={() => {
-        // A close the browser made on its own (see ConfirmDialog): keep the state in step.
-        if (ref.current?.open !== true && open) onCancel();
+        // A close the browser made on its own (see ConfirmDialog): keep the state in step, unless
+        // Start over is running, whose outcome the dialog still has to show.
+        if (ref.current?.open !== true && open && !busyRef.current) onCancel();
       }}
     >
       <h2 id="start-over-title" className="panel-title">

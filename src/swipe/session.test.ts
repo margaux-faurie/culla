@@ -162,7 +162,7 @@ describe("swipe session", () => {
     expect(counts(s)).toEqual({ total: 5, kept: 2, rejected: 0, undecided: 3 });
     expect(currentPhoto(s)).toBe("p3");
     expect(s.feedback).toEqual({ kind: "resumed", decided: 2, total: 5 });
-    expect(s.announcement).toBe("Sorting resumed: 2 of 5 photos decided");
+    expect(s.announcement).toBe("Picked up where you left off: 2 of 5 photos decided");
     // The redo stack came back too: redo rejects p3 again.
     const redone = swipeReducer(s, { type: "redo", now: 3 });
     expect(stateOf(redone.folded, 3)).toBe("rejected");
@@ -182,5 +182,15 @@ describe("swipe session", () => {
     const s = resumedState(photos, [...good, bad]);
     expect(s.log).toEqual(good);
     expect(currentPhoto(s)).toBe("p2");
+  });
+
+  it("cuts a log with a repeated seq by position, keeping every event before it", () => {
+    const log = run([keep, keep]).log;
+    const repeated = { ...(log[1] as (typeof log)[number]), group_id: 3 };
+    const s = resumedState(photos, [...log, repeated]);
+    // The fold stops at the third event (seq 2 again): both first events stay.
+    expect(s.log).toEqual(log);
+    expect(counts(s).kept).toBe(2);
+    expect(currentPhoto(s)).toBe("p3");
   });
 });

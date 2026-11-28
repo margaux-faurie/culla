@@ -317,25 +317,46 @@ describe("demo backend", () => {
       expect((await third.startSession({ sourceId, includeSubfolders: true })).resumed).toBe(false);
     });
 
-    it("a folder applied since its last decision shows as applied and starts fresh", async () => {
-      const storage = memoryStorage();
-      const wall = () => new Date(2026, 10, 28, 15);
-      const first = createBackend({ storage, wall, seed: { ...EMPTY_MEMORY, keepMode: "move" } });
-      const sourceId = (await first.chooseSource())?.id ?? "";
-      const session = await first.startSession({ sourceId, includeSubfolders: true });
-      await first.updateSession(session.id, { destinationId: "dst-selects" });
-      await first.recordEvent(session.id, keep(1, 1));
-      const plan = await first.reviewPlan(session.id, 1);
-      const confirmed = await first.confirmPlan(plan.planId);
+    /** Plans, confirms and applies the session's decisions up to `upto` on a simulated clock. */
+    async function applyUpTo(
+      backend: ReturnType<typeof createBackend>,
+      clock: { t: number },
+      sessionId: string,
+      upto: number,
+      stop = false,
+    ) {
+      await backend.updateSession(sessionId, { keepMode: "move", destinationId: "dst-selects" });
+      const plan = await backend.reviewPlan(sessionId, upto);
+      const confirmed = await backend.confirmPlan(plan.planId);
       const planId = confirmed.kind === "confirmed" ? confirmed.planId : "";
-      await first.startApply(planId);
-      let status = await first.applyStatus(planId);
-      for (let i = 0; i < 200 && status.state.kind !== "ended"; i += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-        status = await first.applyStatus(planId);
+      await backend.startApply(planId);
+      if (stop) await backend.stopApply(planId);
+      let status = await backend.applyStatus(planId);
+      for (let i = 0; i < 1000 && status.state.kind !== "ended"; i += 1) {
+        clock.t += 100;
+        status = await backend.applyStatus(planId);
       }
       expect(status.state.kind).toBe("ended");
-      await first.closeApply(planId);
+      await backend.closeApply(planId);
+      return status;
+    }
+
+    const options = (storage: DemoStorage, clock: { t: number }) => ({
+      storage,
+      wall: () => new Date(2026, 10, 28, 15),
+      now: () => clock.t,
+      seed: { ...EMPTY_MEMORY, keepMode: "move" as const },
+      scenario: null,
+    });
+
+    it("a folder applied since its last decision shows as applied and starts fresh", async () => {
+      const storage = memoryStorage();
+      const clock = { t: 0 };
+      const first = createBackend(options(storage, clock));
+      const sourceId = (await first.chooseSource())?.id ?? "";
+      const session = await first.startSession({ sourceId, includeSubfolders: true });
+      await first.recordEvent(session.id, keep(1, 1));
+      await applyUpTo(first, clock, session.id, 1);
 
       const again = createBackend({ storage });
       expect((await again.chooseSource())?.status).toEqual({ kind: "applied", on: "28 Nov" });
@@ -346,6 +367,67 @@ describe("demo backend", () => {
       await again.recordEvent(next.id, keep(1, 1));
       const replan = await again.reviewPlan(next.id, 1);
       expect(replan.held.map((h) => h.reason)).toEqual(["applied"]);
+    });
+
+    it("a stopped apply leaves the folder in progress: a reload resumes every decision", async () => {
+      const storage = memoryStorage();
+      const clock = { t: 0 };
+      const first = createBackend(options(storage, clock));
+      const sourceId = (await first.chooseSource())?.id ?? "";
+      const session = await first.startSession({ sourceId, includeSubfolders: true });
+      for (const [i, group] of [1, 2, 3].entries()) {
+        await first.recordEvent(session.id, keep(i + 1, group));
+      }
+      const status = await applyUpTo(first, clock, session.id, 3, true);
+      expect(status.state.kind === "ended" && status.state.end).toBe("cancelled");
+
+      const again = createBackend({ storage });
+      expect((await again.chooseSource())?.status).toEqual({ kind: "inProgress", decided: 3 });
+      const resumed = await again.startSession({ sourceId, includeSubfolders: true });
+      expect(resumed.resumed).toBe(true);
+      expect(resumed.events).toHaveLength(3);
+    });
+
+    it("stores only what plans applied, never a scenario's seeded facts", async () => {
+      const storage = memoryStorage();
+      // `held` seeds MGF_7002 as applied by an earlier plan.
+      const held = createBackend({ storage, scenario: "held" });
+      const sourceId = (await held.chooseSource())?.id ?? "";
+      const session = await held.startSession({ sourceId, includeSubfolders: true });
+      await held.recordEvent(session.id, keep(1, 2));
+      expect(storage.data.get("culla-demo:sessions")?.includes("MGF_7002")).toBe(false);
+
+      const plain = createBackend({ storage, scenario: null });
+      const next = await plain.startSession({ sourceId, includeSubfolders: true });
+      await plain.updateSession(next.id, { keepMode: "move" });
+      const plan = await plain.reviewPlan(next.id, 1);
+      expect(plan.held).toEqual([]);
+      expect(plan.counts.kept).toBe(1);
+    });
+
+    it("Start over keeps the folder's applied day; an archived session takes no more changes", async () => {
+      const storage = memoryStorage();
+      const clock = { t: 0 };
+      const first = createBackend(options(storage, clock));
+      const sourceId = (await first.chooseSource())?.id ?? "";
+      const session = await first.startSession({ sourceId, includeSubfolders: true });
+      await first.recordEvent(session.id, keep(1, 1));
+      await applyUpTo(first, clock, session.id, 1);
+      await first.recordEvent(session.id, keep(2, 2));
+
+      const again = createBackend({ storage });
+      expect((await again.chooseSource())?.status).toEqual({ kind: "inProgress", decided: 2 });
+      const resumed = await again.startSession({ sourceId, includeSubfolders: true });
+      const fresh = await again.startOver(resumed.id);
+      expect((await again.chooseSource())?.status).toEqual({ kind: "applied", on: "28 Nov" });
+      await expect(again.updateSession(resumed.id, { rawFollows: false })).rejects.toThrow();
+      await expect(again.reviewPlan(resumed.id, 0)).rejects.toThrow();
+      await expect(again.startOver(resumed.id)).rejects.toThrow();
+      // The new session still holds the applied photo back.
+      await again.updateSession(fresh.id, { keepMode: "move" });
+      await again.recordEvent(fresh.id, keep(1, 1));
+      const plan = await again.reviewPlan(fresh.id, 1);
+      expect(plan.held.map((h) => h.reason)).toEqual(["applied"]);
     });
   });
 });

@@ -4,8 +4,9 @@
  * previews still running, an unplugged drive, the two things preflight at confirm can find, and
  * for the apply (US-36, US-38): a slow reader, a card pulled mid-apply (cleanly, or leaving a lost
  * file), a full destination, a verify mismatch, a file another app holds, and an apply found
- * interrupted at launch, with its card in or out; for the start screen, a folder with no photos; and,
- * for zoom (US-39), a full image that cannot be read or is slow to come.
+ * interrupted at launch, with its card in or out; for the start screen, a folder with no photos;
+ * for zoom (US-39), a full image that cannot be read or is slow to come; and, for a resumed
+ * session, a "Start over" the backend refuses.
  *
  * Chosen by a query parameter, `?scenario=<name>`, read by the demo backend only (`demo.ts`): the
  * desktop backend never looks at it, and the demo bundle is the only one with this module (ADR
@@ -36,6 +37,7 @@ export const SCENARIOS = [
   "empty-folder",
   "full-image-unreadable",
   "full-image-slow",
+  "start-over-refused",
 ] as const;
 
 export type ScenarioName = (typeof SCENARIOS)[number];
@@ -65,6 +67,8 @@ export interface Scenario {
   readonly fullImageUnreadable?: boolean;
   /** Zoom's full image takes this many milliseconds to come (a slow card). */
   readonly fullImageDelayMs?: number;
+  /** "Start over" is refused after a moment (US-37): the decisions are kept and the dialog says so. */
+  readonly startOverRefused?: boolean;
 }
 
 const names = (...list: string[]): ReadonlySet<string> => new Set(list);
@@ -115,6 +119,7 @@ const TABLE: Readonly<Record<ScenarioName, Scenario>> = {
   "empty-folder": { facts: NORMAL_FACTS, emptyFolder: true },
   "full-image-unreadable": { facts: NORMAL_FACTS, fullImageUnreadable: true },
   "full-image-slow": { facts: NORMAL_FACTS, fullImageDelayMs: 1500 },
+  "start-over-refused": { facts: NORMAL_FACTS, startOverRefused: true },
 };
 
 const NORMAL: Scenario = { facts: NORMAL_FACTS };
