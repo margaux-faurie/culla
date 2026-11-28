@@ -178,10 +178,11 @@ export const heldLine = (h: HeldPhoto): string =>
   `${h.name} (${h.decision}, in ${h.folder}): ${holdText(h.reason)}.`;
 
 /** The held-back summary line: `2 photos are held back. They stay where they are.` */
-export function heldSummary(held: number): string {
+export function heldSummary(held: number, planned: number): string {
+  const rest = planned > 0 ? ", and the rest can be applied" : "";
   return held === 1
-    ? "1 photo is held back. It stays where it is, and the rest can be applied."
-    : `${count(held, "photo")} are held back. They stay where they are, and the rest can be applied.`;
+    ? `1 photo is held back. It stays where it is${rest}.`
+    : `${count(held, "photo")} are held back. They stay where they are${rest}.`;
 }
 
 export function warningText(warning: PlanWarning): string {
@@ -339,9 +340,12 @@ export function confirmText(plan: ReviewPlan): ConfirmText {
   return { title: `${label}?`, body, confirm: label, cancel: "Go back" };
 }
 
-/** The notes that never stop the apply: taken names, camera protection, then warnings (FE §8). */
-export function worthKnowing(plan: ReviewPlan): string[] {
-  const notes = plan.collisions.map(collisionText);
+/**
+ * The notes shown near Apply, one line each and only when they apply (Margaux, 28 Nov 2026):
+ * camera-protected photos, then a cloud-synced destination.
+ */
+export function visibleNotes(plan: ReviewPlan): string[] {
+  const notes: string[] = [];
   for (const [branch, what] of [
     [plan.kept, "kept"],
     [plan.rejected, "rejected"],
@@ -349,7 +353,18 @@ export function worthKnowing(plan: ReviewPlan): string[] {
     const text = branch === null ? null : protectedText(branch, what, plan.estimate.sourceVolume);
     if (text !== null) notes.push(text);
   }
-  for (const w of plan.warnings) notes.push(warningText(w));
+  for (const w of plan.warnings) {
+    if (w.kind === "cloudSynced") notes.push(warningText(w));
+  }
+  return notes;
+}
+
+/** The notes that never stop the apply and stay folded: taken names, then the other warnings. */
+export function worthKnowing(plan: ReviewPlan): string[] {
+  const notes = plan.collisions.map(collisionText);
+  for (const w of plan.warnings) {
+    if (w.kind !== "cloudSynced") notes.push(warningText(w));
+  }
   return notes;
 }
 

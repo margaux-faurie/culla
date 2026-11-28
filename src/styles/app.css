@@ -262,17 +262,6 @@ kbd {
   font-weight: 600;
 }
 
-.panel {
-  display: flex;
-  flex: 999 1 560px;
-  flex-direction: column;
-  gap: 22px;
-  min-width: 0;
-  padding: var(--space-8) 36px;
-  border-radius: var(--radius-panel);
-  background: var(--paper-raised);
-}
-
 .panel-title {
   margin: 0;
   font-size: 26px;
@@ -296,89 +285,7 @@ kbd {
   accent-color: var(--ink);
 }
 
-/* The route view (SPEC §2, "Where photos go"). */
-
-.route {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.route-step {
-  position: relative;
-  display: flex;
-  gap: 20px;
-  padding-bottom: var(--space-4);
-}
-
-/* The line joining the steps, drawn behind the marks. */
-.route-step:not(.route-step-last)::before {
-  content: "";
-  position: absolute;
-  top: 10px;
-  bottom: 0;
-  left: 9px;
-  width: 3px;
-  background: var(--ink);
-}
-
-.route-mark {
-  position: relative;
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 21px;
-  height: 21px;
-  margin-top: 4px;
-  border-radius: 50%;
-}
-
-.route-mark-origin {
-  background: var(--ink);
-}
-
-.route-mark-keep {
-  background: var(--keep-ink);
-  color: var(--paper);
-}
-
-.route-mark-reject {
-  border: 3px solid var(--ink-muted);
-  background: var(--paper-raised);
-  color: var(--ink-muted);
-}
-
-.route-mark-stay::after {
-  content: "";
-  width: 21px;
-  height: 3px;
-  background: var(--ink-muted);
-}
-
-.route-body {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.route-label {
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.route-label-keep {
-  color: var(--keep-ink);
-}
-
-.route-label-muted {
-  color: var(--ink-muted);
-}
-
+/* The Kept branch's destination on review: struck through when its drive is not connected. */
 .route-place {
   display: inline-flex;
   flex-wrap: wrap;
@@ -392,27 +299,6 @@ kbd {
 .route-place.unavailable {
   color: var(--ink-muted);
   text-decoration: line-through;
-}
-
-.route-note {
-  color: var(--ink-muted);
-  font-size: 14px;
-  overflow-wrap: anywhere;
-}
-
-.route-note b {
-  color: var(--ink);
-}
-
-.route-example {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-2) var(--space-3);
-  border-radius: 12px;
-  background: var(--paper);
-  font-size: 14px;
-  overflow-wrap: anywhere;
 }
 
 .keep-controls {
@@ -915,13 +801,12 @@ kbd {
 }
 
 /* The heading takes focus when the review opens; its ring hugs the text. */
-.review-intro .title,
-.review > .title {
+.review-intro .title {
   align-self: flex-start;
 }
 
-/* Lean review (decided by Margaux 28 Nov 2026): the route in short on the left, what stops the
-   apply and Apply on the right, the details folded under the route. */
+/* Lean review decided by Margaux (28 Nov 2026); this layout proposed, SPEC §10: the route in short
+   on the left, what stops the apply and Apply on the right, the details folded under the route. */
 .review-main {
   display: grid;
   grid-template-areas:
@@ -1586,12 +1471,6 @@ kbd {
   font-size: 14px;
 }
 
-.apply-route {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
 .log-dialog {
   max-width: min(960px, calc(100vw - 32px));
 }
@@ -1647,10 +1526,6 @@ kbd {
   }
 
   .apply-now {
-    padding: var(--space-6) 20px;
-  }
-
-  .panel {
     padding: var(--space-6) 20px;
   }
 

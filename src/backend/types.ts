@@ -135,12 +135,6 @@ export interface SourceSummary {
   readonly connected: boolean;
 }
 
-/** One real photo of the session and its route, for the route view's example. */
-export interface RouteExample {
-  readonly photo: PhotoSummary;
-  readonly route: PhotoRoute;
-}
-
 /** Files in the compact form `MGF_7273 .JPG .NEF .xmp`, split only for emphasis. Display only. */
 export interface FilesLabel {
   /** `MGF_7273` */
@@ -292,8 +286,6 @@ export interface SessionInfo {
   readonly rejectedFolderExists: boolean;
   /** Groups in display order, each with its route under the session's options. */
   readonly photos: readonly SessionPhoto[];
-  /** The photo the review's route view shows as its example, or null when there is none. */
-  readonly exampleId: string | null;
   /** The session was resumed: it existed before this start (US-37). */
   readonly resumed: boolean;
   /** The stored decision log, in order; empty for a new session. The UI folds it to resume. */
@@ -566,6 +558,8 @@ export interface ApplyStatus {
   readonly runId: string;
   readonly state: ApplyState;
   readonly progress: ApplyProgress;
+  /** Photos of the confirmed plan per branch, for the short route (held photos stay in place). */
+  readonly counts: PlanCounts;
   /** The file being worked on, or null between files and while not running. */
   readonly current: CurrentFile | null;
   /** Set once the run has ended. */

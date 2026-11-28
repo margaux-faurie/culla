@@ -47,7 +47,12 @@ test.describe("apply screen (US-36)", () => {
     await expect(now.getByText("MGF_7001 · JPEG and NEF")).toBeVisible();
     await expect(now.getByText("Reading the copy back and checking it matches")).toBeVisible();
     await expect(now.getByText("Then the original leaves E:\\2026")).toBeVisible();
-    await expect(page.getByRole("list", { name: "Where your photos will go" })).toBeVisible();
+    // The same short route as the review (Margaux, 28 Nov 2026).
+    const route = page.getByRole("list", { name: "Where your photos will go" });
+    await expect(branch(page, "2 kept")).toBeVisible();
+    await expect(route.getByText("Moved to D:\\Photos\\Selects 2026")).toBeVisible();
+    await expect(branch(page, "1 rejected")).toBeVisible();
+    await expect(branch(page, "21 left in place")).toBeVisible();
     expect(await blockingViolations(page)).toEqual([]);
 
     await expect(page.getByRole("heading", { level: 1, name: "Apply finished" })).toBeFocused({

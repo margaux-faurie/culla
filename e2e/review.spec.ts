@@ -197,11 +197,30 @@ test.describe("review screen (US-34)", () => {
     await expect(
       page.getByText(/^Checked\. Nothing stops the apply\. \d+ things are worth knowing\.$/),
     ).toBeVisible();
+    // A cloud-synced destination stays in view near Apply (Margaux, 28 Nov 2026).
+    const side = page.getByRole("complementary", { name: "Before you apply" });
+    await expect(side.getByText(/is inside a cloud-synced folder/)).toBeVisible();
+    await expect(page.getByText(/open in another app/)).toBeHidden();
     await openFold(page, /^What the check found/);
-    await expect(page.getByText(/is inside a cloud-synced folder/)).toBeVisible();
     await expect(page.getByText(/open in another app/)).toBeVisible();
     await expect(page.getByText(/over 260 characters/)).toBeVisible();
     await expect(applyButton(page)).toBeEnabled();
+  });
+
+  test("keeps camera-protected photos in view near Apply", async ({ page }) => {
+    await startWith(page, null);
+    // MGF_7276, the 11th photo, is protected on the camera.
+    for (let i = 0; i < 10; i += 1) await page.keyboard.press("Shift+ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Enter");
+    await expect(page.getByText("Checking")).toBeHidden();
+    const side = page.getByRole("complementary", { name: "Before you apply" });
+    await expect(
+      side.getByText(
+        "1 kept photo is protected on the camera. It is copied, and the original stays on Photos drive (E:).",
+      ),
+    ).toBeVisible();
+    expect(await blockingViolations(page)).toEqual([]);
   });
 
   test("asks which drive when two share the card's serial", async ({ page }) => {

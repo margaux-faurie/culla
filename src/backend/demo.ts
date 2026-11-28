@@ -67,6 +67,7 @@ import type {
   InterruptedApply,
   OtherFile,
   PhotoSummary,
+  PlanCounts,
   ReviewPlan,
   SessionChange,
   SessionInfo,
@@ -285,18 +286,8 @@ interface DemoSession {
 interface DemoApply {
   readonly session: DemoSession;
   readonly sim: Sim;
+  readonly counts: PlanCounts;
   last: number;
-}
-
-/** The route view's example: a photo in a subfolder with a NEF and a sidecar, if there is one. */
-function exampleOf(entries: readonly DemoEntry[]): DemoEntry | null {
-  const rich = (e: DemoEntry) => e.group.raw !== null && e.group.sidecars.length > 0;
-  return (
-    entries.find((e) => e.group.folder.length > 0 && rich(e)) ??
-    entries.find(rich) ??
-    entries[0] ??
-    null
-  );
 }
 
 /** Simulated backend for the web demo and for tests. There is no Rust side in the browser. */
@@ -461,7 +452,6 @@ export function createBackend(options: DemoOptions = {}): Backend {
       rejectedFolder: rejectedRoot(source.summary.folder.path),
       rejectedFolderExists: source.rejectedFolderExists,
       photos: entries.map((e) => ({ ...e.photo, route: routeOf(e.group, routeOptions) })),
-      exampleId: exampleOf(entries)?.photo.id ?? null,
       resumed: session.resumed,
       events: [...session.events],
     };
@@ -587,11 +577,12 @@ export function createBackend(options: DemoOptions = {}): Backend {
     return apply;
   };
 
-  const statusOf = ({ sim }: DemoApply): ApplyStatus => ({
+  const statusOf = ({ sim, counts }: DemoApply): ApplyStatus => ({
     planId: sim.cfg.planId,
     runId: runIdOf(sim),
     state: applyStateOf(sim),
     progress: progressOf(sim),
+    counts,
     current: currentOf(sim),
     report: reportOf(sim),
   });
@@ -618,7 +609,7 @@ export function createBackend(options: DemoOptions = {}): Backend {
       },
       (photoId) => groupIds.get(photoId) ?? 0,
     );
-    const apply = { session, sim, last: now() };
+    const apply = { session, sim, counts: confirmed.counts, last: now() };
     applies.set(confirmed.planId, apply);
     return apply;
   };

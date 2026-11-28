@@ -10,6 +10,8 @@ import type {
   SessionPhoto,
   VolumeChoice,
 } from "../backend/types";
+import { leftInPlaceNote } from "../route/places";
+import { BranchTo, RouteBranch, ShortRoute } from "../route/ShortRoute";
 import { counts, type SwipeState, stateAt } from "../swipe/session";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { KeepControls } from "./KeepControls";
@@ -28,11 +30,13 @@ import {
   keepRouteHint,
   kindText,
   otherFilesText,
+  plannedPhotos,
   primaryLabel,
   rawNote,
   readySummary,
   replannedSummary,
   replannedText,
+  visibleNotes,
   worthKnowing,
 } from "./model";
 
@@ -60,12 +64,12 @@ type Status = "checking" | "ready" | "failed" | "notReady" | "needsRoute";
 const STRIP_PREVIEW = 12;
 
 /**
- * Review screen (SPEC §4.2, US-34, US-35) on cream, lean (decided by Margaux 28 Nov 2026: essentials
- * visible, details folded): one sentence per branch with a big count, move or copy and the
- * destination in the Kept branch, one thumbnail strip per branch, and beside them what stops the
- * apply and Apply behind a confirm dialog. The findings, the time and size, every file and the
- * options are folded under the route. The plan
- * comes from the backend as display strings; nothing here builds a path. Opening it changes no
+ * Review screen (SPEC §4.2, US-34, US-35) on cream. Lean review decided by Margaux (28 Nov 2026:
+ * essentials visible, details folded); this layout is proposed, SPEC §10 "Lean review": the short
+ * route with move or copy and the destination in the Kept branch and one thumbnail strip per
+ * branch; beside it what stops the apply, the camera-protected and cloud-synced notes, and Apply
+ * behind a confirm dialog; the findings, the time and size, every file and the options folded
+ * under the route. The plan comes from the backend as display strings; nothing here builds a path. Opening it changes no
  * file: the backend's plan and preflight are read-only (INV-03). While kept photos have no route yet
  * (move or copy, a connected destination), no plan is built and Apply says what to choose.
  *
@@ -358,9 +362,9 @@ export function ReviewScreen(props: ReviewScreenProps) {
 
         <div className="review-main">
           <div className="review-plan">
-            <ul className="branches" aria-label="Where your photos will go">
+            <ShortRoute>
               {tally.kept > 0 && (
-                <Branch what="kept" count={tally.kept} label="kept">
+                <RouteBranch what="kept" count={tally.kept} label="kept">
                   <KeepControls
                     keepMode={pending?.keepMode ?? keepMode}
                     destination={session.destination}
@@ -376,19 +380,14 @@ export function ReviewScreen(props: ReviewScreenProps) {
                     byId={byId}
                     onShow={props.onShow}
                   />
-                </Branch>
+                </RouteBranch>
               )}
               {tally.rejected > 0 && (
-                <Branch what="rejected" count={tally.rejected} label="rejected">
-                  <span className="branch-to">
-                    <span aria-hidden="true">→ </span>Moved to {session.rejectedFolder}
-                    {!session.rejectedFolderExists && (
-                      <>
-                        <span className="visually-hidden">, </span>
-                        <span className="pill pill-outline">new folder</span>
-                      </>
-                    )}
-                  </span>
+                <RouteBranch what="rejected" count={tally.rejected} label="rejected">
+                  <BranchTo
+                    place={`Moved to ${session.rejectedFolder}`}
+                    newFolder={!session.rejectedFolderExists}
+                  />
                   <span className="branch-note">Nothing is deleted.</span>
                   <PhotoStrip
                     what="rejected"
@@ -397,11 +396,11 @@ export function ReviewScreen(props: ReviewScreenProps) {
                     byId={byId}
                     onShow={props.onShow}
                   />
-                </Branch>
+                </RouteBranch>
               )}
               {tally.undecided > 0 && (
-                <Branch what="undecided" count={tally.undecided} label="left in place">
-                  <span className="branch-note">Undecided photos are not touched.</span>
+                <RouteBranch what="undecided" count={tally.undecided} label="left in place">
+                  <span className="branch-note">{leftInPlaceNote(0)}</span>
                   <span>
                     <button
                       type="button"
@@ -411,9 +410,9 @@ export function ReviewScreen(props: ReviewScreenProps) {
                       Sort them now
                     </button>
                   </span>
-                </Branch>
+                </RouteBranch>
               )}
-            </ul>
+            </ShortRoute>
             {changeError !== null && (
               <p className="error" role="alert">
                 {changeError}
@@ -455,8 +454,15 @@ export function ReviewScreen(props: ReviewScreenProps) {
               <SideLine text={replannedSummary(plan.replanned.length)} onDetails={showFindings} />
             )}
             {ready && plan.held.length > 0 && (
-              <SideLine text={heldSummary(plan.held.length)} onDetails={showFindings} />
+              <SideLine
+                text={heldSummary(plan.held.length, plannedPhotos(plan))}
+                onDetails={showFindings}
+              />
             )}
+            {ready &&
+              visibleNotes(plan).map((text) => (
+                <SideLine key={text} text={text} onDetails={null} />
+              ))}
             {summary !== null && (
               <SideLine text={summary} onDetails={notes > 0 ? showFindings : null} />
             )}
@@ -556,7 +562,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
   );
 }
 
-/** The folds under the route (lean review, decided by Margaux 28 Nov 2026). */
+/** The folds under the route (lean review decided by Margaux; this layout proposed, SPEC §10). */
 type Fold = "found" | "estimate" | "files" | "options";
 
 function Dots() {
@@ -629,26 +635,6 @@ function FoldOut({ id, label, open, onToggle, children }: FoldOutProps) {
         </div>
       )}
     </div>
-  );
-}
-
-interface BranchProps {
-  readonly what: "kept" | "rejected" | "undecided";
-  readonly count: number;
-  readonly label: string;
-  readonly children: ReactNode;
-}
-
-/** One branch of the route in a sentence: a big count, a short label, where the photos go. */
-function Branch({ what, count, label, children }: BranchProps) {
-  return (
-    <li className={`branch branch-${what}`}>
-      <h2 className="branch-head">
-        <span className="branch-count">{count.toLocaleString("en-GB")}</span>{" "}
-        <span className="branch-label">{label}</span>
-      </h2>
-      <div className="branch-body">{children}</div>
-    </li>
   );
 }
 

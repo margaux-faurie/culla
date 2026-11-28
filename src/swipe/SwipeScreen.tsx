@@ -2,7 +2,7 @@ import { type Dispatch, useEffect, useMemo, useRef, useState } from "react";
 import { useBackend } from "../backend/context";
 import type { SessionInfo, SessionPhoto } from "../backend/types";
 import type { GroupState, Verdict } from "../decisions/events";
-import { CheckIcon, CrossIcon } from "../route/RouteView";
+import { CheckIcon, CrossIcon } from "../route/icons";
 import { stayVerb } from "../route/staying";
 import { ExifOverlay } from "./ExifOverlay";
 import { HelpDialog } from "./HelpDialog";

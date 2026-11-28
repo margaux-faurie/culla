@@ -10,7 +10,8 @@ export interface KeepControlsProps {
 
 /**
  * The Kept branch's controls on the review screen, right before Apply (decided by Margaux 28 Nov
- * 2026): "→ Move | Copy to <destination> Change" after the branch's "12 kept". Both start as last chosen; the first
+ * 2026, ADR 0029). Lean review decided by Margaux; this layout proposed, SPEC §10: "→ Move | Copy
+ * to <destination> Change" after the branch's "12 kept". Both start as last chosen; the first
  * time neither is set and Apply waits for them. The destination is a display string from the
  * backend, printed as it is.
  */

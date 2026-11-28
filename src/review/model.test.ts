@@ -15,6 +15,7 @@ import {
   findingsCount,
   formatBytes,
   heldLine,
+  heldSummary,
   keepRouteHint,
   otherFilesText,
   primaryLabel,
@@ -22,6 +23,7 @@ import {
   rawNote,
   readySummary,
   replannedSummary,
+  visibleNotes,
   worthKnowing,
 } from "./model";
 
@@ -223,25 +225,40 @@ describe("keep route on review (decided by Margaux 28 Nov 2026)", () => {
 });
 
 describe("lean review (decided by Margaux 28 Nov 2026: essentials visible, details folded)", () => {
-  it("lists what is worth knowing: taken names, camera protection, warnings", async () => {
+  it("keeps camera protection and a cloud-synced destination in view (Margaux, 28 Nov 2026)", async () => {
     const plan = await reviewOf([
       [5, "keep"],
       [6, "keep"],
       [11, "keep"],
     ]);
-    expect(worthKnowing(plan)).toEqual([
-      "1 name is taken in D:\\Photos\\Selects 2026. That photo gets _1 (MGF_7271_1). Nothing is replaced.",
-      "1 kept photo is protected on the camera. It is copied, and the original stays on Photos drive (E:).",
-    ]);
-    const warned: ReviewPlan = {
+    const cloud: ReviewPlan = {
       ...plan,
-      collisions: [],
-      warnings: [{ kind: "syncRootUnknown" }],
+      warnings: [
+        { kind: "cloudSynced", folder: "C:\\Users\\demo\\OneDrive\\Photos" },
+        { kind: "syncRootUnknown" },
+      ],
     };
-    expect(worthKnowing(warned)).toEqual([
+    expect(visibleNotes(cloud)).toEqual([
       "1 kept photo is protected on the camera. It is copied, and the original stays on Photos drive (E:).",
+      "C:\\Users\\demo\\OneDrive\\Photos is inside a cloud-synced folder. The sync app may upload, change or move the photos during and after the apply.",
+    ]);
+    expect(visibleNotes(await reviewOf([[5, "keep"]]))).toEqual([]);
+    // The rest stays folded: taken names and the other warnings.
+    expect(worthKnowing(cloud)).toEqual([
+      "1 name is taken in D:\\Photos\\Selects 2026. That photo gets _1 (MGF_7271_1). Nothing is replaced.",
       "Culla could not check whether the destination is in a cloud-synced folder.",
     ]);
+  });
+
+  it("says the rest can be applied only when something is planned", () => {
+    expect(heldSummary(1, 2)).toBe(
+      "1 photo is held back. It stays where it is, and the rest can be applied.",
+    );
+    expect(heldSummary(3, 1)).toBe(
+      "3 photos are held back. They stay where they are, and the rest can be applied.",
+    );
+    expect(heldSummary(1, 0)).toBe("1 photo is held back. It stays where it is.");
+    expect(heldSummary(2, 0)).toBe("2 photos are held back. They stay where they are.");
   });
 
   it("counts every line the folded findings list", async () => {
