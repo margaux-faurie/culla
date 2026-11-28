@@ -10,7 +10,7 @@ export interface KeepControlsProps {
 
 /**
  * The Kept branch's controls on the review screen, right before Apply (decided by Margaux 28 Nov
- * 2026): "Kept photos → Move | Copy to <destination> Change". Both start as last chosen; the first
+ * 2026): "→ Move | Copy to <destination> Change" after the branch's "12 kept". Both start as last chosen; the first
  * time neither is set and Apply waits for them. The destination is a display string from the
  * backend, printed as it is.
  */
@@ -19,6 +19,9 @@ export function KeepControls(props: KeepControlsProps) {
   return (
     <div className="keep-controls">
       <div className="destination">
+        <span className="branch-arrow" aria-hidden="true">
+          →
+        </span>
         <fieldset className="choice">
           <legend className="visually-hidden">Move or copy the kept photos</legend>
           {(["move", "copy"] as const).map((mode) => (
@@ -50,7 +53,7 @@ export function KeepControls(props: KeepControlsProps) {
             </span>
             <button
               type="button"
-              className="button button-outline"
+              className="button button-quiet button-small"
               onClick={props.onChooseDestination}
             >
               Change
@@ -59,7 +62,7 @@ export function KeepControls(props: KeepControlsProps) {
         )}
       </div>
       {destination !== null && (
-        <span className="route-note">
+        <span className="branch-note">
           {destination.folder.volume}
           {props.sameAsLastTime && (
             <>
@@ -77,7 +80,7 @@ export function KeepControls(props: KeepControlsProps) {
         </span>
       )}
       {keepMode === null && (
-        <span className="route-note">
+        <span className="branch-note">
           Choose move or copy. Culla keeps your choice for next time.
         </span>
       )}

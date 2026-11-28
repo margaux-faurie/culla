@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import type { DestinationSummary, KeepMode, RouteExample, SourceSummary } from "../backend/types";
 import { protectedNote, stayVerb } from "./staying";
 
@@ -13,18 +12,13 @@ export interface RouteViewProps {
   readonly rejectedFolderExists: boolean;
   readonly destination: DestinationSummary | null;
   readonly keepMode: KeepMode | null;
-  /** Controls placed in the Kept branch: move or copy and the destination (review screen). */
-  readonly keepControls?: ReactNode;
-  /** The review's counts, folders and photos under each branch (US-34). */
-  readonly keptDetails?: ReactNode;
-  readonly rejectedDetails?: ReactNode;
-  readonly undecidedDetails?: ReactNode;
 }
 
 /**
  * "Where photos go" (SPEC §2): the origin, a Kept branch, a Rejected branch and the photos left in
- * place, with one real example path per branch. The same view heads the review and apply screens;
- * the swipe screen shows each photo's route under its buttons. Every path is a display string from
+ * place, with one real example path per branch, on the apply screen. The review shows the same
+ * route in short, one sentence per branch (lean review, 28 Nov 2026); the swipe screen shows each
+ * photo's route under its buttons. Every path is a display string from
  * the backend, printed as it is.
  */
 export function RouteView(props: RouteViewProps) {
@@ -49,9 +43,7 @@ export function RouteView(props: RouteViewProps) {
         </span>
         <div className="route-body">
           <span className="route-label route-label-keep">Kept photos →</span>
-          {props.keepControls ?? (
-            <span className="route-place">{keptPlace(destination, keepMode)}</span>
-          )}
+          <span className="route-place">{keptPlace(destination, keepMode)}</span>
           <span className="route-note">Subfolders are kept as they are.</span>
           {example !== null && (
             <Example
@@ -60,7 +52,6 @@ export function RouteView(props: RouteViewProps) {
               mode={keepMode}
             />
           )}
-          {props.keptDetails}
         </div>
       </li>
 
@@ -85,7 +76,6 @@ export function RouteView(props: RouteViewProps) {
           {example !== null && (
             <Example example={example} to={example.route.rejectedTo} mode="move" />
           )}
-          {props.rejectedDetails}
         </div>
       </li>
 
@@ -94,14 +84,13 @@ export function RouteView(props: RouteViewProps) {
         <div className="route-body">
           <span className="route-label route-label-muted">Photos you don't decide</span>
           <span className="route-note">Stay exactly where they are.</span>
-          {props.undecidedDetails}
         </div>
       </li>
     </ol>
   );
 }
 
-/** The Kept branch's place when no controls replace it: no verb until moved or copied is chosen. */
+/** The Kept branch's place: no verb until moved or copied is chosen. */
 function keptPlace(destination: DestinationSummary | null, keepMode: KeepMode | null): string {
   const where =
     destination === null || !destination.available

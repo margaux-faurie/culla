@@ -12,11 +12,17 @@ import {
   disabledReason,
   duration,
   estimateText,
+  findingsCount,
   formatBytes,
+  heldLine,
   keepRouteHint,
   otherFilesText,
   primaryLabel,
   protectedText,
+  rawNote,
+  readySummary,
+  replannedSummary,
+  worthKnowing,
 } from "./model";
 
 /** A review plan from the demo backend for these decisions (group positions, 1-based). */
@@ -213,5 +219,83 @@ describe("keep route on review (decided by Margaux 28 Nov 2026)", () => {
     expect(keepRouteHint("move", selects)).toBe(
       "Choose move or copy and a destination for the kept photos first.",
     );
+  });
+});
+
+describe("lean review (decided by Margaux 28 Nov 2026: essentials visible, details folded)", () => {
+  it("lists what is worth knowing: taken names, camera protection, warnings", async () => {
+    const plan = await reviewOf([
+      [5, "keep"],
+      [6, "keep"],
+      [11, "keep"],
+    ]);
+    expect(worthKnowing(plan)).toEqual([
+      "1 name is taken in D:\\Photos\\Selects 2026. That photo gets _1 (MGF_7271_1). Nothing is replaced.",
+      "1 kept photo is protected on the camera. It is copied, and the original stays on Photos drive (E:).",
+    ]);
+    const warned: ReviewPlan = {
+      ...plan,
+      collisions: [],
+      warnings: [{ kind: "syncRootUnknown" }],
+    };
+    expect(worthKnowing(warned)).toEqual([
+      "1 kept photo is protected on the camera. It is copied, and the original stays on Photos drive (E:).",
+      "Culla could not check whether the destination is in a cloud-synced folder.",
+    ]);
+  });
+
+  it("counts every line the folded findings list", async () => {
+    const plan = await reviewOf([[5, "keep"]]);
+    // The demo folder has three other files: one line for them.
+    expect(findingsCount({ ...plan, collisions: [] })).toBe(1);
+    expect(findingsCount({ ...plan, collisions: [], otherFiles: [] })).toBe(0);
+    const held: ReviewPlan = {
+      ...plan,
+      collisions: [],
+      otherFiles: [],
+      held: [
+        { photoId: "a", name: "A", decision: "kept", folder: "E:\\2026", reason: "missing" },
+        { photoId: "b", name: "B", decision: "kept", folder: "E:\\2026", reason: "applied" },
+      ],
+      replanned: [{ name: "C", where: "Selects", suffix: "_1", newName: "C_1" }],
+    };
+    expect(findingsCount(held)).toBe(3);
+  });
+
+  it("says in one line that nothing stops the apply, and whether there is more to read", async () => {
+    const plan = await reviewOf([[5, "keep"]]);
+    const quiet: ReviewPlan = { ...plan, collisions: [], otherFiles: [] };
+    expect(readySummary(quiet)).toBe("Checked. Nothing stops the apply.");
+    expect(readySummary({ ...quiet, otherFiles: plan.otherFiles })).toBe(
+      "Checked. Nothing stops the apply. 1 thing is worth knowing.",
+    );
+    expect(readySummary({ ...plan, warnings: [{ kind: "syncRootUnknown" }] })).toBe(
+      "Checked. Nothing stops the apply. 2 things are worth knowing.",
+    );
+    expect(readySummary({ ...plan, blockers: [{ kind: "previewsBusy" }] })).toBeNull();
+    expect(readySummary(await reviewOf([]))).toBeNull();
+  });
+
+  it("words a re-plan and a held photo in short", () => {
+    expect(replannedSummary(1)).toBe(
+      "1 name changed since you checked. Look at it again, then apply.",
+    );
+    expect(replannedSummary(3)).toBe(
+      "3 names changed since you checked. Look at them again, then apply.",
+    );
+    expect(
+      heldLine({
+        photoId: "a",
+        name: "MGF_7001",
+        decision: "kept",
+        folder: "E:\\2026",
+        reason: "changedSinceScan",
+      }),
+    ).toBe("MGF_7001 (kept, in E:\\2026): changed since scan, rescan.");
+  });
+
+  it("says whether RAW and edit files go with their JPEG", () => {
+    expect(rawNote(true)).toBe("RAW and edit files go with their JPEG.");
+    expect(rawNote(false)).toBe("RAW and edit files stay where they are.");
   });
 });

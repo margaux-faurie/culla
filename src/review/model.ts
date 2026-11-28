@@ -11,6 +11,7 @@ import type {
   BranchPlan,
   Collision,
   DestinationSummary,
+  HeldPhoto,
   HoldReason,
   KeepMode,
   OperationKind,
@@ -172,6 +173,10 @@ export function holdText(reason: HoldReason): string {
   }
 }
 
+/** One held photo in the folded findings: `MGF_7001 (kept, in E:\2026): changed since scan, rescan.` */
+export const heldLine = (h: HeldPhoto): string =>
+  `${h.name} (${h.decision}, in ${h.folder}): ${holdText(h.reason)}.`;
+
 /** The held-back summary line: `2 photos are held back. They stay where they are.` */
 export function heldSummary(held: number): string {
   return held === 1
@@ -206,6 +211,12 @@ export function collisionText(c: Collision): string {
 export function replannedText(r: Replanned): string {
   return `${r.name} was taken in ${r.where} since the plan was made. It now gets ${r.suffix} (${r.newName}). Nothing is replaced.`;
 }
+
+/** The visible line about a re-plan (P11); its names are in the folded findings. */
+export const replannedSummary = (names: number): string =>
+  names === 1
+    ? "1 name changed since you checked. Look at it again, then apply."
+    : `${count(names, "name")} changed since you checked. Look at them again, then apply.`;
 
 /** "1 kept photo is protected on the camera. It is copied, and the original stays on the photos drive." */
 export function protectedText(
@@ -327,3 +338,43 @@ export function confirmText(plan: ReviewPlan): ConfirmText {
   );
   return { title: `${label}?`, body, confirm: label, cancel: "Go back" };
 }
+
+/** The notes that never stop the apply: taken names, camera protection, then warnings (FE §8). */
+export function worthKnowing(plan: ReviewPlan): string[] {
+  const notes = plan.collisions.map(collisionText);
+  for (const [branch, what] of [
+    [plan.kept, "kept"],
+    [plan.rejected, "rejected"],
+  ] as const) {
+    const text = branch === null ? null : protectedText(branch, what, plan.estimate.sourceVolume);
+    if (text !== null) notes.push(text);
+  }
+  for (const w of plan.warnings) notes.push(warningText(w));
+  return notes;
+}
+
+/** Notes worth knowing, plus one line for the other files left alone. */
+const notesCount = (plan: ReviewPlan): number =>
+  worthKnowing(plan).length + (plan.otherFiles.length > 0 ? 1 : 0);
+
+/** Lines in the folded "What the check found": re-plans, held photos and notes. */
+export const findingsCount = (plan: ReviewPlan): number =>
+  plan.replanned.length + plan.held.length + notesCount(plan);
+
+/**
+ * The one visible line once the check found nothing that stops the apply (lean review, proposed by
+ * the agent), or null while a blocker stops it or there is nothing to apply.
+ */
+export function readySummary(plan: ReviewPlan): string | null {
+  if (!canApply(plan)) return null;
+  const notes = notesCount(plan);
+  const head = "Checked. Nothing stops the apply.";
+  if (notes === 0) return head;
+  return notes === 1
+    ? `${head} 1 thing is worth knowing.`
+    : `${head} ${notes.toLocaleString("en-GB")} things are worth knowing.`;
+}
+
+/** Under the Kept branch: whether the RAW and edit files go along (ADR 0023). */
+export const rawNote = (rawFollows: boolean): string =>
+  rawFollows ? "RAW and edit files go with their JPEG." : "RAW and edit files stay where they are.";

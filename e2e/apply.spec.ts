@@ -1,5 +1,13 @@
 import { expect, type Page, test } from "@playwright/test";
-import { blockingViolations, rememberKeepMode, startSorting, tabUntil } from "./helpers";
+import {
+  applyButton,
+  blockingViolations,
+  branch,
+  openFold,
+  rememberKeepMode,
+  startSorting,
+  tabUntil,
+} from "./helpers";
 
 /** Opens the demo with a scenario (`?scenario=`, demo only), move remembered, and starts sorting. */
 const startWith = (page: Page, scenario: string | null) => startSorting(page, { scenario });
@@ -128,10 +136,13 @@ test.describe("apply screen (US-36)", () => {
     await expect(
       page.getByRole("heading", { level: 1, name: "Check where your photos will go" }),
     ).toBeFocused();
+    await expect(branch(page, "2 kept")).toBeVisible();
+    await expect(page.getByText(/^1 photo is held back\./)).toBeVisible();
+    await openFold(page, /^What the check found/);
     await expect(
       page.getByText(/^MGF_7001 \(kept, in E:\\2026\): already applied\.$/),
     ).toBeVisible();
-    await expect(page.getByText("1 kept · moved")).toBeVisible();
+    await expect(applyButton(page)).toHaveText("Move 1 photo");
   });
 
   test("a stop in a reject leaves the photo split between folders", async ({ page }) => {

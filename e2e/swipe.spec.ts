@@ -1,5 +1,13 @@
 import { expect, test } from "@playwright/test";
-import { blockingViolations, demoCsp, keydown, startSorting, tally, withDemoCsp } from "./helpers";
+import {
+  blockingViolations,
+  branch,
+  demoCsp,
+  keydown,
+  startSorting,
+  tally,
+  withDemoCsp,
+} from "./helpers";
 
 test.describe("swipe screen (US-22 to US-32, US-42)", () => {
   test("keeps with → and rejects with ←, then shows the next photo", async ({ page }) => {
@@ -273,8 +281,8 @@ test.describe("swipe screen (US-22 to US-32, US-42)", () => {
       name: "Check where your photos will go",
     });
     await expect(heading).toBeFocused();
-    await expect(page.getByText("1 kept · moved")).toBeVisible();
-    await expect(page.getByText("23 undecided · stay where they are")).toBeVisible();
+    await expect(branch(page, "1 kept")).toBeVisible();
+    await expect(branch(page, "23 left in place")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("main", { name: "Sort photos" })).toBeFocused();
     await expect(tally(page, "kept")).toHaveText("1 kept");
