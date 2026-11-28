@@ -17,7 +17,8 @@ type Recents =
  * the folder dialog and the recent folders. Choosing a folder starts sorting at once; the backend
  * fills in the defaults, and move or copy and the destination are set on the review screen. No
  * options here: subfolders are always included (decided by Margaux 28 Nov 2026).
- * Resuming or starting fresh on a folder with a session (SPEC §4.2) is not built yet (SPEC §10).
+ * A folder with a session in progress resumes it at once (US-37); "Start over" is on the swipe
+ * screen (both proposed in SPEC §10, "Resume").
  */
 export function StartScreen({ onStarted }: StartScreenProps) {
   const backend = useBackend();
@@ -179,7 +180,7 @@ function StatusPill({ status, connected }: { status: SourceStatus; connected: bo
   }
   switch (status.kind) {
     case "inProgress":
-      return <span className="pill pill-filled">In progress</span>;
+      return <span className="pill pill-filled">In progress · {status.decided} decided</span>;
     case "applied":
       return <span className="pill pill-outline">Applied {status.on}</span>;
     case "new":

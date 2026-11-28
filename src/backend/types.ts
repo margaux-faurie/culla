@@ -20,8 +20,16 @@ export interface Backend {
    * Starts sorting a folder at once (SPEC §4.2, decided by Margaux 28 Nov 2026). The backend fills
    * in the rest without asking: "RAW follows JPEG" on, move or copy as last chosen, the destination
    * remembered for this folder or else the last one used. Either may be null the first time.
+   * A folder with a session in progress resumes it (US-37, proposed in SPEC §10 "Resume"): its
+   * stored events come back in `SessionInfo.events`, with "RAW follows JPEG" as it had it.
    */
   startSession(options: StartOptions): Promise<SessionInfo>;
+  /**
+   * "Start over" on a resumed session (US-37, FE §6.1 step 4): the session is archived with its
+   * events, and a new one starts on the same folder with every photo undecided. Refused while the
+   * session has a confirmed plan. Nothing on any disk changes.
+   */
+  startOver(sessionId: string): Promise<SessionInfo>;
   /**
    * Changes how the session applies (review screen): move or copy, the destination, "RAW follows
    * JPEG". Remembers move or copy and the destination for next time. Answers the session with
@@ -30,6 +38,17 @@ export interface Backend {
   updateSession(sessionId: string, change: SessionChange): Promise<SessionInfo>;
   /** Opens the native folder dialog for the destination. Null when the user cancels. */
   chooseDestination(): Promise<DestinationSummary | null>;
+  /**
+   * The photo's full image for zoom to 100 % (US-39), loaded on demand by its opaque id:
+   * `culla://full/<id>` in the app, never a path. Rejects when the file cannot be read (card
+   * pulled, damaged file); the preview stays.
+   */
+  fullImage(photoId: string): Promise<FullImage>;
+  /**
+   * The EXIF overlay's display strings for a photo (US-40), or `pending` until the EXIF pass has
+   * read it; the overlay asks again. Read-only.
+   */
+  photoExif(photoId: string): Promise<PhotoExif>;
   /** Mirrors one decision event, already committed in the UI reducer (autosave, ADR 0005). */
   recordEvent(sessionId: string, event: DecisionEvent): Promise<void>;
   /**
@@ -116,12 +135,6 @@ export interface SourceSummary {
   readonly connected: boolean;
 }
 
-/** One real photo of the session and its route, for the route view's example. */
-export interface RouteExample {
-  readonly photo: PhotoSummary;
-  readonly route: PhotoRoute;
-}
-
 /** Files in the compact form `MGF_7273 .JPG .NEF .xmp`, split only for emphasis. Display only. */
 export interface FilesLabel {
   /** `MGF_7273` */
@@ -153,8 +166,7 @@ export interface PhotoRoute {
   /**
    * A file that goes with the decision is read-only (camera "protect"), so the group is copied, not
    * moved (SPEC §2). A read-only NEF that stays because RAW does not follow does not count. The
-   * route's Kept example notes it only when moved is chosen or not yet chosen: a keep by copy is a
-   * copy anyway, as with the core's `protected`.
+   * swipe screen's routes word it as a copy (`keptTo`, `rejectedTo`).
    */
   readonly cameraProtected: boolean;
 }
@@ -181,6 +193,49 @@ export interface PhotoSummary {
 export interface SessionPhoto extends PhotoSummary {
   readonly route: PhotoRoute;
 }
+
+/** A photo's full image, for zoom (US-39). */
+export interface FullImage {
+  /** `culla://full/<id>` in the app; a bundled image in the demo. */
+  readonly url: string;
+  /** Its size in pixels. */
+  readonly width: number;
+  readonly height: number;
+  /**
+   * The largest JPEG embedded in a NEF (a lone NEF, or an HE/HE* NEF), not RAW pixels (SPEC §9,
+   * ADR 0011): the screen says so.
+   */
+  readonly embeddedPreview: boolean;
+}
+
+/**
+ * What the EXIF overlay shows (US-40), as display strings the backend writes; null for a field the
+ * file does not record. Text from the card (camera, lens) is cleaned by the core first (control and
+ * format characters dropped). There is no GPS position and no body serial here, by design.
+ */
+export type PhotoExif =
+  | { readonly kind: "pending" }
+  | {
+      readonly kind: "ready";
+      /** `NIKON Z 6_3` */
+      readonly camera: string | null;
+      /** `NIKKOR Z 24-70mm f/4 S`, or `24-200mm f/4-6.3` from `LensSpecification`. */
+      readonly lens: string | null;
+      /** `1/250 s` */
+      readonly shutter: string | null;
+      /** `f/4` */
+      readonly aperture: string | null;
+      /** `ISO 400` */
+      readonly iso: string | null;
+      /** `50 mm` */
+      readonly focalLength: string | null;
+      /** `−0.3 EV` */
+      readonly exposureCompensation: string | null;
+      /** `28 Nov 2026, 14:03:22`, in the camera's local time. */
+      readonly captured: string | null;
+      /** The time is the file's, not the camera's (no DateTimeOriginal or CreateDate, ADR 0028). */
+      readonly capturedFromFile: boolean;
+    };
 
 export interface DestinationSummary {
   /** Opaque destination id. */
@@ -230,8 +285,10 @@ export interface SessionInfo {
   readonly rejectedFolderExists: boolean;
   /** Groups in display order, each with its route under the session's options. */
   readonly photos: readonly SessionPhoto[];
-  /** The photo the review's route view shows as its example, or null when there is none. */
-  readonly exampleId: string | null;
+  /** The session was resumed: it existed before this start (US-37). */
+  readonly resumed: boolean;
+  /** The stored decision log, in order; empty for a new session. The UI folds it to resume. */
+  readonly events: readonly DecisionEvent[];
 }
 
 /**
@@ -500,6 +557,8 @@ export interface ApplyStatus {
   readonly runId: string;
   readonly state: ApplyState;
   readonly progress: ApplyProgress;
+  /** Photos of the confirmed plan per branch, for the short route (held photos stay in place). */
+  readonly counts: PlanCounts;
   /** The file being worked on, or null between files and while not running. */
   readonly current: CurrentFile | null;
   /** Set once the run has ended. */

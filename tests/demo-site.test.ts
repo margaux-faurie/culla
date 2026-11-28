@@ -12,9 +12,20 @@ interface DemoOutput {
   // Built HTML pages by file name: index.html (the demo) and install.html (the install guide).
   html: Map<string, string>;
   css: string[];
+  js: string[];
+  // Every other emitted asset's file name, e.g. assets/scene-01-<hash>.svg or
+  // assets/BricolageGrotesque-Regular-<hash>.woff.
+  files: string[];
 }
 
-async function demoOutput(): Promise<DemoOutput> {
+// Built once and shared by the tests below.
+let built: Promise<DemoOutput> | undefined;
+const demoOutput = (): Promise<DemoOutput> => {
+  built ??= buildDemo();
+  return built;
+};
+
+async function buildDemo(): Promise<DemoOutput> {
   // Build as `pnpm build:demo` does: vitest sets NODE_ENV to "test", which would change the output.
   const nodeEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = "production";
@@ -29,11 +40,12 @@ async function demoOutput(): Promise<DemoOutput> {
     }
   }
   const outputs = Array.isArray(result) ? result : [result];
-  const out: DemoOutput = { html: new Map(), css: [] };
+  const out: DemoOutput = { html: new Map(), css: [], js: [], files: [] };
   for (const output of outputs) {
     if ("output" in output) {
       for (const file of output.output) {
-        if (file.type !== "asset") {
+        if (file.type === "chunk") {
+          out.js.push(file.code);
           continue;
         }
         const source =
@@ -42,6 +54,8 @@ async function demoOutput(): Promise<DemoOutput> {
           out.html.set(file.fileName, source);
         } else if (file.fileName.endsWith(".css")) {
           out.css.push(source);
+        } else {
+          out.files.push(file.fileName);
         }
       }
     }
@@ -114,6 +128,44 @@ describe("demo build stays inside its CSP", () => {
     for (const sheet of css) {
       expect(sheet).not.toMatch(/url\(\s*["']?data:/i);
     }
+  });
+
+  // A data: URL in built code is always written with its media type (`data:image/svg+xml,...`,
+  // `data:font/woff2;base64,...`), which is what this looks for in every built JS, CSS and HTML
+  // file. It catches the old inline SVG placeholders (blocked by img-src 'self') and anything
+  // Vite would inline, without tripping on code like `{data:null}`.
+  it("builds no data: URL into JS, CSS or HTML", { timeout: 60_000 }, async () => {
+    const { html, css, js } = await demoOutput();
+    const dataUrl = /data:[a-z]+\/[a-z0-9.+-]+[;,]/i;
+    for (const text of [...html.values(), ...css, ...js]) {
+      expect(text.match(dataUrl)?.[0] ?? null).toBeNull();
+    }
+  });
+
+  it("ships the placeholder photos as files under /assets/ (img-src 'self')", {
+    timeout: 60_000,
+  }, async () => {
+    const { files } = await demoOutput();
+    const scenes = files.filter((name) => /^assets\/scene-\d{2}-[^/]+\.svg$/.test(name));
+    expect(scenes.length).toBe(24);
+  });
+
+  it("self-hosts the typeface as files under /assets/ (SPEC §5.6)", {
+    timeout: 60_000,
+  }, async () => {
+    const { css, files } = await demoOutput();
+    const fonts = files.filter((name) => /\.woff2?$/.test(name));
+    expect(fonts.length).toBe(2);
+    for (const name of fonts) {
+      expect(name).toMatch(/^assets\/BricolageGrotesque-(Regular|Bold)-[^/]+\.woff$/);
+    }
+    const sheet = css.join("\n");
+    expect(sheet).toMatch(/font-family:\s*"?Bricolage Grotesque"?/);
+    expect(sheet).toMatch(/font-display:\s*swap/);
+    // No remote stylesheet pulled in by @import, and the only url()s are the two font files.
+    expect(sheet).not.toMatch(/@import/i);
+    const urls = [...sheet.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/g)].map(([, url]) => url);
+    expect([...urls].sort()).toEqual(fonts.map((name) => `/${name}`).sort());
   });
 
   it("copies public-demo only in demo mode", async () => {

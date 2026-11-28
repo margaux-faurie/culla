@@ -2,3 +2,5 @@
 testdata/synthetic/** binary
 testdata/event-log/** text eol=lf
 testdata/apply-log/** text eol=lf
+# Demo scene files are compared with sceneSvg's output (src/backend/demo-photos.test.ts).
+src/backend/demo-scenes/*.svg text eol=lf

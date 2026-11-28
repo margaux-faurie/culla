@@ -72,9 +72,43 @@ describe("swipe keyboard map (SPEC §4.1)", () => {
     expect(commandFor(press("ArrowRight", "ArrowRight", { ctrlKey: true }))).toBeNull();
   });
 
-  it("maps zoom, the EXIF overlay and Space to nothing yet (M4)", () => {
-    expect(commandFor(press("z", "KeyZ"))).toBeNull();
-    expect(commandFor(press("i", "KeyI"))).toBeNull();
-    expect(commandFor(press(" ", "Space"))).toBeNull();
+  it("zooms with Z on the key labelled Z, and with Space by position (US-39)", () => {
+    expect(commandFor(press("z", "KeyZ"))).toBe("zoom");
+    expect(commandFor(press("Z", "KeyZ"))).toBe("zoom"); // Caps Lock
+    // AZERTY: Z sits where QWERTY has W; the QWERTY Z position types W.
+    expect(commandFor(press("z", "KeyW"))).toBe("zoom");
+    expect(commandFor(press("w", "KeyZ"))).toBeNull();
+    expect(commandFor(press(" ", "Space"))).toBe("zoomHold");
+    // A held Z or Space acts once.
+    expect(commandFor(press("z", "KeyZ", { repeat: true }))).toBeNull();
+    expect(commandFor(press(" ", "Space", { repeat: true }))).toBeNull();
+    // Shift+Z is not zoom; Ctrl+Z stays undo.
+    expect(commandFor(press("Z", "KeyZ", { shiftKey: true }))).toBeNull();
+    expect(commandFor(press("z", "KeyZ", { ctrlKey: true }))).toBe("undo");
+  });
+
+  it("pans with the arrows while zoomed, never deciding; Shift still browses", () => {
+    expect(commandFor(press("ArrowRight", "ArrowRight"), true)).toBe("panRight");
+    expect(commandFor(press("ArrowLeft", "ArrowLeft"), true)).toBe("panLeft");
+    expect(commandFor(press("ArrowUp", "ArrowUp"), true)).toBe("panUp");
+    expect(commandFor(press("ArrowDown", "ArrowDown"), true)).toBe("panDown");
+    // A held arrow pans on.
+    expect(commandFor(press("ArrowRight", "ArrowRight", { repeat: true }), true)).toBe("panRight");
+    expect(commandFor(press("ArrowRight", "ArrowRight", { shiftKey: true }), true)).toBe("next");
+    expect(commandFor(press("ArrowLeft", "ArrowLeft", { shiftKey: true }), true)).toBe("prev");
+    // Not zoomed: up and down do nothing.
+    expect(commandFor(press("ArrowUp", "ArrowUp"))).toBeNull();
+    expect(commandFor(press("ArrowDown", "ArrowDown"))).toBeNull();
+  });
+
+  it("shows the photo details with I, by character, once per press (US-40)", () => {
+    expect(commandFor(press("i", "KeyI"))).toBe("exif");
+    expect(commandFor(press("I", "KeyI", { shiftKey: true }))).toBe("exif");
+    // QWERTZ and AZERTY have I where QWERTY has it; a layout that moves it still matches.
+    expect(commandFor(press("i", "KeyO"))).toBe("exif");
+    expect(commandFor(press("i", "KeyI", { repeat: true }))).toBeNull();
+    expect(commandFor(press("i", "KeyI", { ctrlKey: true }))).toBeNull();
+    // While zoomed too.
+    expect(commandFor(press("i", "KeyI"), true)).toBe("exif");
   });
 });

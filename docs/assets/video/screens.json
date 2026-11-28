@@ -1,0 +1,24 @@
+{
+  "paths": [
+    "index.html",
+    "src/main.tsx",
+    "src/App.tsx",
+    "src/assets/**",
+    "src/session/**",
+    "src/start/**",
+    "src/swipe/**",
+    "src/review/**",
+    "src/apply/**",
+    "src/route/**",
+    "src/styles/**",
+    "src/backend/demo*.ts",
+    "src/backend/demo-scenes*/**"
+  ],
+  "exclude": [
+    "**/*.test.ts",
+    "**/*.test.tsx"
+  ],
+  "renderedFrom": "7c0c53ebb8193358d048d775f1eb37061e536ba1868a4ad03ba690a233c4f285",
+  "renderedAt": "2026-11-28",
+  "pendingFrom": "d0b8495ec5a552011700d9ffa920979a6fdf054237acf2293a181742698eff04"
+}

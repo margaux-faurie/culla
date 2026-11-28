@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import installGuide from "../../docs/install.md?raw";
+import demoCaptionsEn from "../../public-demo/videos/culla-demo.en.vtt?raw";
+import demoCaptionsFr from "../../public-demo/videos/culla-demo.fr.vtt?raw";
 import { guideForWeb } from "./guide";
 import {
   type Block,
@@ -249,5 +251,49 @@ describe("isSelfHosted", () => {
         }
       }
     }
+  });
+});
+
+interface Cue {
+  readonly start: number;
+  readonly end: number;
+  readonly lines: readonly string[];
+}
+
+/** The cues of a WebVTT file as written in public-demo/videos/: a timing line, then text lines. */
+function cues(vtt: string): Cue[] {
+  const seconds = (stamp: string): number => {
+    const [h, m, s] = stamp.split(":").map(Number);
+    return (h ?? 0) * 3600 + (m ?? 0) * 60 + (s ?? 0);
+  };
+  return vtt
+    .replace(/\r\n/g, "\n")
+    .split(/\n{2,}/)
+    .map((block) => block.trim().split("\n"))
+    .filter(([timing]) => timing?.includes("-->"))
+    .map(([timing = "", ...lines]) => {
+      const [start = "", end = ""] = timing.split(" --> ");
+      return { start: seconds(start), end: seconds(end), lines };
+    });
+}
+
+describe("demo video text", () => {
+  const video = STATUS.demoVideo;
+
+  it("has a transcript that matches its English captions line by line", () => {
+    expect(video).not.toBeNull();
+    expect(video?.transcript).toEqual(cues(demoCaptionsEn).flatMap((cue) => cue.lines));
+  });
+
+  it("keeps each caption on screen for at least 1.5 s, at the same times in both languages", () => {
+    const en = cues(demoCaptionsEn);
+    const fr = cues(demoCaptionsFr);
+    expect(en.length).toBeGreaterThan(0);
+    for (const cue of [...en, ...fr]) {
+      expect(cue.end - cue.start, cue.lines.join(" ")).toBeGreaterThanOrEqual(1.5);
+    }
+    expect(fr.map(({ start, end }) => [start, end])).toEqual(
+      en.map(({ start, end }) => [start, end]),
+    );
   });
 });

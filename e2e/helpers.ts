@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page } from "@playwright/test";
 
@@ -63,6 +64,17 @@ export async function startSorting(page: Page, options: StartOptions = {}) {
 export const applyButton = (page: Page) =>
   page.locator(".apply-box").getByRole("button", { name: /^(Move|Apply to) \d+ photos?$|^Apply$/ });
 
+/** A branch of the review's route, by its count and label: "2 kept", "21 left in place". */
+export const branch = (page: Page, name: string) =>
+  page.getByRole("heading", { level: 2, name, exact: true });
+
+/** Opens one of the review's folds: "What the check found", "Time and size", "See every file". */
+export async function openFold(page: Page, name: RegExp) {
+  const toggle = page.getByRole("button", { name });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+}
+
 /** Chooses move or copy on the review screen and waits for the plan built with it. */
 export async function chooseKeepMode(page: Page, mode: "Move" | "Copy") {
   await page.getByRole("radio", { name: mode, exact: true }).check();
@@ -89,4 +101,32 @@ export async function tabUntil(page: Page, selector: string) {
     }
     await page.keyboard.press("Tab");
   }
+}
+
+/**
+ * The Content-Security-Policy the deployed demo sends (public-demo/_headers). `vite preview` sends
+ * none, so a test that must hold under it adds it with `withDemoCsp`.
+ */
+export function demoCsp(): string {
+  const headers = readFileSync(new URL("../public-demo/_headers", import.meta.url), "utf8");
+  const line = headers.split(/\r?\n/).find((l) => /^\s+Content-Security-Policy:/i.test(l));
+  if (line === undefined) {
+    throw new Error("no Content-Security-Policy in public-demo/_headers");
+  }
+  return line.slice(line.indexOf(":") + 1).trim();
+}
+
+/** Serves the demo's pages with the deployed CSP, so anything it would block is blocked here too. */
+export async function withDemoCsp(page: Page) {
+  const csp = demoCsp();
+  await page.route(
+    (url) => url.pathname === "/" || url.pathname.endsWith(".html"),
+    async (route) => {
+      const response = await route.fetch();
+      await route.fulfill({
+        response,
+        headers: { ...response.headers(), "content-security-policy": csp },
+      });
+    },
+  );
 }

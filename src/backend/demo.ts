@@ -18,9 +18,12 @@ import {
   runIdOf,
   type Sim,
 } from "./demo-apply";
+import { type DemoMeta, exifOf } from "./demo-exif";
 import {
   type DemoPhotoSpec,
+  demoFullImage,
   demoGroup,
+  demoMeta,
   demoPhoto,
   source2026,
   sourceAlps,
@@ -38,6 +41,16 @@ import {
 import { type DemoGroup, joinPath, type RouteOptions, rejectedRoot, routeOf } from "./demo-routes";
 import { type Scenario, type ScenarioName, scenarioFromSearch, scenarioOf } from "./demo-scenarios";
 import {
+  appliedDay,
+  openAfterApply,
+  parseSessions,
+  renderSessions,
+  resumable,
+  SESSIONS_KEY,
+  type StoredSession,
+  storedStatus,
+} from "./demo-sessions";
+import {
   type DestinationMemory,
   parseMemory,
   proposedDestinationId,
@@ -50,9 +63,11 @@ import type {
   Backend,
   ConfirmResult,
   DestinationSummary,
+  FullImage,
   InterruptedApply,
   OtherFile,
   PhotoSummary,
+  PlanCounts,
   ReviewPlan,
   SessionChange,
   SessionInfo,
@@ -208,19 +223,19 @@ export interface DemoOptions {
   readonly wall?: () => Date;
 }
 
-/** Reads the stored memory; a storage that throws (private mode, quota, policy) counts as none. */
-function readStored(storage: DemoStorage | null): string | null {
+/** Reads a stored value; a storage that throws (private mode, quota, policy) counts as none. */
+function readStored(storage: DemoStorage | null, key: string): string | null {
   try {
-    return storage?.getItem(MEMORY_KEY) ?? null;
+    return storage?.getItem(key) ?? null;
   } catch {
     return null;
   }
 }
 
-/** Writes the memory; when the storage refuses it, the memory lasts this backend only. */
-function writeStored(storage: DemoStorage | null, memory: DestinationMemory): void {
+/** Writes a value; when the storage refuses it, the value lasts this backend only. */
+function writeStored(storage: DemoStorage | null, key: string, value: string): void {
   try {
-    storage?.setItem(MEMORY_KEY, JSON.stringify(memory));
+    storage?.setItem(key, value);
   } catch {
     // Kept in this backend's memory only, as with no storage at all.
   }
@@ -229,6 +244,10 @@ function writeStored(storage: DemoStorage | null, memory: DestinationMemory): vo
 interface DemoEntry {
   readonly photo: PhotoSummary;
   readonly group: DemoGroup;
+  /** The full image zoom asks for (US-39). */
+  readonly full: () => FullImage;
+  /** Its metadata, as the EXIF pass reads it (US-40). */
+  readonly meta: DemoMeta;
 }
 
 /**
@@ -248,37 +267,47 @@ interface DemoSession {
   latest: ReviewPlan | null;
   confirmChecked: boolean;
   confirmed: string | null;
+  /** It existed before this start (US-37). */
+  readonly resumed: boolean;
+  /** "Start over" archived it: it records and plans nothing more. */
+  archived: boolean;
+  /**
+   * Photos this folder's closed plans applied, kept apart from `facts.applied`, which also holds a
+   * demo scenario's seeded names: only these are stored for the next visit.
+   */
+  appliedByPlans: Set<string>;
+  /** The day the folder's last plan was applied, or null. */
+  appliedOn: string | null;
+  /** Opening the folder again resumes this session (`StoredSession.open`). */
+  open: boolean;
 }
 
 /** A plan being applied: its simulated run and the time it was last advanced. */
 interface DemoApply {
   readonly session: DemoSession;
   readonly sim: Sim;
+  readonly counts: PlanCounts;
   last: number;
-}
-
-/** The route view's example: a photo in a subfolder with a NEF and a sidecar, if there is one. */
-function exampleOf(entries: readonly DemoEntry[]): DemoEntry | null {
-  const rich = (e: DemoEntry) => e.group.raw !== null && e.group.sidecars.length > 0;
-  return (
-    entries.find((e) => e.group.folder.length > 0 && rich(e)) ??
-    entries.find(rich) ??
-    entries[0] ??
-    null
-  );
 }
 
 /** Simulated backend for the web demo and for tests. There is no Rust side in the browser. */
 export function createBackend(options: DemoOptions = {}): Backend {
   const storage = options.storage === undefined ? defaultStorage() : options.storage;
-  const stored = readStored(storage);
-  let memory = stored === null ? (options.seed ?? SEED) : parseMemory(stored);
+  const storedMemory = readStored(storage, MEMORY_KEY);
+  let memory = storedMemory === null ? (options.seed ?? SEED) : parseMemory(storedMemory);
+  // Sessions in progress, kept between visits so a reload can resume them (US-37).
+  const stored = parseSessions(readStored(storage, SESSIONS_KEY));
   const known = new Map<string, DemoSource>(SOURCES.map((s) => [s.summary.id, s]));
+  // The folder picked on an earlier visit is a recent folder now, so it can be opened from there.
+  if (stored.has(PICKED.summary.id)) known.set(PICKED.summary.id, PICKED);
+
   const sessions = new Map<string, DemoSession>();
   const scenario: Scenario = scenarioOf(
     options.scenario === undefined ? defaultScenario() : options.scenario,
   );
   let sessionCount = 0;
+  // Photos the overlay asked about, for the `exif-pending` scenario.
+  const exifAsked = new Set<string>();
   let planCount = 0;
 
   const sourceOf = (id: string): DemoSource => {
@@ -296,6 +325,8 @@ export function createBackend(options: DemoOptions = {}): Backend {
       .map(({ spec, n }) => ({
         photo: demoPhoto(`${source.summary.id}-${n + 1}`, spec, n),
         group: demoGroup(spec),
+        full: () => demoFullImage(spec, n),
+        meta: demoMeta(spec, n),
       }));
 
   const destinationOf = (id: string | null): DestinationSummary | undefined =>
@@ -314,6 +345,9 @@ export function createBackend(options: DemoOptions = {}): Backend {
    * no new draft and confirms nothing more.
    */
   const unlocked = (session: DemoSession): DemoSession => {
+    if (session.archived) {
+      throw new Error("session archived");
+    }
     if (session.confirmed !== null) {
       throw new Error("plan already confirmed");
     }
@@ -418,7 +452,8 @@ export function createBackend(options: DemoOptions = {}): Backend {
       rejectedFolder: rejectedRoot(source.summary.folder.path),
       rejectedFolderExists: source.rejectedFolderExists,
       photos: entries.map((e) => ({ ...e.photo, route: routeOf(e.group, routeOptions) })),
-      exampleId: exampleOf(entries)?.photo.id ?? null,
+      resumed: session.resumed,
+      events: [...session.events],
     };
   };
 
@@ -427,6 +462,7 @@ export function createBackend(options: DemoOptions = {}): Backend {
     destination: DestinationSummary | null,
     sameAsLastTime: boolean,
     options: SessionOptions,
+    from?: StoredSession,
   ): SessionInfo => {
     sessionCount += 1;
     const id = `demo-session-${sessionCount}`;
@@ -437,12 +473,17 @@ export function createBackend(options: DemoOptions = {}): Backend {
       sameAsLastTime,
       options,
       entries: entriesOf(source, options.includeSubfolders),
-      events: [],
+      events: [...(from?.events ?? [])],
       existing: existingFor(source, destination),
       facts: scenario.facts,
       latest: null,
       confirmChecked: false,
       confirmed: null,
+      resumed: from !== undefined,
+      archived: false,
+      appliedByPlans: new Set(),
+      appliedOn: null,
+      open: true,
     };
     sessions.set(id, session);
     return infoOf(session);
@@ -460,8 +501,62 @@ export function createBackend(options: DemoOptions = {}): Backend {
       next = remember(next, session.source.summary.id, session.destination.id);
     }
     if (next === memory) return;
-    writeStored(storage, next);
+    writeStored(storage, MEMORY_KEY, JSON.stringify(next));
     memory = next;
+  };
+
+  /** The source as the start screen lists it, its status from its stored session. */
+  const summaryOf = (source: DemoSource): SourceSummary => {
+    const status = storedStatus(stored.get(source.summary.id));
+    return status === null ? source.summary : { ...source.summary, status };
+  };
+
+  /** Keeps a folder's session for the next visit, or forgets it with `null`. */
+  const persist = (sourceId: string, record: StoredSession | null) => {
+    if (record === null) {
+      stored.delete(sourceId);
+    } else {
+      stored.set(sourceId, record);
+    }
+    writeStored(storage, SESSIONS_KEY, renderSessions(stored));
+  };
+  const recordOf = (session: DemoSession): StoredSession => ({
+    events: [...session.events],
+    rawFollows: session.options.rawFollows,
+    applied: [...session.appliedByPlans],
+    appliedOn: session.appliedOn,
+    open: session.open,
+  });
+
+  /** A new session with the defaults (SPEC §4.2); a resumed one also gets its stored session. */
+  const begin = (source: DemoSource, includeSubfolders: boolean, from?: StoredSession) => {
+    const sourceId = source.summary.id;
+    const destination = destinationOf(proposedDestinationId(memory, sourceId)) ?? null;
+    const info = openSession(
+      source,
+      destination,
+      destination !== null,
+      {
+        sourceId,
+        includeSubfolders,
+        rawFollows: from?.rawFollows ?? true,
+        keepMode: memory.keepMode,
+        destinationId: destination?.id ?? null,
+      },
+      from,
+    );
+    // Photos applied by an earlier plan stay held as applied, in a fresh session too (INV-04).
+    const history = stored.get(sourceId);
+    if (history !== undefined) {
+      const session = sessionOf(info.id);
+      session.appliedByPlans = new Set(history.applied);
+      session.appliedOn = history.appliedOn;
+      session.facts = {
+        ...session.facts,
+        applied: new Set([...session.facts.applied, ...history.applied]),
+      };
+    }
+    return info;
   };
 
   // --- The simulated apply (US-36, US-38). The demo never touches a file (SPEC §5.5). ---
@@ -482,11 +577,12 @@ export function createBackend(options: DemoOptions = {}): Backend {
     return apply;
   };
 
-  const statusOf = ({ sim }: DemoApply): ApplyStatus => ({
+  const statusOf = ({ sim, counts }: DemoApply): ApplyStatus => ({
     planId: sim.cfg.planId,
     runId: runIdOf(sim),
     state: applyStateOf(sim),
     progress: progressOf(sim),
+    counts,
     current: currentOf(sim),
     report: reportOf(sim),
   });
@@ -513,7 +609,7 @@ export function createBackend(options: DemoOptions = {}): Backend {
       },
       (photoId) => groupIds.get(photoId) ?? 0,
     );
-    const apply = { session, sim, last: now() };
+    const apply = { session, sim, counts: confirmed.counts, last: now() };
     applies.set(confirmed.planId, apply);
     return apply;
   };
@@ -561,12 +657,16 @@ export function createBackend(options: DemoOptions = {}): Backend {
   return {
     version: () => Promise.resolve("demo"),
 
-    recentSources: () => Promise.resolve(SOURCES.map((s) => s.summary)),
+    // The folder the dialog picks joins the list, first, once it has a session (US-44).
+    recentSources: () =>
+      Promise.resolve(
+        [...(stored.has(PICKED.summary.id) ? [PICKED] : []), ...SOURCES].map(summaryOf),
+      ),
 
     chooseSource: () => {
       const picked = scenario.emptyFolder === true ? EMPTY : PICKED;
       known.set(picked.summary.id, picked);
-      return Promise.resolve(picked.summary);
+      return Promise.resolve(summaryOf(picked));
     },
 
     startSession: async ({ sourceId, includeSubfolders }: StartOptions): Promise<SessionInfo> => {
@@ -576,14 +676,30 @@ export function createBackend(options: DemoOptions = {}): Backend {
       }
       // Nothing is asked at the start (decided by Margaux 28 Nov 2026): RAW follows JPEG, move or
       // copy as last chosen, the destination remembered for this folder or else the last one used.
-      const destination = destinationOf(proposedDestinationId(memory, sourceId)) ?? null;
-      return openSession(source, destination, destination !== null, {
+      // A session in progress resumes, its decisions and "RAW follows JPEG" as it left them (US-37).
+      const previous = stored.get(sourceId);
+      return begin(source, includeSubfolders, resumable(previous) ? previous : undefined);
+    },
+
+    startOver: async (sessionId) => {
+      const session = unlocked(sessionOf(sessionId));
+      if (scenario.startOverRefused === true) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        throw new Error("start over refused");
+      }
+      // The app archives the old session with its events (FE §6.1 step 4); the demo forgets it.
+      session.archived = true;
+      const sourceId = session.source.summary.id;
+      // Photos applied by an earlier plan stay applied, and the folder still shows when it was
+      // applied: only the decisions are put aside.
+      const { appliedByPlans, appliedOn } = session;
+      persist(
         sourceId,
-        includeSubfolders,
-        rawFollows: true,
-        keepMode: memory.keepMode,
-        destinationId: destination?.id ?? null,
-      });
+        appliedByPlans.size === 0 && appliedOn === null
+          ? null
+          : { events: [], rawFollows: true, applied: [...appliedByPlans], appliedOn, open: false },
+      );
+      return begin(session.source, session.options.includeSubfolders);
     },
 
     updateSession: async (sessionId, change: SessionChange): Promise<SessionInfo> => {
@@ -617,13 +733,53 @@ export function createBackend(options: DemoOptions = {}): Backend {
       // A draft made under the old options can no longer be confirmed (§7.4).
       session.latest = null;
       rememberRoute(session);
+      // A resumed session gets "RAW follows JPEG" back as it was left (US-37, proposed).
+      if (session.events.length > 0) persist(session.source.summary.id, recordOf(session));
       return infoOf(session);
     },
 
     chooseDestination: () => Promise.resolve(DESTINATIONS[0] ?? null),
 
+    fullImage: async (photoId) => {
+      if (scenario.fullImageUnreadable === true) {
+        throw new Error("full image unreadable");
+      }
+      if (scenario.fullImageDelayMs !== undefined) {
+        await new Promise((resolve) => setTimeout(resolve, scenario.fullImageDelayMs));
+      }
+      for (const session of sessions.values()) {
+        const entry = session.entries.find((e) => e.photo.id === photoId);
+        if (entry !== undefined) return entry.full();
+      }
+      // Only ids of the current scan are served (US-33).
+      throw new Error("unknown photo");
+    },
+
+    photoExif: async (photoId) => {
+      if (scenario.exifUnreadable === true) {
+        throw new Error("EXIF unreadable");
+      }
+      for (const session of sessions.values()) {
+        const entry = session.entries.find((e) => e.photo.id === photoId);
+        if (entry === undefined) continue;
+        // The EXIF pass reaches a photo after the first ask in this scenario (US-40).
+        if (scenario.exifPending === true && !exifAsked.has(photoId)) {
+          exifAsked.add(photoId);
+          return { kind: "pending" };
+        }
+        return exifOf(entry.meta);
+      }
+      throw new Error("unknown photo");
+    },
+
     recordEvent: async (sessionId, event) => {
-      sessionOf(sessionId).events.push(event);
+      const session = sessionOf(sessionId);
+      if (session.archived) {
+        throw new Error("session archived");
+      }
+      session.events.push(event);
+      session.open = true;
+      persist(session.source.summary.id, recordOf(session));
     },
 
     reviewPlan: async (sessionId, uptoSeq) => {
@@ -726,12 +882,17 @@ export function createBackend(options: DemoOptions = {}): Backend {
 
     closeApply: async (planId) => {
       const { session, sim } = applyOf(planId);
+      if (session.archived) {
+        throw new Error("session archived");
+      }
       if (!closeSim(sim)) {
         throw new Error("the apply has not ended");
       }
       // The plan's applied groups are locked for good (§5.4); a new plan holds them as applied
       // and sees the files where they now are.
-      const applied = new Set([...session.facts.applied, ...appliedNames(sim)]);
+      const appliedNow = appliedNames(sim);
+      for (const name of appliedNow) session.appliedByPlans.add(name);
+      const applied = new Set([...session.facts.applied, ...session.appliedByPlans]);
       session.facts = { ...session.facts, applied };
       for (const f of sim.files) {
         if (f.state === "done" || f.state === "copiedSourceKept")
@@ -739,6 +900,17 @@ export function createBackend(options: DemoOptions = {}): Backend {
       }
       session.confirmed = null;
       session.latest = null;
+      // Only a plan that applied something dates the folder: one stopped before its first file
+      // leaves the day as it was.
+      if (appliedNow.length > 0) session.appliedOn = appliedDay(wall());
+      // A stopped apply, or a failed or held group, leaves decided photos unapplied: the folder
+      // stays open to resume, so none of those decisions is dropped unasked (proposed, SPEC §10).
+      session.open = openAfterApply(
+        session.events,
+        (group) => session.entries[group - 1]?.group.name,
+        applied,
+      );
+      persist(session.source.summary.id, recordOf(session));
       if (interrupted?.planId === planId) interrupted = null;
     },
 
