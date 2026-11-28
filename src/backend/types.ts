@@ -44,6 +44,48 @@ export interface Backend {
    * built from and its groups are locked (§7.4, §9.1, US-35). The webview sends the plan id only.
    */
   confirmPlan(planId: string): Promise<ConfirmResult>;
+  /**
+   * Starts the apply of a confirmed plan (design/file-engine.md §9, US-36), or picks up an
+   * interrupted one (§10, US-38). Idempotent: a plan already running answers its status.
+   */
+  startApply(planId: string): Promise<ApplyStatus>;
+  /** Where the apply stands now. The apply screen polls it a few times a second. */
+  applyStatus(planId: string): Promise<ApplyStatus>;
+  /**
+   * Asks the run to pause after the current file (§9.5): the executor checks between groups and
+   * before each operation. Answers at once, with the request recorded in `state.halt`.
+   */
+  pauseApply(planId: string): Promise<ApplyStatus>;
+  /** Carries on after a pause, from the journal: a new run (a resume, with its own log, §9.8). */
+  continueApply(planId: string): Promise<ApplyStatus>;
+  /**
+   * Stops after the current file (cancel, §9.5): no new operation starts, and a cross-volume group
+   * cut short ends "copied, source kept". From a pause it ends the run at once.
+   */
+  stopApply(planId: string): Promise<ApplyStatus>;
+  /** From the report: runs again, in the same plan, the failed groups that never reached committed. */
+  retryFailed(planId: string): Promise<ApplyStatus>;
+  /**
+   * From the report: re-verifies each "copied, source kept" file from scratch, runs the group's
+   * failed files again, then removes the sources through the audited removal (§9.6, SPEC §2).
+   */
+  finishMoves(planId: string): Promise<ApplyStatus>;
+  /**
+   * Closes the plan once its run has ended (`completed` or `cancelled`, §9.1). After it the session
+   * can plan again: "Apply remaining" builds a new plan from the current decisions (§9.6).
+   */
+  closeApply(planId: string): Promise<void>;
+  /**
+   * Opens the log of one run of a plan by its id (§9.8, NFR-REL-14). The app opens it in the
+   * default text editor and never hands the webview its path (threat model T7); the demo answers
+   * the text, rendered as the core renders it.
+   */
+  openLog(runId: string): Promise<LogOpened>;
+  /**
+   * An apply found interrupted at launch (crash, power cut, pulled card), with what the screen
+   * needs to show it, or null (§10.1, US-38). The plan is already set to `interrupted`.
+   */
+  interruptedApply(): Promise<InterruptedApply | null>;
 }
 
 export interface DisplayFolder {
@@ -424,3 +466,180 @@ export type ConfirmResult =
   | { readonly kind: "blocked"; readonly plan: ReviewPlan }
   /** Preflight at confirm found a new hold or a taken name: the review shows the rebuilt plan. */
   | { readonly kind: "replanned"; readonly plan: ReviewPlan };
+
+/** A run's request from the user, checked between operations (`journal::run::Halt`). */
+export type Halt = "pause" | "cancel";
+
+/** Why a run paused (`plan.pause_reason`, file-engine §9.4). */
+export type PauseReason = "user" | "volumeLost" | "writeProtected" | "diskFull";
+
+/** How an apply ended: every operation handled, or stopped by the user (`End`). */
+export type ApplyEnd = "finished" | "cancelled";
+
+export type ApplyState =
+  /** Running; `halt` is a pause or a stop asked for and not yet reached. */
+  | { readonly kind: "running"; readonly halt: Halt | null }
+  /**
+   * Paused, to continue later. `volume` is the volume a `volumeLost`, `writeProtected` or
+   * `diskFull` pause is about (`Photos drive (E:)`, display only); `back` is true once a lost
+   * volume is mounted again under its serial, so the apply can continue.
+   */
+  | {
+      readonly kind: "paused";
+      readonly reason: PauseReason;
+      readonly volume: string | null;
+      readonly back: boolean;
+    }
+  /**
+   * Found interrupted at launch (§10.1): it waits for `missing` (a volume label, display only)
+   * and touches nothing until it is mounted; null once every volume is present.
+   */
+  | { readonly kind: "interrupted"; readonly missing: string | null }
+  /** The run ended; the report is in `ApplyStatus.report`. The plan is open until `closeApply`. */
+  | { readonly kind: "ended"; readonly end: ApplyEnd };
+
+export interface ApplyStatus {
+  readonly planId: string;
+  /** Opaque id of the current or last run of the plan; each run writes its own log (§9.8). */
+  readonly runId: string;
+  readonly state: ApplyState;
+  readonly progress: ApplyProgress;
+  /** The file being worked on, or null between files and while not running. */
+  readonly current: CurrentFile | null;
+  /** Set once the run has ended. */
+  readonly report: ApplyReport | null;
+}
+
+export interface ApplyProgress {
+  /** Photos (groups) handled, whatever their outcome, of `photos`. */
+  readonly photosDone: number;
+  readonly photos: number;
+  /** Bytes of the files handled, the current copy's progress included, of `bytes`. */
+  readonly bytesDone: number;
+  readonly bytes: number;
+  /** Time left at the read rate, verification reads included (SPEC §9). */
+  readonly secondsLeft: number;
+  /** False while the rate is the provisional default (SPEC §10), so the time is "about". */
+  readonly measured: boolean;
+  /** Every planned photo moves, every one is copied, or some of each: the screen's title. */
+  readonly mode: "move" | "copy" | "mixed";
+}
+
+/** What the engine does with one file (`Kind`): a rename, a verified copy, or a verified move. */
+export type ApplyKind = "rename" | "copy" | "xmove";
+
+/** The step of the current file, in the order of file-engine §9.3. */
+export type ApplyStep =
+  /** A rename on the same volume. */
+  | "renaming"
+  /** Another app holds the file: retried with backoff, 100 to 1600 ms (§9.4). */
+  | "retrying"
+  | "copying"
+  /** Reading the copy back and the source again, unbuffered, and comparing the hashes. */
+  | "verifying"
+  /** "Finish moves": checking a copy kept with its source again, from scratch (§9.6). */
+  | "reverifying"
+  /** Every file of the group checked: the original leaves through the audited removal. */
+  | "removingSource";
+
+export interface CurrentFile {
+  /** Opaque photo (group) id. */
+  readonly photoId: string;
+  readonly photoName: string;
+  /** The photo's files that this plan moves or copies, by kind; sidecars are edit files. */
+  readonly jpeg: number;
+  readonly nef: number;
+  readonly edit: number;
+  /** The file's name, `MGF_7502.NEF`, and its place among the photo's files, from 1. */
+  readonly fileName: string;
+  readonly index: number;
+  readonly count: number;
+  readonly kind: ApplyKind;
+  readonly step: ApplyStep;
+  readonly action: "keep" | "reject";
+  /** The folder the file goes to, and the one it comes from, as Windows shows them. Display only. */
+  readonly to: string;
+  readonly from: string;
+  /** The group is copied because the camera protected one of its files (P13). */
+  readonly cameraProtected: boolean;
+}
+
+/** An operation's journal state (file-engine §9.2), camel-cased. */
+export type OpState =
+  | "pending"
+  | "renaming"
+  | "copying"
+  | "verifying"
+  | "committed"
+  | "sourceRemoved"
+  | "done"
+  | "copiedSourceKept"
+  | "failed";
+
+/** Why an operation failed (`FailReason`, §9.4, §10.2). `lost` and `fsInconsistent` are alarms. */
+export type FailReason =
+  | "locked"
+  | "conflict"
+  | "planStale"
+  | "accessDenied"
+  | "verifyMismatch"
+  | "shortCopy"
+  | "sourceChanged"
+  | "sourceMissing"
+  | "lost"
+  | "fsInconsistent"
+  | "groupFailed"
+  | "io";
+
+export interface ReportFile {
+  /** `MGF_7502.NEF`. */
+  readonly fileName: string;
+  /** Source and target as Windows shows them, suffix included. Display only. */
+  readonly from: string;
+  readonly to: string;
+  readonly state: OpState;
+  /** Set when `state` is `failed`. */
+  readonly reason: FailReason | null;
+  /** The Win32 code of an `io` failure. */
+  readonly code: number | null;
+}
+
+/** One photo (group) of the plan as the run left it, in plan order. */
+export interface ReportGroup {
+  /** Opaque photo (group) id. */
+  readonly photoId: string;
+  readonly name: string;
+  readonly action: "keep" | "reject";
+  readonly kind: ApplyKind;
+  readonly cameraProtected: boolean;
+  /** "Retry failed" can run it: it failed and none of its files ever reached committed (§9.6). */
+  readonly retryable: boolean;
+  readonly files: readonly ReportFile[];
+}
+
+/** The end of a run, for the report (US-36, file-engine §9.6). */
+export interface ApplyReport {
+  /** Opaque id of the run whose log "Open log" opens. */
+  readonly runId: string;
+  readonly end: ApplyEnd;
+  /** Every planned group, in plan order. */
+  readonly groups: readonly ReportGroup[];
+  /** Decided photos the plan left out, with the reason (as on review). */
+  readonly held: readonly HeldPhoto[];
+  /** Partial copies kept because their source vanished (they may be the only copy). Display only. */
+  readonly partialsKept: readonly string[];
+  /** Display labels of the source and destination volumes, for the chkdsk advice. */
+  readonly sourceVolume: string;
+  readonly destinationVolume: string | null;
+}
+
+export type LogOpened =
+  /** The app opened the log in the default text editor. */
+  | { readonly kind: "opened" }
+  /** The web demo has no editor to open: it answers the text, which the UI shows in a dialog. */
+  | { readonly kind: "text"; readonly text: string };
+
+export interface InterruptedApply {
+  readonly session: SessionInfo;
+  readonly planId: string;
+}

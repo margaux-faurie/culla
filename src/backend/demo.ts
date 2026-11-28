@@ -1,6 +1,24 @@
 import type { DecisionEvent } from "../decisions/events";
 import { fold, stateOf } from "../decisions/log";
 import {
+  advance,
+  appliedNames,
+  stateOf as applyStateOf,
+  closeSim,
+  crash,
+  createSim,
+  currentOf,
+  finishMoves,
+  logOf,
+  progressOf,
+  reportOf,
+  requestHalt,
+  resume,
+  retryFailed,
+  runIdOf,
+  type Sim,
+} from "./demo-apply";
+import {
   type DemoPhotoSpec,
   demoGroup,
   demoPhoto,
@@ -8,7 +26,13 @@ import {
   sourceAlps,
   sourceCard,
 } from "./demo-photos";
-import { type DemoFacts, folded, type PlanSettings, reviewPlanOf } from "./demo-plan";
+import {
+  DEFAULT_READ_RATE,
+  type DemoFacts,
+  folded,
+  type PlanSettings,
+  reviewPlanOf,
+} from "./demo-plan";
 import { type DemoGroup, joinPath, type RouteOptions, rejectedRoot, routeOf } from "./demo-routes";
 import { type Scenario, type ScenarioName, scenarioFromSearch, scenarioOf } from "./demo-scenarios";
 import {
@@ -18,9 +42,11 @@ import {
   remember,
 } from "./destinations";
 import type {
+  ApplyStatus,
   Backend,
   ConfirmResult,
   DestinationSummary,
+  InterruptedApply,
   OtherFile,
   PhotoSummary,
   ReviewPlan,
@@ -153,6 +179,10 @@ export interface DemoOptions {
   readonly storage?: DemoStorage | null;
   /** The review and confirm scenario; defaults to `?scenario=` in the page's address. */
   readonly scenario?: ScenarioName | null;
+  /** Milliseconds, for the simulated apply; defaults to `performance.now()`. Tests pass their own. */
+  readonly now?: () => number;
+  /** The wall clock for the apply log's times. */
+  readonly wall?: () => Date;
 }
 
 /** Reads the stored memory; a storage that throws (private mode, quota, policy) counts as none. */
@@ -191,6 +221,13 @@ interface DemoSession {
   latest: ReviewPlan | null;
   confirmChecked: boolean;
   confirmed: string | null;
+}
+
+/** A plan being applied: its simulated run and the time it was last advanced. */
+interface DemoApply {
+  readonly session: DemoSession;
+  readonly sim: Sim;
+  last: number;
 }
 
 /** The route view's example: a photo in a subfolder with a NEF and a sidecar, if there is one. */
@@ -317,6 +354,139 @@ export function createBackend(options: DemoOptions = {}): Backend {
     return new Set(entries.map(folded));
   };
 
+  const openSession = (
+    source: DemoSource,
+    destination: DestinationSummary,
+    options: SessionOptions,
+  ): SessionInfo => {
+    sessionCount += 1;
+    const id = `demo-session-${sessionCount}`;
+    const routeOptions: RouteOptions = {
+      sourcePath: source.summary.folder.path,
+      rawFollows: options.rawFollows,
+      keepMode: options.keepMode,
+      destinationPath: destination.folder.path,
+    };
+    const entries = entriesOf(source, options.includeSubfolders);
+    sessions.set(id, {
+      id,
+      source,
+      destination,
+      options,
+      entries,
+      events: [],
+      existing: existingFor(source, destination),
+      facts: scenario.facts,
+      latest: null,
+      confirmChecked: false,
+      confirmed: null,
+    });
+    return {
+      id,
+      source: source.summary,
+      destination,
+      options,
+      rejectedFolder: rejectedRoot(source.summary.folder.path),
+      rejectedFolderExists: source.rejectedFolderExists,
+      photos: entries.map((e) => ({ ...e.photo, route: routeOf(e.group, routeOptions) })),
+      exampleId: exampleOf(entries)?.photo.id ?? null,
+    };
+  };
+
+  // --- The simulated apply (US-36, US-38). The demo never touches a file (SPEC §5.5). ---
+  const now =
+    options.now ?? (() => (typeof performance === "undefined" ? Date.now() : performance.now()));
+  const wall = options.wall ?? (() => new Date());
+  const applies = new Map<string, DemoApply>();
+
+  /** The apply of a plan, its simulated time brought up to now. */
+  const applyOf = (planId: string): DemoApply => {
+    const apply = applies.get(planId);
+    if (apply === undefined) {
+      throw new Error("no apply for this plan");
+    }
+    const t = now();
+    advance(apply.sim, t - apply.last);
+    apply.last = t;
+    return apply;
+  };
+
+  const statusOf = ({ sim }: DemoApply): ApplyStatus => ({
+    planId: sim.cfg.planId,
+    runId: runIdOf(sim),
+    state: applyStateOf(sim),
+    progress: progressOf(sim),
+    current: currentOf(sim),
+    report: reportOf(sim),
+  });
+
+  const beginApply = (session: DemoSession, confirmed: ReviewPlan): DemoApply => {
+    const summary = session.source.summary;
+    const groupIds = new Map(session.entries.map((e, i) => [e.photo.id, i + 1]));
+    const sim = createSim(
+      confirmed,
+      {
+        planId: confirmed.planId,
+        planNumber: Number(confirmed.planId.replace(/\D+/g, "")) || 1,
+        sourcePath: summary.folder.path,
+        rejectedPath: rejectedRoot(summary.folder.path),
+        destinationPath: session.destination.folder.path,
+        sourceVolume: summary.folder.volume,
+        destinationVolume: session.destination.folder.volume,
+        rate: DEFAULT_READ_RATE,
+        scenario: scenario.apply ?? {},
+        locked: session.facts.locked,
+        held: confirmed.held,
+        wall,
+        version: "demo",
+      },
+      (photoId) => groupIds.get(photoId) ?? 0,
+    );
+    const apply = { session, sim, last: now() };
+    applies.set(confirmed.planId, apply);
+    return apply;
+  };
+
+  /** The apply found interrupted at launch, made once for the `interrupted` scenarios. */
+  let interrupted: { info: SessionInfo; planId: string } | null = null;
+  const makeInterrupted = (cardOut: boolean): { info: SessionInfo; planId: string } => {
+    known.set(PICKED.summary.id, PICKED);
+    const destination = DESTINATIONS[0] as DestinationSummary;
+    const info = openSession(PICKED, destination, {
+      sourceId: PICKED.summary.id,
+      includeSubfolders: true,
+      rawFollows: true,
+      keepMode: "move",
+      destinationId: destination.id,
+    });
+    const session = sessionOf(info.id);
+    const verdicts = ["keep", "keep", "keep", "reject", "reject"] as const;
+    for (const [i, verdict] of verdicts.entries()) {
+      session.events.push({
+        seq: i + 1,
+        ts: 0,
+        cause: "user",
+        type: "decided",
+        group_id: i + 1,
+        verdict,
+      });
+    }
+    const draft = plan(session, verdicts.length);
+    session.confirmChecked = true;
+    session.confirmed = draft.planId;
+    const { sim } = beginApply(session, draft);
+    // Cut part-way through the first kept photo: its JPEG committed, its NEF being copied.
+    for (let i = 0; i < 10_000; i += 1) {
+      const midGroup =
+        sim.files.some((f) => f.kind === "xmove" && f.state === "committed") &&
+        sim.work?.step === "copying";
+      if (midGroup) break;
+      advance(sim, 20);
+    }
+    crash(sim, cardOut ? PICKED.summary.folder.volume : null);
+    return { info, planId: draft.planId };
+  };
+
   return {
     version: () => Promise.resolve("demo"),
 
@@ -386,38 +556,7 @@ export function createBackend(options: DemoOptions = {}): Backend {
       const next = remember(memory, options.sourceId, options.destinationId);
       writeStored(storage, next);
       memory = next;
-      sessionCount += 1;
-      const id = `demo-session-${sessionCount}`;
-      const routeOptions: RouteOptions = {
-        sourcePath: source.summary.folder.path,
-        rawFollows: options.rawFollows,
-        keepMode: options.keepMode,
-        destinationPath: destination.folder.path,
-      };
-      const entries = entriesOf(source, options.includeSubfolders);
-      sessions.set(id, {
-        id,
-        source,
-        destination,
-        options,
-        entries,
-        events: [],
-        existing: existingFor(source, destination),
-        facts: scenario.facts,
-        latest: null,
-        confirmChecked: false,
-        confirmed: null,
-      });
-      return {
-        id,
-        source: source.summary,
-        destination,
-        options,
-        rejectedFolder: rejectedRoot(source.summary.folder.path),
-        rejectedFolderExists: source.rejectedFolderExists,
-        photos: entries.map((e) => ({ ...e.photo, route: routeOf(e.group, routeOptions) })),
-        exampleId: exampleOf(entries)?.photo.id ?? null,
-      };
+      return openSession(source, destination, options);
     },
 
     recordEvent: async (sessionId, event) => {
@@ -470,6 +609,88 @@ export function createBackend(options: DemoOptions = {}): Backend {
       }
       session.confirmed = again.planId;
       return { kind: "confirmed", planId: again.planId };
+    },
+
+    startApply: async (planId) => {
+      if (applies.has(planId)) {
+        const apply = applyOf(planId);
+        // An interrupted plan rolls forward from the journal once its volumes are present.
+        if (apply.sim.phase === "interrupted") resume(apply.sim);
+        return statusOf(apply);
+      }
+      const session = [...sessions.values()].find((s) => s.confirmed === planId);
+      if (session === undefined || session.latest?.planId !== planId) {
+        throw new Error("plan not confirmed");
+      }
+      return statusOf(beginApply(session, session.latest));
+    },
+
+    applyStatus: async (planId) => statusOf(applyOf(planId)),
+
+    pauseApply: async (planId) => {
+      const apply = applyOf(planId);
+      requestHalt(apply.sim, "pause");
+      return statusOf(apply);
+    },
+
+    continueApply: async (planId) => {
+      const apply = applyOf(planId);
+      resume(apply.sim);
+      return statusOf(apply);
+    },
+
+    stopApply: async (planId) => {
+      const apply = applyOf(planId);
+      requestHalt(apply.sim, "cancel");
+      return statusOf(apply);
+    },
+
+    retryFailed: async (planId) => {
+      const apply = applyOf(planId);
+      retryFailed(apply.sim);
+      return statusOf(apply);
+    },
+
+    finishMoves: async (planId) => {
+      const apply = applyOf(planId);
+      finishMoves(apply.sim);
+      return statusOf(apply);
+    },
+
+    closeApply: async (planId) => {
+      const { session, sim } = applyOf(planId);
+      if (!closeSim(sim)) {
+        throw new Error("the apply has not ended");
+      }
+      // The plan's applied groups are locked for good (§5.4); a new plan holds them as applied
+      // and sees the files where they now are.
+      const applied = new Set([...session.facts.applied, ...appliedNames(sim)]);
+      session.facts = { ...session.facts, applied };
+      for (const f of sim.files) {
+        if (f.state === "done" || f.state === "copiedSourceKept")
+          session.existing.add(folded(f.to));
+      }
+      session.confirmed = null;
+      session.latest = null;
+      if (interrupted?.planId === planId) interrupted = null;
+    },
+
+    openLog: async (runId) => {
+      for (const { sim } of applies.values()) {
+        const text = logOf(sim, runId);
+        if (text !== null) return { kind: "text", text };
+      }
+      throw new Error("no log for this run");
+    },
+
+    interruptedApply: async (): Promise<InterruptedApply | null> => {
+      if (interrupted === null && scenario.interrupted !== undefined && applies.size === 0) {
+        interrupted = makeInterrupted(scenario.interrupted.cardOut);
+      }
+      if (interrupted === null) return null;
+      const apply = applies.get(interrupted.planId);
+      if (apply === undefined || apply.sim.phase === "closed") return null;
+      return { session: interrupted.info, planId: interrupted.planId };
     },
   };
 }

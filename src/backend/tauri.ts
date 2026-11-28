@@ -28,5 +28,15 @@ export function createBackend(): Backend {
     reviewPlan: notYet("reviewPlan"),
     chooseVolume: notYet("chooseVolume"),
     confirmPlan: notYet("confirmPlan"),
+    startApply: notYet("startApply"),
+    applyStatus: notYet("applyStatus"),
+    pauseApply: notYet("pauseApply"),
+    continueApply: notYet("continueApply"),
+    stopApply: notYet("stopApply"),
+    retryFailed: notYet("retryFailed"),
+    finishMoves: notYet("finishMoves"),
+    closeApply: notYet("closeApply"),
+    openLog: notYet("openLog"),
+    interruptedApply: notYet("interruptedApply"),
   };
 }
