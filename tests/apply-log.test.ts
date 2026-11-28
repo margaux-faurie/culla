@@ -1,5 +1,7 @@
-// The demo's apply log renderer against the golden file the core's renderer is pinned to
-// (`crates/core/src/applylog/tests.rs`, `whole_log_for_a_mixed_plan`), so the two cannot drift.
+// The demo's apply log renderer against a golden file holding the text the core's renderer is
+// pinned to (`crates/core/src/applylog/tests.rs`, `whole_log_for_a_mixed_plan`, inline for now).
+// Follow-up: an integration test under crates/core/tests/ reads the same file, so the two cannot
+// drift (`include_str!` is allowed only there).
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
