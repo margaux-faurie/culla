@@ -12,6 +12,8 @@ interface DemoOutput {
   // Built HTML pages by file name: index.html (the demo) and install.html (the install guide).
   html: Map<string, string>;
   css: string[];
+  // Every other emitted asset's file name, e.g. assets/BricolageGrotesque-Regular-<hash>.woff.
+  files: string[];
 }
 
 async function demoOutput(): Promise<DemoOutput> {
@@ -29,7 +31,7 @@ async function demoOutput(): Promise<DemoOutput> {
     }
   }
   const outputs = Array.isArray(result) ? result : [result];
-  const out: DemoOutput = { html: new Map(), css: [] };
+  const out: DemoOutput = { html: new Map(), css: [], files: [] };
   for (const output of outputs) {
     if ("output" in output) {
       for (const file of output.output) {
@@ -42,6 +44,8 @@ async function demoOutput(): Promise<DemoOutput> {
           out.html.set(file.fileName, source);
         } else if (file.fileName.endsWith(".css")) {
           out.css.push(source);
+        } else {
+          out.files.push(file.fileName);
         }
       }
     }
@@ -114,6 +118,24 @@ describe("demo build stays inside its CSP", () => {
     for (const sheet of css) {
       expect(sheet).not.toMatch(/url\(\s*["']?data:/i);
     }
+  });
+
+  it("self-hosts the typeface as files under /assets/ (SPEC §5.6)", {
+    timeout: 60_000,
+  }, async () => {
+    const { css, files } = await demoOutput();
+    const fonts = files.filter((name) => /\.woff2?$/.test(name));
+    expect(fonts.length).toBe(2);
+    for (const name of fonts) {
+      expect(name).toMatch(/^assets\/BricolageGrotesque-(Regular|Bold)-[^/]+\.woff$/);
+    }
+    const sheet = css.join("\n");
+    expect(sheet).toMatch(/font-family:\s*"?Bricolage Grotesque"?/);
+    expect(sheet).toMatch(/font-display:\s*swap/);
+    // No remote stylesheet pulled in by @import, and the only url()s are the two font files.
+    expect(sheet).not.toMatch(/@import/i);
+    const urls = [...sheet.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/g)].map(([, url]) => url);
+    expect([...urls].sort()).toEqual(fonts.map((name) => `/${name}`).sort());
   });
 
   it("copies public-demo only in demo mode", async () => {

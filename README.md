@@ -205,6 +205,8 @@ Culla is licensed under the GNU General Public License v3.0 only (GPL-3.0-only);
 
 The name "Culla" and its logo are not covered by the licence; see [TRADEMARKS.md](TRADEMARKS.md). Forks are welcome under the licence but must use a different name.
 
+The Bricolage Grotesque typeface in `src/assets/fonts/` is © 2022 The Bricolage Grotesque Project Authors, licensed under the SIL Open Font License 1.1; see [its licence](src/assets/fonts/OFL.txt).
+
 ---
 
 Built by [Margaux Faurie](https://github.com/margaux-faurie), with Claude Code as a pair; the design docs double as notes for a future guide on building with agents.
