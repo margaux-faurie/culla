@@ -12,7 +12,7 @@ Margaux decided (27 Nov 2026): the Worker `culla` deployed by Workers Builds, th
 | `public-demo/_headers` | Response headers: CSP, `nosniff`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, COOP, CORP, HSTS (no preload), and a one-year immutable cache for the hashed files under `/assets/`. Vite copies it into `dist-demo/` in demo mode only (`vite.config.ts`). |
 | `tests/demo-site.test.ts` | Fails if the built demo gains an inline script or style or a `data:` URL in its CSS (the CSP would block them), if `public-demo/` reaches the desktop build, or if `_headers` loses a header or sets one twice. |
 
-Wrangler is not a dependency of the repository: Workers Builds runs it with `npx`.
+Wrangler is a pinned devDependency (`package.json`, in the lockfile), so `npx wrangler deploy` runs that local copy after the frozen install instead of fetching one. Its esbuild and workerd install scripts are denied in `pnpm-workspace.yaml` (`allowBuilds: false`): an assets-only deploy needs neither, and `strictDepBuilds` stays on. `pnpm exec wrangler deploy --dry-run` after `pnpm build:demo` checks the config locally.
 
 ## Workers Builds settings
 
@@ -60,5 +60,4 @@ Workers Builds deploys the demo on every push to `main`, so a merged PR is live 
 
 ## Known limits
 
-- `npx wrangler deploy` fetches the latest Wrangler at deploy time, outside the lockfile and the pnpm release-age rule. Pinning a version in the deploy command (`npx wrangler@<version> deploy`) closes that; to decide.
 - The build runs repository code (the build scripts and every dependency installed from the lockfile) in Cloudflare's build environment, which holds the build token. If only `main` is built (proposed, to confirm), only merged code runs there; the token's scope bounds what a compromised build can do (threat model T18). The default build token is account-wide, not limited to this Worker.
