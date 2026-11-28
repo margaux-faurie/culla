@@ -101,7 +101,14 @@ describe("swipe keyboard map (SPEC §4.1)", () => {
     expect(commandFor(press("ArrowDown", "ArrowDown"))).toBeNull();
   });
 
-  it("maps the EXIF overlay to nothing yet (US-40)", () => {
-    expect(commandFor(press("i", "KeyI"))).toBeNull();
+  it("shows the photo details with I, by character, once per press (US-40)", () => {
+    expect(commandFor(press("i", "KeyI"))).toBe("exif");
+    expect(commandFor(press("I", "KeyI", { shiftKey: true }))).toBe("exif");
+    // QWERTZ and AZERTY have I where QWERTY has it; a layout that moves it still matches.
+    expect(commandFor(press("i", "KeyO"))).toBe("exif");
+    expect(commandFor(press("i", "KeyI", { repeat: true }))).toBeNull();
+    expect(commandFor(press("i", "KeyI", { ctrlKey: true }))).toBeNull();
+    // While zoomed too.
+    expect(commandFor(press("i", "KeyI"), true)).toBe("exif");
   });
 });

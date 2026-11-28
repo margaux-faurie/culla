@@ -18,10 +18,12 @@ import {
   runIdOf,
   type Sim,
 } from "./demo-apply";
+import { type DemoMeta, exifOf } from "./demo-exif";
 import {
   type DemoPhotoSpec,
   demoFullImage,
   demoGroup,
+  demoMeta,
   demoPhoto,
   source2026,
   sourceAlps,
@@ -233,6 +235,8 @@ interface DemoEntry {
   readonly group: DemoGroup;
   /** The full image zoom asks for (US-39). */
   readonly full: () => FullImage;
+  /** Its metadata, as the EXIF pass reads it (US-40). */
+  readonly meta: DemoMeta;
 }
 
 /**
@@ -283,6 +287,8 @@ export function createBackend(options: DemoOptions = {}): Backend {
     options.scenario === undefined ? defaultScenario() : options.scenario,
   );
   let sessionCount = 0;
+  // Photos the overlay asked about, for the `exif-pending` scenario.
+  const exifAsked = new Set<string>();
   let planCount = 0;
 
   const sourceOf = (id: string): DemoSource => {
@@ -301,6 +307,7 @@ export function createBackend(options: DemoOptions = {}): Backend {
         photo: demoPhoto(`${source.summary.id}-${n + 1}`, spec, n),
         group: demoGroup(spec),
         full: () => demoFullImage(spec, n),
+        meta: demoMeta(spec, n),
       }));
 
   const destinationOf = (id: string | null): DestinationSummary | undefined =>
@@ -639,6 +646,20 @@ export function createBackend(options: DemoOptions = {}): Backend {
         if (entry !== undefined) return entry.full();
       }
       // Only ids of the current scan are served (US-33).
+      throw new Error("unknown photo");
+    },
+
+    photoExif: async (photoId) => {
+      for (const session of sessions.values()) {
+        const entry = session.entries.find((e) => e.photo.id === photoId);
+        if (entry === undefined) continue;
+        // The EXIF pass reaches a photo after the first ask in this scenario (US-40).
+        if (scenario.exifPending === true && !exifAsked.has(photoId)) {
+          exifAsked.add(photoId);
+          return { kind: "pending" };
+        }
+        return exifOf(entry.meta);
+      }
       throw new Error("unknown photo");
     },
 
