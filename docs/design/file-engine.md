@@ -831,6 +831,7 @@ Each invariant has at least one test in [testing.md](../testing.md): property te
 - Undo blocked behind a locked or applied group (§5.4).
 - Nested sources: refused only while the other has an open plan (§6.1), or always while it has applied groups.
 - Session after a completed apply (§9.6); auto-resume or confirm (§10.1); log copy in the destination (§2.2).
+- §9.5 says pause and cancel are checked between steps, so the current operation stops at a step boundary; the merged executor (`culla_core::journal::run`) asks `halt` only between groups and before each operation, so the current operation (copy, verify, commit) finishes first. Align §9.5 with the code or check between steps; raised in review of PR #42 (SPEC §10).
 - The apply log's format (§9.8): proposed with `culla_core::applylog`, awaiting Margaux (SPEC §10).
 - `FileRenameInfoEx` support on FAT32 and exFAT, and the path form it accepts, to check in adapter tests.
 - Proposed with the journal executor (PR #36): flushing every folder on the target's path below the root, and the parent of each, before a source removal (`flush_dirs`, §9.3). Whether `FlushFileBuffers` on a folder handle is allowed and makes the directory entries durable on FAT32 and exFAT (and which access the handle needs) is to check in adapter tests; if it is not, the alternative is to fall back to a volume flush or to accept the gap and record it.
