@@ -151,10 +151,12 @@ pub trait Disk {
     /// As the open or flush reports.
     fn flush_target(&mut self, op: &Op) -> Result<(), DiskError>;
 
-    /// Flushes the folders `make_dirs` created for the target, and their parent, so the
-    /// target's directory entries are durable before its source is removed (proposed; whether
-    /// a folder handle can be flushed on FAT32 and exFAT is open, file-engine §13). Asked before
-    /// every [`Disk::remove_source`]; a folder that already existed needs nothing.
+    /// Flushes every folder on the target's path below the root, and the parent of each (the
+    /// root included), so the target's directory entries are durable before its source is
+    /// removed (proposed; whether a folder handle can be flushed on FAT32 and exFAT is open,
+    /// file-engine §13). Every folder, whether or not this run created it: one a crashed earlier
+    /// run created may still be unflushed. Asked before every [`Disk::remove_source`], for every
+    /// member of the group before the first removal.
     ///
     /// # Errors
     ///
@@ -826,9 +828,10 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
     }
 
     /// §9.3 step 6 for a group whose members are all committed: a proof for each (from this
-    /// run, or made afresh, which also flushes F), then each target's folders flushed and every
-    /// source removed, then each target re-checked. A `source_removed` member whose source came
-    /// back ([`Cell::RemoveAgain`]) is proved and removed again here, under the same gate.
+    /// run, or made afresh, which also flushes F), then every target's folders flushed, then
+    /// every source removed, then each target re-checked. A `source_removed` member whose
+    /// source came back ([`Cell::RemoveAgain`]) is proved and removed again here, under the
+    /// same gate.
     fn remove_sources(&mut self, g: &Range<usize>) -> Step {
         let all_committed = g.clone().all(|i| {
             matches!(
@@ -872,6 +875,8 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
                 }
             }
         }
+        // Every member's folders before the first removal, so a failed flush cannot split
+        // the group.
         for i in g.clone() {
             let op = self.op(i);
             if !to_remove(self, i) {
@@ -880,6 +885,12 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
             if let Err(e) = call(self.disk.flush_dirs(&op))? {
                 self.on_error(i, e, None)?;
                 return self.fail_group(g);
+            }
+        }
+        for i in g.clone() {
+            let op = self.op(i);
+            if !to_remove(self, i) {
+                continue;
             }
             match call(self.disk.remove_source(&op))? {
                 Ok(()) => {

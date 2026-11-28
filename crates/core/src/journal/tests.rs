@@ -449,9 +449,16 @@ fn cell_setups() -> Vec<(Kind, OpState, bool, bool, bool, bool)> {
 }
 
 /// A one-op world with the journal at `state` and the files as (S, P, F) say, durable.
-fn cell_world(
+fn cell_world(setup: (Kind, OpState, bool, bool, bool, bool), seed: u64) -> (Shared, Op, String) {
+    cell_world_with(setup, seed, false)
+}
+
+/// As [`cell_world`]; with `unflushed`, F and the target's folder are left unflushed, as a
+/// crashed earlier run that created them may leave them.
+fn cell_world_with(
     (kind, state, s, p, f, matching): (Kind, OpState, bool, bool, bool, bool),
     seed: u64,
+    unflushed: bool,
 ) -> (Shared, Op, String) {
     let root = if kind == Kind::Rename {
         Root::Rejected
@@ -482,18 +489,26 @@ fn cell_world(
                 .insert(dst_key_of(op.root, &op.partial(1)), rec(pc));
         }
         if f {
-            if matching {
+            if matching && unflushed {
+                wb.unflushed_change(dst_key(&op), rec(c));
+            } else if matching {
                 wb.files.insert(dst_key(&op), rec(c));
             } else {
                 wb.put_foreign(dst_key(&op), 77);
             }
         }
+        if unflushed {
+            wb.unflushed_dir(dst_key_of(op.root, &op.dst[..op.dst.len() - 1]));
+        }
         // INV-11 holds from here on only if the photo is still at S.
         wb.check_inv11 = s;
     }
     let what = format!(
-        "{kind:?} {state} S{} P{} F{} {matching}",
-        s as u8, p as u8, f as u8
+        "{kind:?} {state} S{} P{} F{} {matching}{}",
+        s as u8,
+        p as u8,
+        f as u8,
+        if unflushed { " unflushed" } else { "" }
     );
     (w, op, what)
 }
@@ -569,6 +584,44 @@ fn every_cell_runs_on_the_fake_disk() {
         assert!(
             outcomes.contains_key(want),
             "{want} never came up: {outcomes:?}"
+        );
+    }
+}
+
+/// Every cell again, with F and the target's folder left unflushed by a crashed earlier run:
+/// the fake's checks hold (no source is removed before `flush_dirs` and the flush of F, even
+/// for a folder this run did not create), and the run ends as with everything durable.
+#[test]
+fn every_cell_runs_with_an_unflushed_target_and_folder() {
+    for setup in cell_setups() {
+        let (kind, state, s, p, f, matching) = setup;
+        let (w, op, what) = cell_world_with(setup, 1, true);
+        let mut j = w.borrow().reload();
+        let before = w.borrow().mutations;
+        let end = go(&w, &mut j).unwrap_or_else(|e| panic!("{what}: {e}"));
+        assert_eq!(end, End::Finished, "{what}");
+        if let Some(Cell::Fail(r)) = cell(kind, state, s, p, f) {
+            assert_eq!(
+                w.borrow().mutations,
+                before,
+                "{what}: a failing cell touched"
+            );
+            assert_eq!(
+                (state_of(&j), err(&j, 1)),
+                (OpState::Failed, Some(*r)),
+                "{what}"
+            );
+        }
+        let log = w.borrow().log.clone();
+        if let Some(r) = log.iter().position(|l| l == "remove_source 1") {
+            assert!(log[..r].contains(&"flush_dirs 1".to_owned()), "{what}");
+        }
+        check_cell_end(
+            &w,
+            &mut j,
+            &op,
+            s || (p && matching) || (f && matching),
+            &what,
         );
     }
 }
@@ -1456,14 +1509,45 @@ fn a_source_back_at_source_removed_waits_for_its_group() {
     let removal = log.iter().position(|l| l == "remove_source 1").unwrap();
     let commit = log.iter().position(|l| l == "commit 2").unwrap();
     assert!(commit < removal, "{log:?}");
-    // Each removal comes right after its target's folders are flushed.
+    // Every member's folders are flushed before the first removal.
+    let first = log
+        .iter()
+        .position(|l| l.starts_with("remove_source"))
+        .unwrap();
     for id in [1, 2] {
-        let r = log
+        let f = log
             .iter()
-            .position(|l| *l == format!("remove_source {id}"))
+            .position(|l| *l == format!("flush_dirs {id}"))
             .unwrap();
-        assert_eq!(log[r - 1], format!("flush_dirs {id}"), "{log:?}");
+        assert!(f < first, "{log:?}");
     }
+}
+
+#[test]
+fn a_failed_folder_flush_removes_no_source_of_its_group() {
+    let o = ops(&[(1, Kind::XMove, Root::Dest), (1, Kind::XMove, Root::Dest)]);
+    let w = world(o.clone());
+    w.borrow_mut()
+        .fail_with
+        .insert((2, "flush_dirs"), DiskError::AccessDenied);
+    let mut j = w.borrow().reload();
+    assert_eq!(go(&w, &mut j).unwrap(), End::Finished);
+    // Member 1's copy is committed: it is kept, and so is its source.
+    assert_eq!(state(&j, 1), OpState::CopiedSourceKept);
+    assert_eq!(
+        (state(&j, 2), err(&j, 2)),
+        (OpState::Failed, Some(FailReason::AccessDenied))
+    );
+    for (i, op) in o.iter().enumerate() {
+        let id = i as OpId + 1;
+        assert_eq!(file(&w, &src_key(op)), Some(content(&w, id)));
+    }
+    let log = w.borrow().log.clone();
+    assert!(log.contains(&"flush_dirs 1".to_owned()), "{log:?}");
+    assert!(
+        !log.iter().any(|l| l.starts_with("remove_source")),
+        "{log:?}"
+    );
 }
 
 #[test]

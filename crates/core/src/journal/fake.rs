@@ -3,8 +3,9 @@
 //! unflushed change. Partial writes are flushed at the end of `copy` (flush 1) and their rename
 //! at the end of `commit` (flush 2), or later by `flush_target` and `prove`; user-file renames,
 //! source removals and partial removals are never flushed while the plan is open. Folders that
-//! `make_dirs` creates (in `rename` and `copy`) are unflushed until `flush_dirs`, and a file in
-//! an unflushed folder is not durable. Not modelled (proposed, deferred, file-engine §1): torn
+//! `make_dirs` creates (in `rename` and `copy`), or that a crashed earlier run left, are
+//! unflushed until `flush_dirs`, and a file in an unflushed folder is not durable; each source
+//! removal needs its own `flush_dirs` first, flushed folders or not. Not modelled (proposed, deferred, file-engine §1): torn
 //! FAT renames, and a lost folder taking its files with it.
 //!
 //! The fake also checks, on every call, the rules the core must keep: a source is removed only
@@ -104,6 +105,9 @@ pub(super) struct World {
     /// Folders `make_dirs` created, and those of them not flushed yet.
     dirs: BTreeSet<String>,
     pub(super) unflushed_dirs: BTreeSet<String>,
+    /// Ops whose target folders `flush_dirs` flushed in this process run since their last
+    /// `remove_source`: each removal needs its own request, flushed folders or not.
+    dirs_flush_asked: BTreeSet<OpId>,
     /// The mode of the next crash, instead of a random one.
     pub(super) crash_mode: Option<Mode>,
     /// A crash reverts every unflushed change (true) or none (false), instead of each at
@@ -155,6 +159,7 @@ impl World {
             unflushed: Vec::new(),
             dirs: BTreeSet::new(),
             unflushed_dirs: BTreeSet::new(),
+            dirs_flush_asked: BTreeSet::new(),
             crash_mode: None,
             revert_all: None,
             vanish: BTreeSet::new(),
@@ -253,6 +258,17 @@ impl World {
         }
     }
 
+    /// A file a crashed earlier run wrote, not flushed yet.
+    pub(super) fn unflushed_change(&mut self, key: String, r: FileRec) {
+        self.change(vec![(key, Some(r))], false);
+    }
+
+    /// A folder on a target's path a crashed earlier run created, not flushed yet.
+    pub(super) fn unflushed_dir(&mut self, d: String) {
+        self.unflushed_dirs.insert(d.clone());
+        self.dirs.insert(d);
+    }
+
     /// F and its folders are durable.
     fn target_durable(&self, op: &Op) -> bool {
         let k = dst_key(op);
@@ -279,6 +295,7 @@ impl World {
         self.crashed = true;
         self.crashes += 1;
         self.proofs.clear();
+        self.dirs_flush_asked.clear();
         let changes = std::mem::take(&mut self.unflushed);
         let mut kept = Vec::new();
         for c in changes.into_iter().rev() {
@@ -667,6 +684,11 @@ impl Disk for FakeDisk {
                 "op {}: source removed while its target or its folders are not durable",
                 op.id
             );
+            assert!(
+                w.dirs_flush_asked.remove(&op.id),
+                "op {}: source removed without its target's folders flushed first",
+                op.id
+            );
             w.group_ok_for_removal(op);
             w.owned(op, &src_key(op));
             w.mutations += 1;
@@ -712,6 +734,7 @@ impl Disk for FakeDisk {
                 for d in World::target_dirs(op) {
                     w.unflushed_dirs.remove(&d);
                 }
+                w.dirs_flush_asked.insert(op.id);
             }
             Ok(())
         })
