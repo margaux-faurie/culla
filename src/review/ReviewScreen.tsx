@@ -93,16 +93,20 @@ export function ReviewScreen(props: ReviewScreenProps) {
    * Puts a message in the status region. It is cleared first, so the same words said twice (two
    * "Check again" with the same outcome) are read out again.
    */
+  const announceTimer = useRef<number | undefined>(undefined);
   const announce = (text: string) => {
+    window.clearTimeout(announceTimer.current);
     setAnnouncement("");
-    window.setTimeout(() => setAnnouncement(text), 50);
+    announceTimer.current = window.setTimeout(() => setAnnouncement(text), 50);
   };
+  useEffect(() => () => window.clearTimeout(announceTimer.current), []);
   // `announced`: the user asked for this check ("Check again"), so its outcome is read out.
   const check = (seq: number, announced = false) => {
     generation.current += 1;
     const mine = generation.current;
     setStatus("checking");
     if (announced) {
+      window.clearTimeout(announceTimer.current);
       setAnnouncement("");
     }
     backend.reviewPlan(session.id, seq).then(
@@ -222,6 +226,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
     generation.current += 1;
     const mine = generation.current;
     setStatus("checking");
+    window.clearTimeout(announceTimer.current);
     setAnnouncement("");
     try {
       const next = await backend.chooseVolume(plan.planId, choice.id);
@@ -738,7 +743,7 @@ function FileList({ plan }: { readonly plan: ReviewPlan }) {
                 <td>{file.photoName}</td>
                 <td>{file.path}</td>
                 <td>Stays where it is</td>
-                <td>Stays: RAW follows JPEG is off</td>
+                <td>Stays: "RAW and edit files follow their JPEG" is off</td>
               </tr>
             ))}
           </tbody>
