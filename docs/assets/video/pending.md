@@ -11,4 +11,4 @@ The render (`node docs/assets/video/hash.mjs --write`) empties the list; the rel
 - 2026-11-28 #53: demo photos changed — re-render before release
 - 2026-11-28 #54: swipe (zoom to 100 %) changed — re-render before release
 - 2026-11-28 #55: swipe (EXIF overlay) changed — re-render before release
-- 2026-11-28 #feat/lean-review: review (lean layout) changed — re-render before release
+- 2026-11-28 #56: review (lean layout) changed — re-render before release
