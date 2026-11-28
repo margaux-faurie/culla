@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page } from "@playwright/test";
 
@@ -89,4 +90,34 @@ export async function tabUntil(page: Page, selector: string) {
     }
     await page.keyboard.press("Tab");
   }
+}
+
+/**
+ * The Content-Security-Policy the deployed demo sends (public-demo/_headers). `vite preview` sends
+ * none, so a test that must hold under it adds it with `withDemoCsp`.
+ */
+export function demoCsp(): string {
+  const headers = readFileSync(new URL("../public-demo/_headers", import.meta.url), "utf8");
+  const line = headers
+    .split(/\r?\n/)
+    .find((l) => /^\s+Content-Security-Policy:/i.test(l) && !l.trimStart().startsWith("#"));
+  if (line === undefined) {
+    throw new Error("no Content-Security-Policy in public-demo/_headers");
+  }
+  return line.slice(line.indexOf(":") + 1).trim();
+}
+
+/** Serves the demo's pages with the deployed CSP, so anything it would block is blocked here too. */
+export async function withDemoCsp(page: Page) {
+  const csp = demoCsp();
+  await page.route(
+    (url) => url.pathname === "/" || url.pathname.endsWith(".html"),
+    async (route) => {
+      const response = await route.fetch();
+      await route.fulfill({
+        response,
+        headers: { ...response.headers(), "content-security-policy": csp },
+      });
+    },
+  );
 }

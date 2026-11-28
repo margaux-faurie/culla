@@ -10,7 +10,7 @@ Margaux decided (27 Nov 2026): the Worker `culla` deployed by Workers Builds, th
 |---|---|
 | `wrangler.jsonc` | The Worker: name `culla`, assets only (no script, no bindings), `dist-demo/` as the asset directory, unknown paths answer 404, `workers_dev` and `preview_urls` off. `wrangler deploy` applies these on every deploy. |
 | `public-demo/_headers` | Response headers: CSP, `nosniff`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, COOP, CORP, HSTS (no preload), and a one-year immutable cache for the hashed files under `/assets/`. Vite copies it into `dist-demo/` in demo mode only (`vite.config.ts`). |
-| `tests/demo-site.test.ts` | Fails if a built page (`index.html`, `install.html`) gains an inline script or style, a `style=` or `on…=` attribute, a `data:` URL, or a script or link outside `/assets/`, or if the CSS gains a `data:` URL (the CSP would block them), if `public-demo/` reaches the desktop build, or if `_headers` loses a header or sets one twice. |
+| `tests/demo-site.test.ts` | Fails if a built page (`index.html`, `install.html`) gains an inline script or style, a `style=` or `on…=` attribute, a `data:` URL, or a script or link outside `/assets/`, or if any built HTML, CSS or JS holds a `data:` URL (the CSP would block them; the placeholder photos are SVG files under `/assets/`), if `public-demo/` reaches the desktop build, or if `_headers` loses a header or sets one twice. |
 
 Wrangler is not a dependency of the repository: Workers Builds runs it with `npx`.
 
