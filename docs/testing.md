@@ -242,6 +242,7 @@ Run on the ROG Zephyrus G14 2024 before each release, and once at the end of M1,
 - [ ] Portrait photos are upright (EXIF orientation).
 - [ ] Lone NEF shows its embedded preview. An HE/HE\* NEF shows its preview (no RAW decode expected).
 - [ ] Colour: an sRGB JPEG and an AdobeRGB JPEG look right on the OLED in WebView2 compared with a colour-managed viewer.
+- [ ] Zoom to 100 % (Z and held Space) on real 24 MP and 45 MP files: the full image is sharp enough to judge focus, it appears within 1.0 s from a UHS-I card, and panning with the arrows is smooth (NFR-PERF-07, US-39).
 - [ ] Night theme on the swipe and zoom screens, cream elsewhere. Keep colour readable on both.
 - [ ] Windows "Reduce animations" (maps to `prefers-reduced-motion`) turns off the swipe physics.
 - [ ] Narrator reads the decision state and counts on the swipe and review screens.
