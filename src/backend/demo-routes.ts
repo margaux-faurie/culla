@@ -103,7 +103,7 @@ export interface RouteOptions {
   readonly destinationPath: string | null;
 }
 
-/** Where a kept group goes; the folder alone (no verb) until moved or copied is chosen. */
+/** Where a kept group goes; "moved or copied" until one is chosen. */
 function keptTo(group: DemoGroup, options: RouteOptions, cameraProtected: boolean): string | null {
   if (options.destinationPath === null) {
     return null;
@@ -113,7 +113,7 @@ function keptTo(group: DemoGroup, options: RouteOptions, cameraProtected: boolea
     return `copied to ${folder}`;
   }
   return options.keepMode === null
-    ? folder
+    ? `moved or copied to ${folder}`
     : `${keepVerb(options.keepMode, cameraProtected)} to ${folder}`;
 }
 

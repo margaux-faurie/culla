@@ -9,11 +9,23 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const headersFile = fileURLToPath(new URL("../public-demo/_headers", import.meta.url));
 
 interface DemoOutput {
-  html: string;
+  // Built HTML pages by file name: index.html (the demo) and install.html (the install guide).
+  html: Map<string, string>;
   css: string[];
+  js: string[];
+  // Every other emitted asset's file name, e.g. assets/scene-01-<hash>.svg or
+  // assets/BricolageGrotesque-Regular-<hash>.woff.
+  files: string[];
 }
 
-async function demoOutput(): Promise<DemoOutput> {
+// Built once and shared by the tests below.
+let built: Promise<DemoOutput> | undefined;
+const demoOutput = (): Promise<DemoOutput> => {
+  built ??= buildDemo();
+  return built;
+};
+
+async function buildDemo(): Promise<DemoOutput> {
   // Build as `pnpm build:demo` does: vitest sets NODE_ENV to "test", which would change the output.
   const nodeEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = "production";
@@ -28,19 +40,22 @@ async function demoOutput(): Promise<DemoOutput> {
     }
   }
   const outputs = Array.isArray(result) ? result : [result];
-  const out: DemoOutput = { html: "", css: [] };
+  const out: DemoOutput = { html: new Map(), css: [], js: [], files: [] };
   for (const output of outputs) {
     if ("output" in output) {
       for (const file of output.output) {
-        if (file.type !== "asset") {
+        if (file.type === "chunk") {
+          out.js.push(file.code);
           continue;
         }
         const source =
           typeof file.source === "string" ? file.source : new TextDecoder().decode(file.source);
-        if (file.fileName === "index.html") {
-          out.html = source;
+        if (file.fileName.endsWith(".html")) {
+          out.html.set(file.fileName, source);
         } else if (file.fileName.endsWith(".css")) {
           out.css.push(source);
+        } else {
+          out.files.push(file.fileName);
         }
       }
     }
@@ -89,22 +104,68 @@ function csp(value: string): Map<string, string> {
 
 describe("demo build stays inside its CSP", () => {
   it("has no inline script or style and no data: URLs", { timeout: 60_000 }, async () => {
-    const { html, css } = await demoOutput();
-    expect(html).toContain('<div id="root">');
-    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\b[^>]*>/gi)];
-    expect(scripts.length).toBeGreaterThan(0);
-    // Every opening tag must be one the pattern matched, so none escapes the checks below.
-    expect(html.match(/<script\b/gi)?.length).toBe(scripts.length);
-    for (const [, attributes, body] of scripts) {
-      expect(attributes).toMatch(/\bsrc="\/assets\/[^"]+\.js"/);
-      expect(body?.trim()).toBe("");
+    const { html: pages, css } = await demoOutput();
+    expect([...pages.keys()].sort()).toEqual(["index.html", "install.html"]);
+    expect(pages.get("index.html")).toContain('<div id="root">');
+    for (const [name, html] of pages) {
+      const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\b[^>]*>/gi)];
+      expect(scripts.length, name).toBeGreaterThan(0);
+      // Every opening tag must be one the pattern matched, so none escapes the checks below.
+      expect(html.match(/<script\b/gi)?.length, name).toBe(scripts.length);
+      for (const [, attributes, body] of scripts) {
+        expect(attributes, name).toMatch(/\bsrc="\/assets\/[^"]+\.js"/);
+        expect(body?.trim(), name).toBe("");
+      }
+      expect(html, name).not.toMatch(/<style\b/i);
+      expect(html, name).not.toMatch(/\sstyle\s*=/i);
+      expect(html, name).not.toMatch(/\son[a-z]+\s*=/i);
+      expect(html, name).not.toMatch(/data:/i);
+      // Stylesheets and module preloads come from the demo's own /assets/ only.
+      for (const [, attributes] of html.matchAll(/<link\b([^>]*)>/gi)) {
+        expect(attributes, name).toMatch(/\bhref="\/assets\/[^"]+"/);
+      }
     }
-    expect(html).not.toMatch(/<style\b/i);
-    expect(html).not.toMatch(/\sstyle\s*=/i);
-    expect(html).not.toMatch(/\son[a-z]+\s*=/i);
     for (const sheet of css) {
       expect(sheet).not.toMatch(/url\(\s*["']?data:/i);
     }
+  });
+
+  // A data: URL in built code is always written with its media type (`data:image/svg+xml,...`,
+  // `data:font/woff2;base64,...`), which is what this looks for in every built JS, CSS and HTML
+  // file. It catches the old inline SVG placeholders (blocked by img-src 'self') and anything
+  // Vite would inline, without tripping on code like `{data:null}`.
+  it("builds no data: URL into JS, CSS or HTML", { timeout: 60_000 }, async () => {
+    const { html, css, js } = await demoOutput();
+    const dataUrl = /data:[a-z]+\/[a-z0-9.+-]+[;,]/i;
+    for (const text of [...html.values(), ...css, ...js]) {
+      expect(text.match(dataUrl)?.[0] ?? null).toBeNull();
+    }
+  });
+
+  it("ships the placeholder photos as files under /assets/ (img-src 'self')", {
+    timeout: 60_000,
+  }, async () => {
+    const { files } = await demoOutput();
+    const scenes = files.filter((name) => /^assets\/scene-\d{2}-[^/]+\.svg$/.test(name));
+    expect(scenes.length).toBe(24);
+  });
+
+  it("self-hosts the typeface as files under /assets/ (SPEC §5.6)", {
+    timeout: 60_000,
+  }, async () => {
+    const { css, files } = await demoOutput();
+    const fonts = files.filter((name) => /\.woff2?$/.test(name));
+    expect(fonts.length).toBe(2);
+    for (const name of fonts) {
+      expect(name).toMatch(/^assets\/BricolageGrotesque-(Regular|Bold)-[^/]+\.woff$/);
+    }
+    const sheet = css.join("\n");
+    expect(sheet).toMatch(/font-family:\s*"?Bricolage Grotesque"?/);
+    expect(sheet).toMatch(/font-display:\s*swap/);
+    // No remote stylesheet pulled in by @import, and the only url()s are the two font files.
+    expect(sheet).not.toMatch(/@import/i);
+    const urls = [...sheet.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/g)].map(([, url]) => url);
+    expect([...urls].sort()).toEqual(fonts.map((name) => `/${name}`).sort());
   });
 
   it("copies public-demo only in demo mode", async () => {

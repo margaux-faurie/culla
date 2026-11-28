@@ -88,7 +88,13 @@ export function ConfirmDialog({
       aria-labelledby="confirm-title"
       aria-describedby="confirm-body"
       onCancel={onCancelEvent}
-      onClose={onClosed}
+      onClose={() => {
+        // The browser queues `close` as a task: by the time it arrives, Apply may have opened the
+        // dialog again (a quick Esc then Enter). Only a dialog still closed is a close to report.
+        if (ref.current?.open !== true) {
+          onClosed();
+        }
+      }}
       onKeyDown={onKeyDown}
     >
       <h2 id="confirm-title" className="panel-title">

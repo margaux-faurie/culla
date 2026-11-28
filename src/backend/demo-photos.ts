@@ -1,9 +1,13 @@
 /**
  * Sample photos for the web demo. The author's photos (about 25 at 1600 px, SPEC §5.5) are not
- * chosen yet (SPEC §10), so the demo draws simple scenes as inline SVG: no network, no file.
+ * chosen yet (SPEC §10), so the demo shows simple drawn scenes. They are SVG files in
+ * `demo-scenes/`, bundled by Vite under /assets/, because the demo's CSP allows images from its
+ * own origin only (`img-src 'self'`, public-demo/_headers): a `data:` URL would be blocked.
+ * `sceneSvg` is their one source; `demo-photos.test.ts` fails if a file drifts from it.
  */
+import type { DemoMeta } from "./demo-exif";
 import { type DemoGroup, kindOf, type Sidecar } from "./demo-routes";
-import type { PhotoSummary } from "./types";
+import type { FullImage, PhotoSummary } from "./types";
 
 interface Scene {
   readonly sky: string;
@@ -72,21 +76,109 @@ const SCENES: readonly Scene[] = [
   },
 ];
 
-const svg = (scene: Scene, n: number): string => {
+/** How many scene files there are: one per photo of the largest demo source (`source2026`). */
+export const SCENE_COUNT = 24;
+
+/** Where scene `n` puts its sun and horizon, in the preview's own pixels. */
+function layout(n: number) {
+  const scene = SCENES[n % SCENES.length] ?? (SCENES[0] as Scene);
   const [w, h] = scene.portrait ? [1067, 1600] : [1600, 1067];
   const sunX = 200 + ((n * 173) % (w - 400));
   const horizon = Math.round(h * (0.55 + ((n * 37) % 20) / 100));
   const sunY = Math.round(horizon * 0.4);
   const sunR = Math.round(w / 12);
+  return { scene, w, h, sunX, horizon, sunY, sunR };
+}
+
+/** The markup of scene file `n` (0-based): `demo-scenes/scene-01.svg` is `sceneSvg(0)`. */
+export const sceneSvg = (n: number): string => {
+  const { scene, w, h, sunX, horizon, sunY, sunR } = layout(n);
   const markup = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`,
+    // The alt text is plain words (no markup characters), so it goes in as is.
+    `<title>${scene.alt}</title>`,
     `<rect width="${w}" height="${h}" fill="${scene.sky}"/>`,
     `<circle cx="${sunX}" cy="${sunY}" r="${sunR}" fill="${scene.sun}"/>`,
     `<rect y="${horizon}" width="${w}" height="${h - horizon}" fill="${scene.ground}"/>`,
     "</svg>",
   ].join("");
-  return `data:image/svg+xml,${encodeURIComponent(markup)}`;
+  return `${markup}\n`;
 };
+
+/** A 24 MP frame (Z6 class): the size of the full image zoom shows at 100 % (US-39). */
+export const FULL_LONG = 6048;
+export const FULL_SHORT = 4032;
+
+/**
+ * The markup of full-size scene file `n` (0-based), `demo-scenes-full/full-01.svg` for n = 0: the
+ * same picture as `sceneSvg(n)` drawn at 6048 × 4032 (4032 × 6048 upright), with fine detail a
+ * fitted preview cannot show (a grid in the sky, grass on the ground), so zoom and panning have
+ * something to look at.
+ */
+export const fullSceneSvg = (n: number): string => {
+  const { scene, w, h, sunX, horizon, sunY, sunR } = layout(n);
+  const [fw, fh] = scene.portrait ? [FULL_SHORT, FULL_LONG] : [FULL_LONG, FULL_SHORT];
+  const markup = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${fw}" height="${fh}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">`,
+    `<title>${scene.alt}, full size</title>`,
+    "<defs>",
+    `<pattern id="grid" width="6" height="6" patternUnits="userSpaceOnUse"><path d="M6 0H0V6" fill="none" stroke="${scene.sun}" stroke-opacity="0.4" stroke-width="0.25"/></pattern>`,
+    `<pattern id="grass" width="2" height="4" patternUnits="userSpaceOnUse"><path d="M0.3 4L1 0.6L1.7 4" fill="none" stroke="${scene.sky}" stroke-opacity="0.5" stroke-width="0.25"/></pattern>`,
+    "</defs>",
+    `<rect width="${w}" height="${h}" fill="${scene.sky}"/>`,
+    `<rect width="${w}" height="${horizon}" fill="url(#grid)"/>`,
+    `<circle cx="${sunX}" cy="${sunY}" r="${sunR}" fill="${scene.sun}"/>`,
+    `<rect y="${horizon}" width="${w}" height="${h - horizon}" fill="${scene.ground}"/>`,
+    `<rect y="${horizon}" width="${w}" height="${h - horizon}" fill="url(#grass)"/>`,
+    "</svg>",
+  ].join("");
+  return `${markup}\n`;
+};
+
+/** The scene file name for photo `n` (0-based). */
+export const sceneFileName = (n: number): string =>
+  `scene-${String((n % SCENE_COUNT) + 1).padStart(2, "0")}.svg`;
+
+// Vite emits each file under /assets/ with a hashed name and gives its URL.
+const SCENE_URLS: Readonly<Record<string, string>> = import.meta.glob<string>(
+  "./demo-scenes/*.svg",
+  { eager: true, query: "?url", import: "default" },
+);
+
+const sceneUrl = (n: number): string => {
+  const url = SCENE_URLS[`./demo-scenes/${sceneFileName(n)}`];
+  if (url === undefined) {
+    throw new Error(`missing demo scene ${sceneFileName(n)}`);
+  }
+  return url;
+};
+
+/** The full-size scene file name for photo `n` (0-based). */
+export const fullSceneFileName = (n: number): string =>
+  `full-${String((n % SCENE_COUNT) + 1).padStart(2, "0")}.svg`;
+
+const FULL_URLS: Readonly<Record<string, string>> = import.meta.glob<string>(
+  "./demo-scenes-full/*.svg",
+  { eager: true, query: "?url", import: "default" },
+);
+
+/**
+ * The full image zoom loads for photo `n` (US-39): its full-size scene file. A lone NEF shows its
+ * largest embedded JPEG, not RAW pixels (ADR 0011).
+ */
+export function demoFullImage(spec: DemoPhotoSpec, n: number): FullImage {
+  const url = FULL_URLS[`./demo-scenes-full/${fullSceneFileName(n)}`];
+  if (url === undefined) {
+    throw new Error(`missing demo scene ${fullSceneFileName(n)}`);
+  }
+  const portrait = layout(n).scene.portrait;
+  return {
+    url,
+    width: portrait ? FULL_SHORT : FULL_LONG,
+    height: portrait ? FULL_LONG : FULL_SHORT,
+    embeddedPreview: spec.lone === true,
+  };
+}
 
 export interface DemoPhotoSpec {
   readonly name: string;
@@ -122,8 +214,42 @@ export function demoPhoto(id: string, spec: DemoPhotoSpec, n: number): PhotoSumm
     name: group.name,
     kind: kindOf(group),
     cameraProtected: group.readOnly.length > 0,
-    previewUrl: svg(scene, n),
+    previewUrl: sceneUrl(n),
     alt: spec.lone === true ? `${scene.alt}, from the NEF's embedded preview` : scene.alt,
+  };
+}
+
+const LENSES = [
+  "NIKKOR Z 24-70mm f/4 S",
+  "NIKKOR Z 50mm f/1.8 S",
+  // As the core names a lens with no LensModel, from LensSpecification.
+  "24-200mm f/4-6.3",
+];
+const SHUTTER_DEN = [250, 500, 125, 1000, 60];
+const APERTURE_TENTHS = [40, 28, 56, 80, 18];
+const ISO = [100, 200, 400, 800, 64];
+const FOCAL = [24, 35, 50, 70, 105];
+const COMPENSATION_THIRDS = [0, -1, 2, -3, 0];
+/** 14 Nov 2026, 09:00:00, in the camera's local time. */
+const FIRST_SHOT = Date.UTC(2026, 10, 14, 9, 0, 0);
+
+/**
+ * A photo's metadata as the core's EXIF pass gives it, pre-extracted for the demo (SPEC §5.5). The
+ * JPEG-only MGF_7004 has no lens and no capture time of its own, so it shows "Not recorded" and the
+ * file time (ADR 0028).
+ */
+export function demoMeta(spec: DemoPhotoSpec, n: number): DemoMeta {
+  const at = <T>(list: readonly T[]): T => list[n % list.length] as T;
+  const noExifTime = spec.name === "MGF_7004";
+  return {
+    camera: "NIKON Z 6_3",
+    lens: noExifTime ? null : at(LENSES),
+    shutter: { num: 1, den: at(SHUTTER_DEN) },
+    aperture: { num: at(APERTURE_TENTHS), den: 10 },
+    iso: at(ISO),
+    focalLength: { num: at(FOCAL), den: 1 },
+    exposureCompensation: { num: at(COMPENSATION_THIRDS), den: 3 },
+    captured: { localMs: FIRST_SHOT + n * 37_000, fromFile: noExifTime },
   };
 }
 

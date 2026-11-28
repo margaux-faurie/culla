@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { blockingViolations, keydown, startSorting, tally } from "./helpers";
+import { blockingViolations, demoCsp, keydown, startSorting, tally, withDemoCsp } from "./helpers";
 
 test.describe("swipe screen (US-22 to US-32, US-42)", () => {
   test("keeps with → and rejects with ←, then shows the next photo", async ({ page }) => {
@@ -23,6 +23,62 @@ test.describe("swipe screen (US-22 to US-32, US-42)", () => {
     const keepRoute = page.getByText("moved to D:\\Photos\\Selects 2026", { exact: true });
     await expect(keepRoute).toBeVisible();
     await expect(page.getByText("No files have moved yet")).toBeVisible();
+  });
+
+  test("the photo loads under the deployed demo's CSP (img-src 'self')", async ({ page }) => {
+    const blocked: string[] = [];
+    page.on("console", (message) => {
+      if (/Content Security Policy/i.test(message.text())) {
+        blocked.push(message.text());
+      }
+    });
+    // Positive control: the page itself must have been served with the demo's CSP.
+    const policies: string[] = [];
+    page.on("response", (response) => {
+      if (response.request().resourceType() === "document") {
+        policies.push(response.headers()["content-security-policy"] ?? "");
+      }
+    });
+    await withDemoCsp(page);
+    await startSorting(page);
+    expect(policies.length).toBeGreaterThan(0);
+    for (const policy of policies) {
+      expect(policy).toBe(demoCsp());
+    }
+    const photo = page.locator(".card-current img");
+    await expect(photo).toHaveAttribute("src", /^\/assets\/scene-\d{2}-[^/]+\.svg$/);
+    // A string, so the e2e tsconfig needs no DOM types.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          `(() => { const img = document.querySelector(".card-current img"); return img !== null && img.complete ? img.naturalWidth : 0; })()`,
+        ),
+      )
+      .toBeGreaterThan(0);
+    expect(blocked).toEqual([]);
+  });
+
+  test("before move or copy is chosen, Keep says so; with no destination, where comes later", async ({
+    page,
+  }) => {
+    await startSorting(page, { keepMode: null });
+    await expect(
+      page.getByText("moved or copied to D:\\Photos\\Selects 2026", { exact: true }),
+    ).toBeVisible();
+    await page.evaluate(
+      `localStorage.setItem("culla-demo:destinations", '{"bySource":{},"lastUsed":null,"keepMode":null}')`,
+    );
+    await page.reload();
+    await page.getByRole("button", { name: "Choose a folder" }).click();
+    await expect(page.getByText("You choose where on Review", { exact: true })).toBeVisible();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Shift+ArrowLeft");
+    await expect(page.getByText("Kept: you choose where on Review.")).toBeVisible();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.locator(".toast")).toContainText(
+      "Already kept. You choose where on Review. Press U to undo.",
+    );
+    expect(await blockingViolations(page)).toEqual([]);
   });
 
   test("an arrow on a decided photo shakes, explains and changes nothing (US-26)", async ({
@@ -157,11 +213,13 @@ test.describe("swipe screen (US-22 to US-32, US-42)", () => {
   test("with RAW not following, the note says what stays, before and after deciding", async ({
     page,
   }) => {
-    await page.goto("/");
-    await page.getByRole("button", { name: "Choose a folder" }).click();
+    await startSorting(page);
+    // RAW follows is set on the review screen, in its Options.
+    await page.keyboard.press("Enter");
+    await page.getByText("Options", { exact: true }).click();
     await page.getByRole("checkbox", { name: "RAW and edit files follow their JPEG" }).uncheck();
-    await page.getByRole("radio", { name: "Moved" }).check();
-    await page.getByRole("button", { name: "Start sorting" }).click();
+    await expect(page.getByRole("checkbox", { name: /RAW and edit files/ })).not.toBeChecked();
+    await page.getByRole("button", { name: "Back to sorting" }).click();
     const note = page.getByText(
       "RAW and edit files do not follow: MGF_7001 .NEF stays in E:\\2026.",
     );

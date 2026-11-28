@@ -1,18 +1,15 @@
 import { expect, type Page, test } from "@playwright/test";
-import { blockingViolations, startSorting, tabUntil, tally } from "./helpers";
+import {
+  applyButton,
+  blockingViolations,
+  chooseKeepMode,
+  startSorting,
+  tabUntil,
+  tally,
+} from "./helpers";
 
-/** Opens the demo with a scenario (`?scenario=`, demo only) and starts sorting with the mouse. */
-async function startWith(page: Page, scenario: string | null, mode: "Moved" | "Copied" = "Moved") {
-  if (scenario === null) {
-    await startSorting(page, mode);
-    return;
-  }
-  await page.goto(`/?scenario=${scenario}`);
-  await page.getByRole("button", { name: "Choose a folder" }).click();
-  await page.getByRole("radio", { name: mode }).check();
-  await page.getByRole("button", { name: "Start sorting" }).click();
-  await expect(page.getByRole("main", { name: "Sort photos" })).toBeFocused();
-}
+/** Opens the demo with a scenario (`?scenario=`, demo only), move remembered, and starts sorting. */
+const startWith = (page: Page, scenario: string | null) => startSorting(page, { scenario });
 
 const heading = (page: Page) =>
   page.getByRole("heading", { level: 1, name: "Check where your photos will go" });
@@ -28,9 +25,6 @@ async function decideAndReview(page: Page, keep: number, reject = 0) {
 
 /** The review's own status region (the dialog has its own). */
 const reviewStatus = (page: Page) => page.locator("main.review > [role=status]");
-
-const applyButton = (page: Page) =>
-  page.locator(".apply-box").getByRole("button", { name: /^(Move|Apply to) \d+ photos?$|^Apply$/ });
 
 test.describe("review screen (US-34)", () => {
   test("opens with Enter on its heading, with counts, the plan and nothing moved", async ({
@@ -94,17 +88,17 @@ test.describe("review screen (US-34)", () => {
   test("lists every file with its target and suffix, and shows RAW staying when it does not follow", async ({
     page,
   }) => {
-    await page.goto("/");
-    await page.getByRole("button", { name: "Choose a folder" }).click();
-    await page.getByRole("checkbox", { name: /RAW and edit files follow/ }).uncheck();
-    await page.getByRole("radio", { name: "Moved" }).check();
-    await page.getByRole("button", { name: "Start sorting" }).click();
+    await startWith(page, null);
     // Barcelona: MGF_7270 then MGF_7271, whose name is taken in Selects 2026.
     for (let i = 0; i < 4; i += 1) await page.keyboard.press("Shift+ArrowRight");
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("Enter");
     await expect(page.getByText("Checking")).toBeHidden();
+    // RAW follows is an option of the review, folded by default.
+    await page.getByText("Options", { exact: true }).click();
+    await page.getByRole("checkbox", { name: /RAW and edit files follow/ }).uncheck();
+    await expect(page.getByRole("button", { name: "See every file (2)" })).toBeVisible();
     await expect(
       page.getByText(
         "1 name is taken in D:\\Photos\\Selects 2026. That photo gets _1 (MGF_7271_1). Nothing is replaced.",
@@ -249,6 +243,28 @@ test.describe("confirm dialog (US-35)", () => {
     await expect(heading(page)).toBeVisible();
   });
 
+  test("a close event that arrives after the dialog opened again leaves it open", async ({
+    page,
+  }) => {
+    await startWith(page, null);
+    await decideAndReview(page, 1);
+    await applyButton(page).click();
+    const dialog = page.getByRole("dialog", { name: "Move 1 photo?" });
+    await expect(dialog).toBeVisible();
+    // Go back, then Apply before the browser dispatches the `close` event of the first close,
+    // which it queues as a task: a fast Esc then Enter does the same.
+    await page.evaluate(`(async () => {
+      document.querySelector("dialog.confirm .button-outline").click();
+      await new Promise((resolve) => queueMicrotask(resolve));
+      document.querySelector(".apply-box .button-primary").click();
+    })()`);
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Go back" })).toBeFocused();
+    // Still open once every queued task has run.
+    await page.evaluate("new Promise((resolve) => setTimeout(resolve, 50))");
+    await expect(dialog).toBeVisible();
+  });
+
   test("a dialog the browser closed on its own opens again from Apply", async ({ page }) => {
     await startWith(page, null);
     await decideAndReview(page, 1);
@@ -327,5 +343,159 @@ test.describe("confirm dialog (US-35)", () => {
     await expect(page.getByText(/lock switch/)).toBeVisible();
     await expect(applyButton(page)).toBeDisabled();
     await expect(page.locator("main.apply")).toBeHidden();
+  });
+});
+
+test.describe("move or copy and the destination on review (decided by Margaux 28 Nov 2026)", () => {
+  test("the first time nothing is chosen: Apply waits for move or copy", async ({ page }) => {
+    await startSorting(page, { keepMode: null });
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.press("Enter");
+    await expect(heading(page)).toBeFocused();
+    const move = page.getByRole("radio", { name: "Move", exact: true });
+    const copy = page.getByRole("radio", { name: "Copy", exact: true });
+    await expect(move).not.toBeChecked();
+    await expect(copy).not.toBeChecked();
+    // The destination used last is proposed, labelled as such.
+    const route = page.getByRole("list", { name: "Where your photos will go" });
+    await expect(route.getByText("D:\\Photos\\Selects 2026", { exact: true })).toBeVisible();
+    await expect(route.getByText("same as last time")).toBeVisible();
+    await expect(applyButton(page)).toBeDisabled();
+    await expect(page.getByText("Choose move or copy for the kept photos first.")).toBeVisible();
+    // No plan yet, but the decided photos are listed.
+    await expect(page.getByRole("list", { name: "Rejected photos, 1" })).toBeVisible();
+    await expect(
+      page.getByText("Culla checks the plan once the kept photos have somewhere to go."),
+    ).toBeVisible();
+    expect(await blockingViolations(page)).toEqual([]);
+    await chooseKeepMode(page, "Copy");
+    await expect(copy).toBeChecked();
+    await expect(applyButton(page)).toHaveText("Apply to 2 photos");
+    await expect(applyButton(page)).toBeEnabled();
+    await expect(page.getByText("1 kept · copied")).toBeVisible();
+    await chooseKeepMode(page, "Move");
+    await expect(applyButton(page)).toHaveText("Move 2 photos");
+  });
+
+  test("with no destination yet, the user chooses one on review", async ({ page }) => {
+    await page.addInitScript(
+      `localStorage.setItem("culla-demo:destinations", '{"bySource":{},"lastUsed":null,"keepMode":null}')`,
+    );
+    await startSorting(page, { keepMode: null });
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByText("Choose move or copy and a destination for the kept photos first."),
+    ).toBeVisible();
+    await expect(applyButton(page)).toBeDisabled();
+    await page.getByRole("radio", { name: "Move", exact: true }).check();
+    await expect(page.getByText("Choose a destination for the kept photos first.")).toBeVisible();
+    await page.getByRole("button", { name: "Choose a destination" }).click();
+    await expect(page.getByText("D:\\Photos\\Selects 2026", { exact: true })).toBeVisible();
+    await expect(page.getByText("same as last time")).toBeHidden();
+    await expect(applyButton(page)).toHaveText("Move 1 photo");
+    await expect(applyButton(page)).toBeEnabled();
+  });
+
+  test("rejects alone apply with nothing chosen for kept photos", async ({ page }) => {
+    await startSorting(page, { keepMode: null });
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.press("Enter");
+    await expect(applyButton(page)).toHaveText("Move 1 photo");
+    await expect(applyButton(page)).toBeEnabled();
+  });
+
+  test("a remembered destination on a missing drive is not available until changed", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: /^Alps/ }).click();
+    await expect(page.getByRole("main", { name: "Sort photos" })).toBeFocused();
+    await expect(page.getByText("You choose where on Review")).toBeVisible();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Enter");
+    await expect(page.getByText("not available")).toBeVisible();
+    await page.getByRole("radio", { name: "Move", exact: true }).check();
+    await expect(
+      page.getByText(
+        "The destination's drive is not connected. Connect it, or choose another destination.",
+      ),
+    ).toBeVisible();
+    await expect(applyButton(page)).toBeDisabled();
+    expect(await blockingViolations(page)).toEqual([]);
+    await page.getByRole("button", { name: "Change" }).click();
+    await expect(page.getByText("not available")).toBeHidden();
+    await expect(applyButton(page)).toHaveText("Move 1 photo");
+    await expect(applyButton(page)).toBeEnabled();
+  });
+
+  test("move or copy and the destination are kept for next time", async ({ page }) => {
+    await startSorting(page, { keepMode: null });
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Enter");
+    await chooseKeepMode(page, "Copy");
+    await page.reload();
+    await page.getByRole("button", { name: "Choose a folder" }).click();
+    await expect(page.getByRole("main", { name: "Sort photos" })).toBeFocused();
+    await expect(
+      page.getByText("copied to D:\\Photos\\Selects 2026", { exact: true }),
+    ).toBeVisible();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("radio", { name: "Copy", exact: true })).toBeChecked();
+    await expect(page.getByText("same as last time")).toBeVisible();
+  });
+
+  test("move or copy is chosen from the keyboard alone", async ({ page }) => {
+    await startSorting(page, { keepMode: null });
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Enter");
+    await expect(heading(page)).toBeFocused();
+    await tabUntil(page, 'input[name="keep-mode"][value="move"]');
+    await page.keyboard.press("Space");
+    await expect(page.getByRole("radio", { name: "Move", exact: true })).toBeChecked();
+    await expect(applyButton(page)).toHaveText("Move 1 photo");
+    await tabUntil(page, ".apply-box .button-primary");
+    await expect(applyButton(page)).toBeFocused();
+  });
+
+  test("the first time: choose move or copy and a destination, confirm, and the apply runs", async ({
+    page,
+  }) => {
+    await page.addInitScript(
+      `localStorage.setItem("culla-demo:destinations", '{"bySource":{},"lastUsed":null,"keepMode":null}')`,
+    );
+    await startSorting(page, { keepMode: null });
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.press("Enter");
+    await expect(applyButton(page)).toBeDisabled();
+    await page.getByRole("button", { name: "Choose a destination" }).click();
+    await expect(page.getByText("Choose move or copy for the kept photos first.")).toBeVisible();
+    await chooseKeepMode(page, "Move");
+    await expect(applyButton(page)).toHaveText("Move 2 photos");
+    await applyButton(page).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Move 2 photos" }).click();
+    await expect(page.locator("#apply-title")).toBeFocused();
+    await expect(page.getByRole("heading", { level: 1, name: "Apply finished" })).toBeVisible({
+      timeout: 15_000,
+    });
+  });
+
+  test("Change to the same destination plans again, and the new plan applies", async ({ page }) => {
+    await startSorting(page);
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Enter");
+    await expect(applyButton(page)).toHaveText("Move 1 photo");
+    await expect(applyButton(page)).toBeEnabled();
+    // The demo's dialog always answers the same destination: the backend drops the draft anyway.
+    await page.getByRole("button", { name: "Change" }).click();
+    await expect(page.getByText("same as last time")).toBeHidden();
+    await expect(applyButton(page)).toHaveText("Move 1 photo");
+    await expect(applyButton(page)).toBeEnabled();
+    await applyButton(page).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Move 1 photo" }).click();
+    await expect(page.locator("main.apply")).toBeVisible();
+    await expect(page.getByText("Could not check the plan.")).toHaveCount(0);
   });
 });

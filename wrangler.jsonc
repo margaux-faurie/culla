@@ -12,7 +12,7 @@
   "assets": {
     // `pnpm build:demo` output (vite.config.ts). public-demo/_headers is copied into it.
     "directory": "./dist-demo",
-    // The demo is one index.html with no client-side routes, so an unknown path is a plain 404.
+    // The demo is two static pages (index.html, install.html) with no client-side routes, so an unknown path is a plain 404.
     // "single-page-application" would answer a missing /assets/* file with index.html and a 200,
     // which the immutable cache rule in _headers would then keep for a year. After a deploy, check
     // that /assets/nope.js answers 404 without the immutable header (docs/deploy-demo.md).
