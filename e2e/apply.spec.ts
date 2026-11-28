@@ -1,14 +1,8 @@
 import { expect, type Page, test } from "@playwright/test";
-import { blockingViolations, tabUntil } from "./helpers";
+import { blockingViolations, rememberKeepMode, startSorting, tabUntil } from "./helpers";
 
-/** Opens the demo with a scenario (`?scenario=`, demo only) and starts sorting with the mouse. */
-async function startWith(page: Page, scenario: string | null) {
-  await page.goto(scenario === null ? "/" : `/?scenario=${scenario}`);
-  await page.getByRole("button", { name: "Choose a folder" }).click();
-  await page.getByRole("radio", { name: "Moved" }).check();
-  await page.getByRole("button", { name: "Start sorting" }).click();
-  await expect(page.getByRole("main", { name: "Sort photos" })).toBeFocused();
-}
+/** Opens the demo with a scenario (`?scenario=`, demo only), move remembered, and starts sorting. */
+const startWith = (page: Page, scenario: string | null) => startSorting(page, { scenario });
 
 /** Keeps the first `keep` photos, rejects the next `reject`, reviews and confirms with the mouse. */
 async function applyWith(page: Page, scenario: string | null, keep: number, reject = 0) {
@@ -237,14 +231,12 @@ test.describe("apply screen (US-36)", () => {
   });
 
   test("keyboard only: pause, continue, stop and close the report", async ({ page }) => {
+    await rememberKeepMode(page, "move");
     await page.goto("/?scenario=slow");
+    // Tab only once the screen is drawn, or it lands nowhere.
+    await expect(page.getByRole("button", { name: "Choose a folder" })).toBeVisible();
     await page.keyboard.press("Tab");
     await expect(page.getByRole("button", { name: "Choose a folder" })).toBeFocused();
-    await page.keyboard.press("Enter");
-    await expect(page.getByRole("radio", { name: "Moved" })).toBeVisible();
-    await tabUntil(page, 'input[name="keep-mode"][value="move"]');
-    await page.keyboard.press("Space");
-    await tabUntil(page, ".button-large");
     await page.keyboard.press("Enter");
     await expect(page.getByRole("main", { name: "Sort photos" })).toBeFocused();
     await page.keyboard.press("ArrowRight");

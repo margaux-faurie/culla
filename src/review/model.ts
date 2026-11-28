@@ -10,7 +10,9 @@ import type {
   Blocker,
   BranchPlan,
   Collision,
+  DestinationSummary,
   HoldReason,
+  KeepMode,
   OperationKind,
   OtherFile,
   PlanWarning,
@@ -63,6 +65,33 @@ export function disabledReason(plan: ReviewPlan): string | null {
   }
   if (plannedPhotos(plan) === 0) {
     return "Nothing to apply yet. Keep or reject some photos first.";
+  }
+  return null;
+}
+
+/**
+ * Why Apply waits for the kept photos' route (decided by Margaux 28 Nov 2026): move or copy and a
+ * connected destination are set on the review screen, the first time by hand. Null when nothing is
+ * missing, or when no photo is kept (rejects need neither: SPEC §10, plan() (c)).
+ */
+export function keepRouteHint(
+  keepMode: KeepMode | null,
+  destination: DestinationSummary | null,
+  kept: number,
+): string | null {
+  if (kept === 0) return null;
+  const noDestination = destination === null;
+  const unplugged = destination !== null && !destination.available;
+  if (keepMode === null) {
+    if (noDestination) return "Choose move or copy and a destination for the kept photos first.";
+    if (unplugged) {
+      return "Choose move or copy, and a destination that is connected, for the kept photos first.";
+    }
+    return "Choose move or copy for the kept photos first.";
+  }
+  if (noDestination) return "Choose a destination for the kept photos first.";
+  if (unplugged) {
+    return "The destination's drive is not connected. Connect it, or choose another destination.";
   }
   return null;
 }

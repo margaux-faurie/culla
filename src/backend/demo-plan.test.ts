@@ -35,9 +35,8 @@ async function decide(
 ): Promise<Setup> {
   const backend = createBackend({ storage: null, scenario: options.scenario ?? null });
   const sourceId = (await backend.chooseSource())?.id ?? "";
-  const session = await backend.startSession({
-    sourceId,
-    includeSubfolders: true,
+  const started = await backend.startSession({ sourceId, includeSubfolders: true });
+  const session = await backend.updateSession(started.id, {
     rawFollows: options.rawFollows ?? true,
     keepMode: options.keepMode ?? "move",
     destinationId: "dst-selects",

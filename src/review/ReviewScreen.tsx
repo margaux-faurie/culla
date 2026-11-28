@@ -5,7 +5,9 @@ import type {
   Blocker,
   BranchPlan,
   HeldPhoto,
+  KeepMode,
   ReviewPlan,
+  SessionChange,
   SessionInfo,
   SessionPhoto,
   VolumeChoice,
@@ -13,6 +15,7 @@ import type {
 import { RouteView } from "../route/RouteView";
 import { counts, type SwipeState, stateAt } from "../swipe/session";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { KeepControls } from "./KeepControls";
 import {
   blockerText,
   branchFiles,
@@ -25,6 +28,7 @@ import {
   folderNote,
   heldSummary,
   holdText,
+  keepRouteHint,
   kindText,
   otherFilesText,
   primaryLabel,
@@ -39,6 +43,8 @@ export interface ReviewScreenProps {
   /** Every decision in `state.log` has reached the backend: the plan can be built from them. */
   readonly saved: boolean;
   readonly saveError: boolean;
+  /** The backend answered a change of options (move or copy, destination, RAW follows). */
+  readonly onSessionChanged: (session: SessionInfo) => void;
   readonly onBack: () => void;
   /** Back to sorting on one photo (a grid thumbnail). */
   readonly onShow: (photoId: string) => void;
@@ -54,11 +60,13 @@ type Status = "checking" | "ready" | "failed" | "notReady";
 const GRID_PREVIEW = 12;
 
 /**
- * Review screen (SPEC §4.2, US-34, US-35) on cream: the route with counts per branch, the kept and
+ * Review screen (SPEC §4.2, US-34, US-35) on cream: the route with counts per branch and, in the Kept
+ * branch, move or copy and the destination (decided by Margaux 28 Nov 2026), then the kept and
  * rejected grids, preflight results grouped as blockers, re-plans, held groups and warnings, the
  * estimate, every file of the plan one activation away, and Apply behind a confirm dialog. The plan
  * comes from the backend as display strings; nothing here builds a path. Opening it changes no
- * file: the backend's plan and preflight are read-only (INV-03).
+ * file: the backend's plan and preflight are read-only (INV-03). While kept photos have no route yet
+ * (move or copy, a connected destination), no plan is built and Apply says what to choose.
  *
  * Only Esc is a shortcut here, so the swipe screen's single keys do nothing (NFR-A11Y-10).
  */
@@ -75,8 +83,16 @@ export function ReviewScreen(props: ReviewScreenProps) {
   const [filesOpen, setFilesOpen] = useState(false);
   const [othersOpen, setOthersOpen] = useState(false);
   const [announcement, setAnnouncement] = useState("");
+  const [changeError, setChangeError] = useState<string | null>(null);
+  const [changing, setChanging] = useState(false);
+  // The choice being sent, shown at once so the radio or checkbox does not flick back meanwhile.
+  const [pending, setPending] = useState<SessionChange | null>(null);
   const uptoSeq = state.log.at(-1)?.seq ?? 0;
   const tally = counts(state);
+  const { keepMode, destinationId, rawFollows } = session.options;
+  // Kept photos need move or copy and a connected destination before a plan can hold them.
+  const routeHint = keepRouteHint(keepMode, session.destination, tally.kept);
+  const waiting = routeHint !== null;
   const byId = useMemo(() => new Map(session.photos.map((p) => [p.id, p])), [session.photos]);
 
   // Focus goes to the heading, never to Apply: Enter pressed again or held on the swipe screen
@@ -131,11 +147,24 @@ export function ReviewScreen(props: ReviewScreenProps) {
   };
   const checkRef = useRef(check);
   checkRef.current = check;
+  // Changing an option builds a new draft too: the old one can no longer be confirmed.
   useEffect(() => {
-    if (saved) {
-      checkRef.current(uptoSeq);
+    if (!saved) {
+      return;
     }
-  }, [saved, uptoSeq]);
+    if (waiting) {
+      // An answer still in flight belongs to a plan without the kept photos' route.
+      generation.current += 1;
+      setStatus("ready");
+      setPlan(null);
+      return;
+    }
+    checkRef.current(uptoSeq);
+    // The options are listed so a change of each builds a new draft.
+    void keepMode;
+    void destinationId;
+    void rawFollows;
+  }, [saved, uptoSeq, waiting, keepMode, destinationId, rawFollows]);
   useEffect(
     () => () => {
       generation.current += 1;
@@ -163,9 +192,50 @@ export function ReviewScreen(props: ReviewScreenProps) {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const ready = status === "ready" && plan !== null;
-  const applyEnabled = ready && canApply(plan) && !confirming;
-  const reason = ready ? disabledReason(plan) : null;
+  const ready = status === "ready" && plan !== null && !waiting;
+  const applyEnabled = ready && canApply(plan) && !confirming && !changing;
+  const reason = waiting ? routeHint : ready ? disabledReason(plan) : null;
+
+  // One change at a time; the controls stay focusable meanwhile (a disabled control loses focus).
+  const changingRef = useRef(false);
+  const change = async (next: SessionChange) => {
+    if (changingRef.current) {
+      return;
+    }
+    changingRef.current = true;
+    setChanging(true);
+    setPending(next);
+    setChangeError(null);
+    try {
+      props.onSessionChanged(await backend.updateSession(session.id, next));
+    } catch (error) {
+      setChangeError(
+        isNotReady(error)
+          ? "Not ready yet: the app cannot change this in this version."
+          : "Could not change this. Nothing has moved.",
+      );
+    } finally {
+      changingRef.current = false;
+      setChanging(false);
+      setPending(null);
+    }
+  };
+  const chooseKeepMode = (mode: KeepMode) => change({ keepMode: mode });
+  const chooseDestination = async () => {
+    setChangeError(null);
+    try {
+      const picked = await backend.chooseDestination();
+      if (picked !== null) {
+        await change({ destinationId: picked.id });
+      }
+    } catch (error) {
+      setChangeError(
+        isNotReady(error)
+          ? "Not ready yet: the app cannot open the folder dialog in this version."
+          : "Could not open the folder dialog.",
+      );
+    }
+  };
   const example = useMemo(() => {
     const photo = session.photos.find((p) => p.id === session.exampleId);
     return photo === undefined ? null : { photo, route: photo.route };
@@ -277,7 +347,16 @@ export function ReviewScreen(props: ReviewScreenProps) {
               rejectedFolder={session.rejectedFolder}
               rejectedFolderExists={session.rejectedFolderExists}
               destination={session.destination}
-              keepMode={session.options.keepMode}
+              keepMode={keepMode}
+              keepControls={
+                <KeepControls
+                  keepMode={pending?.keepMode ?? keepMode}
+                  destination={session.destination}
+                  sameAsLastTime={session.sameAsLastTime}
+                  onKeepMode={chooseKeepMode}
+                  onChooseDestination={chooseDestination}
+                />
+              }
               keptDetails={
                 <BranchDetails
                   what="kept"
@@ -317,13 +396,45 @@ export function ReviewScreen(props: ReviewScreenProps) {
                 </div>
               }
             />
+            {changeError !== null && (
+              <p className="error" role="alert">
+                {changeError}
+              </p>
+            )}
+            <details className="options">
+              <summary>Options</summary>
+              <div className="options-body">
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={pending?.rawFollows ?? rawFollows}
+                    onChange={(e) => change({ rawFollows: e.currentTarget.checked })}
+                  />
+                  RAW and edit files follow their JPEG
+                </label>
+                <span className="small">
+                  {session.options.includeSubfolders
+                    ? "Subfolders are included. This is set when sorting starts."
+                    : "Subfolders are left out. This is set when sorting starts."}
+                </span>
+              </div>
+            </details>
           </div>
 
-          <aside className="review-side" aria-labelledby="findings-title" aria-busy={!ready}>
+          <aside
+            className="review-side"
+            aria-labelledby="findings-title"
+            aria-busy={status === "checking" && !waiting}
+          >
             <h2 id="findings-title" ref={findingsRef} className="side-title" tabIndex={-1}>
               Before you apply
             </h2>
-            {status === "checking" && (
+            {waiting && (
+              <p className="finding">
+                Culla checks the plan once the kept photos have somewhere to go.
+              </p>
+            )}
+            {status === "checking" && !waiting && (
               <p className="checking">
                 Checking
                 <Dots />

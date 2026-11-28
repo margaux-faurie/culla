@@ -25,6 +25,29 @@ test.describe("swipe screen (US-22 to US-32, US-42)", () => {
     await expect(page.getByText("No files have moved yet")).toBeVisible();
   });
 
+  test("before move or copy is chosen, Keep says so; with no destination, where comes later", async ({
+    page,
+  }) => {
+    await startSorting(page, { keepMode: null });
+    await expect(
+      page.getByText("moved or copied to D:\\Photos\\Selects 2026", { exact: true }),
+    ).toBeVisible();
+    await page.evaluate(
+      `localStorage.setItem("culla-demo:destinations", '{"bySource":{},"lastUsed":null,"keepMode":null}')`,
+    );
+    await page.reload();
+    await page.getByRole("button", { name: "Choose a folder" }).click();
+    await expect(page.getByText("You choose where on Review", { exact: true })).toBeVisible();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Shift+ArrowLeft");
+    await expect(page.getByText("Kept: you choose where on Review.")).toBeVisible();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.locator(".toast")).toContainText(
+      "Already kept. You choose where on Review. Press U to undo.",
+    );
+    expect(await blockingViolations(page)).toEqual([]);
+  });
+
   test("an arrow on a decided photo shakes, explains and changes nothing (US-26)", async ({
     page,
   }) => {
@@ -157,11 +180,13 @@ test.describe("swipe screen (US-22 to US-32, US-42)", () => {
   test("with RAW not following, the note says what stays, before and after deciding", async ({
     page,
   }) => {
-    await page.goto("/");
-    await page.getByRole("button", { name: "Choose a folder" }).click();
+    await startSorting(page);
+    // RAW follows is set on the review screen, in its Options.
+    await page.keyboard.press("Enter");
+    await page.getByText("Options", { exact: true }).click();
     await page.getByRole("checkbox", { name: "RAW and edit files follow their JPEG" }).uncheck();
-    await page.getByRole("radio", { name: "Moved" }).check();
-    await page.getByRole("button", { name: "Start sorting" }).click();
+    await expect(page.getByRole("checkbox", { name: /RAW and edit files/ })).not.toBeChecked();
+    await page.getByRole("button", { name: "Back to sorting" }).click();
     const note = page.getByText(
       "RAW and edit files do not follow: MGF_7001 .NEF stays in E:\\2026.",
     );

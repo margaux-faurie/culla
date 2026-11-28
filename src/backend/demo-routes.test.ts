@@ -108,8 +108,10 @@ describe("demo routes", () => {
     expect(isProtected(group(), true)).toBe(false);
   });
 
-  it("names no verb before moved or copied is chosen, and no folder before a destination", () => {
-    expect(routeOf(group(), { ...options, keepMode: null }).keptTo).toBe("D:\\Selects\\Barcelona");
+  it("says moved or copied before one is chosen, and no folder before a destination", () => {
+    expect(routeOf(group(), { ...options, keepMode: null }).keptTo).toBe(
+      "moved or copied to D:\\Selects\\Barcelona",
+    );
     const protectedGroup = group({ readOnly: [".JPG", ".NEF"] });
     expect(routeOf(protectedGroup, { ...options, keepMode: null }).keptTo).toBe(
       "copied to D:\\Selects\\Barcelona",

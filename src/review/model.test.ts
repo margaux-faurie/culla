@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createBackend } from "../backend/demo";
-import type { BranchPlan, KeepMode, ReviewPlan } from "../backend/types";
+import type { BranchPlan, DestinationSummary, KeepMode, ReviewPlan } from "../backend/types";
 import type { Verdict } from "../decisions/events";
 import {
   blockerText,
@@ -13,6 +13,7 @@ import {
   duration,
   estimateText,
   formatBytes,
+  keepRouteHint,
   otherFilesText,
   primaryLabel,
   protectedText,
@@ -25,10 +26,8 @@ async function reviewOf(
 ): Promise<ReviewPlan> {
   const backend = createBackend({ storage: null, scenario: null });
   const sourceId = (await backend.chooseSource())?.id ?? "";
-  const session = await backend.startSession({
-    sourceId,
-    includeSubfolders: true,
-    rawFollows: true,
+  const started = await backend.startSession({ sourceId, includeSubfolders: true });
+  const session = await backend.updateSession(started.id, {
     keepMode,
     destinationId: "dst-selects",
   });
@@ -188,5 +187,34 @@ describe("confirm text (US-35)", () => {
     const held: ReviewPlan = { ...rejects, counts: { ...rejects.counts, held: 2, undecided: 1 } };
     expect(confirmText(held).body).toContain("2 held-back photos are left out.");
     expect(confirmText(held).body).toContain("1 undecided photo stays where it is.");
+  });
+});
+
+describe("keep route on review (decided by Margaux 28 Nov 2026)", () => {
+  const selects: DestinationSummary = {
+    id: "d1",
+    folder: { path: "D:\\Photos\\Selects 2026", volume: "Backup drive (D:)" },
+    available: true,
+  };
+  const unplugged: DestinationSummary = { ...selects, available: false };
+
+  it("asks for nothing while no photo is kept", () => {
+    expect(keepRouteHint(null, null, 0)).toBeNull();
+    expect(keepRouteHint(null, unplugged, 0)).toBeNull();
+  });
+
+  it("asks for move or copy and a destination before kept photos can be applied", () => {
+    expect(keepRouteHint(null, null, 2)).toBe(
+      "Choose move or copy and a destination for the kept photos first.",
+    );
+    expect(keepRouteHint(null, selects, 2)).toBe("Choose move or copy for the kept photos first.");
+    expect(keepRouteHint("move", null, 1)).toBe("Choose a destination for the kept photos first.");
+    expect(keepRouteHint("copy", unplugged, 1)).toBe(
+      "The destination's drive is not connected. Connect it, or choose another destination.",
+    );
+    expect(keepRouteHint(null, unplugged, 1)).toBe(
+      "Choose move or copy, and a destination that is connected, for the kept photos first.",
+    );
+    expect(keepRouteHint("move", selects, 3)).toBeNull();
   });
 });

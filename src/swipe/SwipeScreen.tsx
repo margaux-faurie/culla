@@ -5,6 +5,7 @@ import { CheckIcon, CrossIcon } from "../route/RouteView";
 import { stayVerb } from "../route/staying";
 import { HelpDialog } from "./HelpDialog";
 import { type Command, commandFor } from "./keys";
+import { alreadyDecidedToast, decidedNote, keepLine } from "./route-text";
 import {
   counts,
   currentPhoto,
@@ -368,7 +369,7 @@ interface ActionsProps {
  */
 function Actions({ photo, decision, onCommand }: ActionsProps) {
   const decided = decision !== "undecided";
-  const keepTo = keepRoute(photo);
+  const keepTo = keepLine(photo.route);
   const rejectTo = photo.route.rejectedTo;
   const { staying } = photo.route;
   return (
@@ -416,8 +417,8 @@ function Actions({ photo, decision, onCommand }: ActionsProps) {
       </div>
       {decided && (
         <p className="action-note">
-          {decision === "kept" ? `Kept: will be ${keepTo}.` : `Rejected: will be ${rejectTo}.`}{" "}
-          Arrows never change a decision. Undo first, then decide again.
+          {decidedNote(photo.route, decision === "kept" ? "kept" : "rejected")} Arrows never change
+          a decision. Undo first, then decide again.
         </p>
       )}
       {staying !== null && (
@@ -467,8 +468,7 @@ function toastText(feedback: Feedback, byId: ReadonlyMap<string, SessionPhoto>):
       if (photo === undefined || feedback.state === "undecided") {
         return "Press U to undo.";
       }
-      const where = feedback.state === "kept" ? keepRoute(photo) : photo.route.rejectedTo;
-      return `Already ${feedback.state}. Will be ${where}. Press U to undo.`;
+      return alreadyDecidedToast(photo.route, feedback.state);
     }
     case "already-undecided":
       return "This photo has no decision to undo.";
@@ -480,6 +480,3 @@ function toastText(feedback: Feedback, byId: ReadonlyMap<string, SessionPhoto>):
       return "No undecided photos left.";
   }
 }
-
-/** The session's destination is available, so `keptTo` is set; the fallback is defensive. */
-const keepRoute = (photo: SessionPhoto): string => photo.route.keptTo ?? "kept";

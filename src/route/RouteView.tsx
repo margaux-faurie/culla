@@ -13,9 +13,7 @@ export interface RouteViewProps {
   readonly rejectedFolderExists: boolean | null;
   readonly destination: DestinationSummary | null;
   readonly keepMode: KeepMode | null;
-  /** Controls placed in the From branch (change folder, subfolders). */
-  readonly originControls?: ReactNode;
-  /** Controls placed in the Kept branch (moved or copied, destination). */
+  /** Controls placed in the Kept branch: move or copy and the destination (review screen). */
   readonly keepControls?: ReactNode;
   /** The review's counts, folders and photos under each branch (US-34). */
   readonly keptDetails?: ReactNode;
@@ -25,8 +23,8 @@ export interface RouteViewProps {
 
 /**
  * "Where photos go" (SPEC §2): the origin, a Kept branch, a Rejected branch and the photos left in
- * place, with one real example path per branch. The same view heads the start, review and apply
- * screens. Every path is a display string from the backend, printed as it is.
+ * place, with one real example path per branch. The same view heads the review and apply screens;
+ * the swipe screen shows each photo's route under its buttons. Every path is a display string from the backend, printed as it is.
  */
 export function RouteView(props: RouteViewProps) {
   const { source, example, destination, keepMode } = props;
@@ -41,7 +39,6 @@ export function RouteView(props: RouteViewProps) {
           <span className="route-note">
             {source.folder.volume} · {props.photoSummary}
           </span>
-          {props.originControls}
         </div>
       </li>
 

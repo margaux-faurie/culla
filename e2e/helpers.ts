@@ -20,13 +20,53 @@ export async function blockingViolations(page: Page) {
     .map((v) => ({ id: v.id, impact: v.impact, targets: v.nodes.map((n) => n.target) }));
 }
 
-/** Opens the demo, picks its folder, chooses "Moved" and starts sorting, with the mouse. */
-export async function startSorting(page: Page, mode: "Moved" | "Copied" = "Moved") {
-  await page.goto("/");
+/** Where the demo keeps its memory of move or copy and destinations (`backend/demo.ts`). */
+const MEMORY_KEY = "culla-demo:destinations";
+
+/**
+ * Makes the demo remember move or copy as if it was chosen before (the destination memory stays
+ * the demo's seed). Null leaves the seed: no move or copy yet, as the first time. Written only when
+ * the page has no memory yet, so a reload keeps what the test changed.
+ */
+export async function rememberKeepMode(page: Page, keepMode: "move" | "copy") {
+  const memory = JSON.stringify({
+    bySource: { "src-alps": "dst-archive" },
+    lastUsed: "dst-selects",
+    keepMode,
+  });
+  // A string, so the e2e tsconfig needs no DOM types.
+  await page.addInitScript(
+    `if (localStorage.getItem(${JSON.stringify(MEMORY_KEY)}) === null) localStorage.setItem(${JSON.stringify(MEMORY_KEY)}, ${JSON.stringify(memory)});`,
+  );
+}
+
+export interface StartOptions {
+  /** A demo scenario (`?scenario=`, demo only). */
+  readonly scenario?: string | null;
+  /** Move or copy as last chosen; null for the first time (nothing chosen). Default "move". */
+  readonly keepMode?: "move" | "copy" | null;
+}
+
+/** Opens the demo and picks its folder with the mouse: sorting starts at once. */
+export async function startSorting(page: Page, options: StartOptions = {}) {
+  const keepMode = options.keepMode === undefined ? "move" : options.keepMode;
+  if (keepMode !== null) {
+    await rememberKeepMode(page, keepMode);
+  }
+  const scenario = options.scenario ?? null;
+  await page.goto(scenario === null ? "/" : `/?scenario=${scenario}`);
   await page.getByRole("button", { name: "Choose a folder" }).click();
-  await page.getByRole("radio", { name: mode }).check();
-  await page.getByRole("button", { name: "Start sorting" }).click();
   await expect(page.getByRole("main", { name: "Sort photos" })).toBeFocused();
+}
+
+/** The review's primary button: "Move 3 photos", "Apply to 2 photos", or "Apply" while checking. */
+export const applyButton = (page: Page) =>
+  page.locator(".apply-box").getByRole("button", { name: /^(Move|Apply to) \d+ photos?$|^Apply$/ });
+
+/** Chooses move or copy on the review screen and waits for the plan built with it. */
+export async function chooseKeepMode(page: Page, mode: "Move" | "Copy") {
+  await page.getByRole("radio", { name: mode, exact: true }).check();
+  await expect(applyButton(page)).toHaveText(/^(Move|Apply to) \d+ photos?$/);
 }
 
 /** The tally line of the swipe screen, e.g. "3 kept". */

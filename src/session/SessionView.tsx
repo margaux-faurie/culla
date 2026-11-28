@@ -18,9 +18,12 @@ export interface SessionViewProps {
   readonly onExit: () => void;
 }
 
-export function SessionView({ session, onExit }: SessionViewProps) {
+export function SessionView({ session: started, onExit }: SessionViewProps) {
   const backend = useBackend();
-  const [state, dispatch] = useReducer(swipeReducer, session.photos, (photos) =>
+  // The session as the backend last answered it: the review screen changes its options (move or
+  // copy, destination, RAW follows), and every photo's route with them. The photos stay the same.
+  const [session, setSession] = useState(started);
+  const [state, dispatch] = useReducer(swipeReducer, started.photos, (photos) =>
     initialState(photos.map((p) => p.id)),
   );
   const [screen, setScreen] = useState<"swipe" | "review" | "apply">("swipe");
@@ -79,6 +82,7 @@ export function SessionView({ session, onExit }: SessionViewProps) {
         state={state}
         saved={savedCount >= state.log.length}
         saveError={saveError}
+        onSessionChanged={setSession}
         onBack={() => setScreen("swipe")}
         onShow={(photoId) => {
           dispatch({ type: "show", photoId });
