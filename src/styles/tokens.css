@@ -6,10 +6,29 @@
  * Culla additions, to be returned to the design system (SPEC §5.6): `keep`, `keep-ink`,
  * and the Night theme on photo viewing surfaces (swipe, zoom).
  *
- * TODO(M3): self-host Bricolage Grotesque (woff2 under src/assets/fonts, @font-face here).
- * The app must work offline, so it is never loaded from Google Fonts. Until then the
- * fallback stack applies.
+ * Bricolage Grotesque is self-hosted (SIL Open Font Licence 1.1, src/assets/fonts/OFL.txt):
+ * the app must work offline, so it is never loaded from Google Fonts. Vite bundles the files
+ * into /assets/ with hashed names, so the CSP's font-src 'self' covers them. Only the static
+ * Regular (400) and Bold (700) cuts are bundled: weights 500 resolve to Regular and 600 to Bold
+ * by the normal CSS matching rules, with no synthesised bold. WOFF (zlib), converted from the
+ * upstream TTFs with fontTools; WOFF2 needs a Brotli encoder the build machine didn't have.
  */
+
+@font-face {
+  font-family: "Bricolage Grotesque";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/BricolageGrotesque-Regular.woff") format("woff");
+}
+
+@font-face {
+  font-family: "Bricolage Grotesque";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../assets/fonts/BricolageGrotesque-Bold.woff") format("woff");
+}
 
 :root,
 [data-theme="cream"] {
