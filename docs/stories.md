@@ -1,6 +1,6 @@
 # User stories
 
-Status: draft, 24 Nov 2026. Stories for M1–M3 in full, headline stories for M4 (M4 cannot start until they have full acceptance criteria), and one M6 story. IDs are stable: stories added later get the next free number (US-41 onward), whatever their milestone. Milestones are in [roadmap.md](roadmap.md). Links point to requirement families in [nfr.md](nfr.md) (`NFR-PERF`, `NFR-REL`, `NFR-A11Y`) and invariant families in [design/file-engine.md](design/file-engine.md) (`INV`); exact IDs are filled in once those docs settle. Numbers marked "(est.)" are repeated from nfr.md so the criteria can be checked here. Test levels are defined in [testing.md](testing.md).
+Status: draft, 24 Nov 2026. Stories for M1–M4 in full (the M4 criteria were added on 28 Nov 2026 and carry proposals awaiting Margaux, marked in the text), and one M6 story. IDs are stable: stories added later get the next free number (US-41 onward), whatever their milestone. Milestones are in [roadmap.md](roadmap.md). Links point to requirement families in [nfr.md](nfr.md) (`NFR-PERF`, `NFR-REL`, `NFR-A11Y`) and invariant families in [design/file-engine.md](design/file-engine.md) (`INV`); exact IDs are filled in once those docs settle (the M4 stories already use them). Numbers marked "(est.)" are repeated from nfr.md so the criteria can be checked here. Test levels are defined in [testing.md](testing.md).
 
 Roles:
 - **Photographer:** culls a card of Nikon JPEG + NEF files on Windows. The main user.
@@ -309,19 +309,178 @@ As a photographer, I want the start screen to help me pick what to cull, so that
 
 Links: NFR-A11Y, NFR-PERF. Test: Vitest on the start screen with DemoBackend sources, Playwright, adapter test for removable-drive detection on Windows (v2).
 
-## M4 — Headline stories
+## M4 — Review and apply UI, sessions, zoom, EXIF
 
-M4 does not start until each of these has full Given/When/Then acceptance criteria ([roadmap.md](roadmap.md), M4 entry criteria).
+Acceptance criteria written 28 Nov 2026 by an agent, to be reviewed like any other doc PR before M4 starts ([roadmap.md](roadmap.md), M4 entry criteria). Each scenario names the doc that fixes it. A scenario or a detail marked **(proposed)** is proposed by the agent and awaiting Margaux, and is listed in [SPEC §10](SPEC.md#10-open-questions); everything else restates SPEC, the ADRs, [design/file-engine.md](design/file-engine.md) (cited as FE), [PRD.md](PRD.md) or [nfr.md](nfr.md). Quoted UI copy is the design canvas's (Review, Apply, Decided boards, SPEC §5.6) or the merged UI's where they have it; any other wording is proposed. Display paths are the backend's display strings, printed as they are (SPEC §10, "Backend shape for display paths").
 
-| ID | Story | Links |
-|---|---|---|
-| US-34 | As a photographer, I want a review screen headed by the route (origin → kept / rejected / left in place, with example paths) and with counts, kept and rejected grids, the full plan, preflight results, unknown files and a time and size estimate, so that I know exactly what apply will do. | INV, NFR-PERF |
-| US-35 | As a photographer, I want apply to ask for confirmation stating the counts, so that two keystrokes never move thousands of files. | NFR-REL |
-| US-36 | As a photographer, I want per-file progress with pause and cancel (after the current file), and a report at the end, so that a long cross-volume apply stays under my control. | NFR-REL, INV |
-| US-37 | As a photographer, I want to resume a session or start fresh when I reopen a folder, including on another drive letter, so that I can cull a card over several sittings. | NFR-REL |
-| US-38 | As a photographer, I want an interrupted apply resumed with a clear message when the app opens, so that I know my photos are safe. | NFR-REL, INV |
-| US-39 | As a photographer, I want to zoom to 100 % at the cursor (Z toggle or hold Space) and pan with the arrows, so that I can check focus before deciding. Z is the key labelled Z on AZERTY and QWERTZ too ([SPEC §4.1](SPEC.md#41-keyboard-map)). | NFR-PERF, NFR-A11Y |
-| US-40 | As a photographer, I want an EXIF overlay (I) with date, lens, exposure, so that I can tell near-identical shots apart. | NFR-A11Y |
+Tests named here:
+- **Vitest:** pure `.ts` modules with no DOM (review model, confirm text, progress and estimate formatting, zoom geometry, EXIF formatting), against `DemoBackend` where a backend is needed.
+- **Playwright + axe:** the demo build (`pnpm build:demo && pnpm e2e`), with no serious or critical axe violation on each new screen and state, as `e2e/helpers.ts` checks today. **(proposed)** The demo backend offers named scenarios for the states a demo folder cannot reach on its own (write-protected card, held groups, card pulled mid-apply, interrupted apply at launch, launch check findings), chosen by a query parameter in the demo build only.
+- **Rust integration:** `culla-core` tests over the fake `Disk` and `Store` ports, and the `windows-it` suite on `windows-latest` with VHDX volumes ([testing.md](testing.md) §4 to §6).
+- **Manual:** the checklist in [testing.md](testing.md) §8, on the G14.
+
+### US-34 Review before anything moves
+As a photographer, I want a review screen headed by the route, with counts, kept and rejected grids, the full plan, preflight results, unknown files and a time and size estimate, so that I know exactly what apply will do before any file moves.
+
+Opening and layout
+- Given the swipe screen, when I press Enter or click Review, then the review screen opens on cream (SPEC §5.6), focus goes to its heading, and no file on the source or destination has changed (INV-03, NFR-REL-01).
+- Given the review screen, then the route view heads it, the same as on the start and swipe screens: From (source, volume, photo count), Kept (moved or copied, destination, one real example path with its JPEG, NEF and edit files), Rejected (`<source>\_rejected`, marked "new folder" only while it does not exist, "nothing deleted") and "undecided · stay where they are" (SPEC §2, "Where photos go"; canvas Review).
+- Given the route, then each branch gives its counts as on the canvas: photos, files by kind and bytes ("96 JPEG · 96 NEF · 12 edit files · 2.1 GB"), and per mirrored subfolder its photo count and whether it is a new folder ("Barcelona · 58 photos · new folder").
+- Given the review screen, then the full folder trees and the per-file list ("See every file (286)") are one activation away (SPEC §2); the per-file list shows every operation of the plan with its source, target (suffix included) and kind.
+- Given "RAW follows JPEG" is off, then the example and the per-file list show the NEF, its sidecars and bare `X.xmp`/`X.pp3` as staying in the source folder (ADR 0023, INV-08).
+- Given the review screen, then the kept and rejected grids show each decided photo's preview; activating one (click, or Enter on the focused thumbnail) goes back to the swipe screen on that photo, with no decision recorded (SPEC §4.2). **(proposed)** The filter is set to "all" on the way back, so the photo is always reachable.
+- Given the review screen, when I press Esc or click "Back to sorting", then the swipe screen comes back on the photo I left (SPEC §4.1, canvas). Given undecided photos remain, "Sort them now" takes me to the first undecided photo (canvas).
+- Given the review screen, then the single-key swipe shortcuts (U, N, Z, I, F, ?) do nothing there (NFR-A11Y-10).
+
+Plan and preflight
+- Given decisions, when the review opens, then a draft plan is built and preflighted, and whenever I go back, change decisions and return, it is rebuilt; only the last draft can be confirmed (FE §7.4). **(proposed)** While plan or preflight runs, the plan area shows loading dots ("Checking"), Apply stays disabled, and no main-thread task takes over 50 ms (NFR-PERF-13).
+- Given a name already taken at the destination or in `_rejected`, then the review says how many and the suffix, for example "2 names are taken in Selects 2026. Those photos get _1 (MGF_7101_1). Nothing is replaced." (canvas, US-15, NFR-REL-02); every member of such a group shows the same suffix (INV-07).
+- Given a camera-protected (read-only) file among the files a group moves, then the review lists the group as "camera-protected: copied, original kept" (FE §7.2) and the "Worth knowing" list says "1 kept photo is protected on the camera. It is copied, and the original stays on the photos drive." (canvas). The same holds for a reject, copied into `_rejected` (FE §7.2). **(proposed)** Only a read-only file that moves counts; one that stays because RAW does not follow does not (SPEC §10, M3 item).
+- Given files Culla does not handle (unknown extensions, orphan sidecars, same-basename unknown files, invalid names, foreign partials), then they are listed with their paths and are not in the plan (INV-20, US-04), for example "3 other files (.mov, .txt) are left alone." (canvas).
+- Given a group whose stored files changed since the scan, are missing, or that became undecided because a file joined it on reopen, then the review lists each with its reason ("changed since scan, rescan", missing, the reconcile reason of ADR 0024) and plans no operation for it (FE §6.2, US-11, INV-04).
+- Given a destination inside OneDrive or another cloud-synced folder, then the review shows a warning and apply is still allowed (P17, SPEC §2). Given a locked source (P12) or a target path over 260 characters (P15), then a warning is listed and apply is still allowed (FE §8).
+- Given a preflight blocker: the source or destination volume not bound to exactly one mounted volume (P1, P2), a write-protected card (P3, the message names the lock switch), a read-only destination (P4), not enough free space (P5, with the shortfall), a destination that is the source, inside `_rejected`, a placeholder or a refused volume type (P6), a P7 path bug, or the preview pipeline still busy (P16, the apply waits); then the review names each blocker in words, Apply is disabled, and the reason is shown next to it (NFR-REL-08, US-16). **(proposed)** Two mounted volumes sharing a serial (P1, P2) show a list of volumes with labels and drive letters to pick from (FE §6.3 step 2).
+- Given a group held back by preflight (P8 name or path too long, P9 link or placeholder, P10 changed since scan, P14 over 4 GiB to FAT32), then it is listed with its reason, it gets no operation, and apply is allowed for the rest (FE §8, `Report::runnable`); the counts and the confirm dialog exclude it.
+- Given a target taken since the plan was built (P11), then the plan is rebuilt and the review shows the new name before I confirm (FE §8).
+- Given only rejected photos and no destination chosen, then the plan holds the rejects and apply is allowed **(proposed, SPEC §10 `plan()` (c))**.
+- Given no kept or rejected photo that would get an operation, then Apply is disabled and the review says why **(proposed: "Nothing to apply yet. Keep or reject some photos first.")**.
+- Given a group already applied by an earlier plan, then it gets no operation (INV-04) and is listed as applied **(proposed)**.
+
+Estimate
+- Given a plan with copies or cross-volume moves, then the review shows the bytes to write, exact to the byte, and a time estimate that counts the second read of each source (SPEC §9, NFR-PERF-12), for example "Kept photos change drive, so each copy is read back and checked before its original leaves E:. About 4 minutes." (canvas).
+- Given a plan of renames only (rejects, keeps on the same volume), then the estimate says it takes seconds **(proposed wording)**.
+- **(proposed)** Until B-13 has measured the reader's throughput, the time estimate uses a default of 90 MB/s for removable sources and is shown as "About …"; NFR-PERF-12's ±25 % applies once measured throughput replaces it.
+
+Safety
+- Given any plan shown, then it contains no operation that removes a photo, none for an undecided group, and every target lies under the destination or `<source>\_rejected` (INV-04, INV-05, US-12, US-13).
+
+Links: NFR-REL-01, NFR-REL-02, NFR-REL-05, NFR-REL-07, NFR-REL-08, NFR-PERF-12, NFR-PERF-13, NFR-A11Y-01, NFR-A11Y-04, NFR-A11Y-06, NFR-A11Y-08, NFR-A11Y-10, NFR-A11Y-11; INV-03 to INV-09, INV-20. Test: Vitest (review model from a plan and a preflight report: counts per branch and subfolder, bytes, held, warnings, blockers, the estimate, Apply's enabled state); Playwright + axe (open with Enter and the button, Esc back, grid thumbnail jumps back, "Sort them now", per-file list, RAW follows off, the scenarios for each blocker, hold and warning, keyboard-only pass, 320 px reflow); Rust integration (the recording port of [testing.md](testing.md) §4 driven through review and preflight, zero mutating calls; preflight on the read-only and full VHDX, US-16).
+
+### US-35 Confirm with the counts
+As a photographer, I want apply to ask for confirmation stating the counts, so that two keystrokes never move thousands of files.
+
+- Given a review with no blocker, when I activate the primary button, then a confirm dialog opens and nothing has moved yet (ADR 0003, INV-03). **(proposed)** The button reads "Move 138 photos" when every planned photo moves (canvas), and "Apply to 138 photos" when some are copied.
+- Given the dialog, then it states the counts and where they go: kept photos with moved or copied and the destination, rejected photos moved to `_rejected` ("nothing is deleted"), undecided photos staying where they are, held-back photos left out, the file count, the bytes and the time estimate (ADR 0003, SPEC §4.2). **(proposed wording)** Title "Move 138 photos?"; body "96 kept photos will be moved to Selects 2026. 42 rejected photos will be moved to E:\2026\_rejected. Nothing is deleted. 274 undecided photos stay where they are. 286 files, 3.0 GB, about 4 minutes."; buttons "Go back" and "Move 138 photos".
+- Given the dialog opens, then focus is on "Go back" **(proposed)**, so a stray Enter closes it rather than confirming.
+- Given the swipe screen, when I press Enter any number of times, or hold it, then the review opens and no apply starts: focus lands on the review's heading, never on the primary button (US-34), and a held Enter counts once (SPEC §10, M3 keys). Starting an apply from the keyboard takes reaching the primary button, activating it, then reaching the confirm button and activating it.
+- Given the dialog, when I press Esc or choose "Go back", then it closes, nothing is recorded or moved, and focus returns to the primary button (NFR-A11Y-01, no keyboard trap).
+- Given the dialog, then focus stays inside it while it is open, it has an accessible name and description, and its focus ring is visible (NFR-A11Y-04, NFR-A11Y-09).
+- Given I confirm, then preflight runs again (FE §7.4), the plan is confirmed with the decisions it was built from (`decisions_upto_seq`), its groups are locked, and the apply screen opens (FE §5.4, §9.1). The webview sends only the plan id (FE §4, NFR-SEC-01).
+- Given preflight at confirm finds a new blocker (card locked, drive unplugged since review), then nothing starts and the review comes back with the blocker shown (FE §8). **(proposed)** Given it finds a new hold or a taken name, then the dialog closes and the review shows the rebuilt plan, to be confirmed again.
+- Given a confirmed plan, when I go back to the swipe screen during or after apply, then keep, reject, U and undo on a locked or applied group change nothing and say "Already applied" (FE §5.4, §12).
+- Given the web demo, when I confirm, then the apply is simulated and the disk is never touched (SPEC §5.5).
+
+Links: NFR-REL-01, NFR-REL-05, NFR-A11Y-01, NFR-A11Y-04, NFR-A11Y-09, NFR-SEC-01; INV-03, INV-17. Test: Vitest (confirm text from the plan for keep by move, keep by copy, rejects only, held groups, singular and plural); Playwright + axe (dialog contents and focus, Esc and "Go back" leave everything unchanged, Enter pressed 5 times and held from the swipe screen never opens the apply screen, focus trapped, keyboard-only); Rust integration (confirm reruns preflight and refuses a plan whose card was locked after review; confirm locks the groups).
+
+### US-36 Apply with progress, pause and cancel
+As a photographer, I want per-file progress with pause and cancel (after the current file), and a report at the end, so that a long cross-volume apply stays under my control.
+
+Progress
+- Given a confirmed plan, then the apply screen shows the route view as on review (SPEC §4.2), the photos done of the total, the bytes done of the total and the time left, for example "Moving your photos", "{done} of 138 photos done. You can keep using your computer.", "About 2 minutes left", "1.0 of 2.1 GB" (canvas Apply).
+- Given an operation running, then the screen shows the current photo, its files and its step in words: copying, "Reading the copy back and checking it matches", "Then the original leaves Photos drive (E:) › 2026 › Barcelona" (canvas, FE §9.3). Progress is announced through a polite live region at most every few seconds **(proposed: every 10 photos or 5 s)** (NFR-A11Y-09).
+- Given an apply, then the UI stays responsive: no main-thread task over 50 ms (NFR-PERF-13), and Windows is asked not to sleep (FE §9.4).
+- Given a cross-volume move, then its source is removed only after the copy is read back and both hashes match the first, and only once every member of its group is committed (NFR-REL-04, INV-12, US-18).
+- Given any apply, then undecided photos keep their path, bytes and mtime (NFR-REL-05), rejected photos are in `<source>\_rejected` with their subfolders, and no photo is removed except a verified cross-volume source (NFR-REL-03, INV-01).
+
+Pause and cancel
+- Given an apply, when I click "Pause", then it pauses within 1 s at the next step boundary, the screen says it is paused, and "Pause" becomes "Continue" (NFR-PERF-13, FE §9.5). **(proposed)** The label "Continue".
+- Given a paused apply, when I click "Continue", then it carries on from the journal with nothing repeated or lost (FE §9.5).
+- Given an apply, when I click "Stop after this file", then the current file finishes its step, no new operation starts, and the report opens (SPEC §4.2, FE §9.5). Given a cross-volume group was part-way, then its committed members end "copied, source kept", with both files present, and the report says so (FE §9.5). **(proposed)** The button reads "Stop after this file", following SPEC; the canvas's "Stop after this photo" reads as if the whole group finished first, which the engine does not do. For Margaux: keep the engine's rule and this label, or finish the current group before stopping.
+- Given the apply screen, then Pause and Stop are reachable by Tab with a visible focus ring, and Esc does not cancel **(proposed)** (NFR-A11Y-01, NFR-A11Y-04).
+
+Failures during the apply
+- Given a file held by Explorer, Defender or Lightroom, then it is retried with backoff (100 to 1600 ms), then marked failed and the apply goes on (FE §9.4, US-19, NFR-REL-09).
+- Given a target that appeared after planning, then that group fails as a hard error, the existing file is unchanged, and the apply goes on (US-17, FE §12).
+- Given the source card is pulled or the destination drive unplugged, then the apply pauses with "Insert the card <label>" and every handle is closed (FE §6.3, §9.4). Given the same card returns, under any drive letter, then it is bound by serial and the apply can continue (US-09, FE §12). **(proposed)** It continues when I click "Continue", not on its own.
+- Given two mounted volumes with the card's serial, then the apply pauses and asks me to pick the volume from a list with labels and drive letters (FE §6.3).
+- Given the destination fills up, then the current file goes back to pending, its partial is removed, and the apply pauses saying the destination is full (FE §9.4). Given the card's lock switch is flipped during the apply, then it pauses as write-protected (FE §9.4).
+- Given a verify mismatch, then the file fails, its source is kept and its partial removed, and the report shows it first, pointing at the reader or the card (FE §9.4, NFR-REL-04).
+- Given the app is closed during an apply, then the next launch resumes it (US-38). **(proposed)** Closing the window asks first: "An apply is running. Close and finish it next time Culla opens?".
+
+Report
+- Given an apply ends (finished, cancelled or stopped), then a report lists per group: done, split, copied with source kept, failed with its reason, held back, and partials kept because their source vanished (FE §9.6); alarms (`lost`, `fs_inconsistent`) come first with the advice to run `chkdsk` (FE §10.2); camera-protected groups say "copied, original kept" (FE §7.2).
+- Given the report, then it offers "Retry failed" for failed groups that never reached committed, "Apply remaining" after a cancel or for unstarted groups, and "Finish moves" for groups with copied, source kept members, each run only when I choose it (FE §9.6). "Finish moves" re-verifies each copy from scratch before any source goes; a mismatch keeps both files and says why (SPEC §2).
+- Given any run of a plan (apply, resume, redo, also after a pause, a cancel or a journal write failure), then a plain-text log is written under `%LOCALAPPDATA%\Culla\logs` and the report opens it (NFR-REL-14, FE §9.8). **(proposed)** "Open log" asks Rust to open the log by its run id in the default text editor; the webview never sees its path (threat model T7).
+- Given the report, then it is reachable and readable by keyboard and screen reader, and the outcome of each state has a label as well as a colour (NFR-A11Y-01, NFR-A11Y-08).
+- Given the web demo, then the apply is simulated with the same screens, pause, stop and report (SPEC §5.5).
+
+Links: NFR-REL-02 to NFR-REL-07, NFR-REL-09, NFR-REL-11, NFR-REL-12, NFR-REL-14, NFR-PERF-10, NFR-PERF-11, NFR-PERF-13, NFR-A11Y-01, NFR-A11Y-04, NFR-A11Y-08, NFR-A11Y-09; INV-01, INV-04, INV-11, INV-12, INV-14. Test: Vitest (progress model from journal events: counts, bytes, time left, step wording, pause and stop states, report grouping and order); Playwright + axe on the demo (progress, pause within 1 s, continue, stop after the current file, report contents and actions, scenarios for card pulled, disk full and verify mismatch, keyboard-only); Rust integration (journal executor over the fake ports: pause and cancel between steps, a cancelled cross-volume group ends copied with source kept; `windows-it`: locked file, target appearing between plan and execute, VHDX detach mid-copy and reattach under another letter, full VHDX, log written per run and checked against the journal); `culla-bench` B-12, B-13 (NFR-PERF-10, 11, 12); manual checklist (apply a real session, pull the card, Lightroom holding files, SD lock switch).
+
+### US-37 Resume a session or start fresh
+As a photographer, I want to resume a session or start fresh when I reopen a folder, including on another drive letter, so that I can cull a card over several sittings.
+
+- Given a folder culled before, then the start screen lists it under recent folders with its status: in progress with the number decided, or applied (US-44, SPEC §4.2).
+- Given a source with an active session and no open plan, when I open it, then I can resume it or start fresh (FE §6.1 step 4). **(proposed wording)** "Resume sorting" and "Start fresh", with the count decided so far.
+- Given I resume, then every decision is restored, the undo and redo stacks are the same as before, and the list keeps its stored order with no re-sort (FE §5.3, US-06, NFR-REL-15). **(proposed)** The swipe screen opens on the first undecided photo in that order.
+- Given I resume, then the destination is restored and labelled "same as last time" (US-21). **(proposed)** "Include subfolders", "RAW follows JPEG" and moved or copied are restored as the session had them and can be changed before sorting; nothing is preselected only for a fresh start (SPEC §2, "Keep").
+- Given I start fresh, then the old session is archived with its events and journal kept, and every photo starts undecided (FE §6.1 step 4).
+- Given the card comes back under another drive letter, then its session and cache are found by volume serial and relative path (US-09, NFR-REL-13).
+- Given two cards with the same folder names, then each has its own session (US-09).
+- Given files changed on the card since the last sitting, then reconcile on open flags missing files, adds new files as undecided, makes a decided group undecided when a file joined it and says why, lists a file joining an applied group as `joins_applied_group` and never touches it, and lists changed files (FE §6.2, US-11, ADR 0024).
+- Given a reverted move found on open (`reverted_move`), then the review offers "Redo moves (n)" or "Finish moves (n)" and nothing runs until I confirm (FE §6.2, §9.6).
+- Given the source has an open plan, then recovery and resume come first (US-38) and "Start fresh" is not offered until that plan is closed (FE §6.1 step 3).
+- Given another session on the same card, for a folder above or below this one, has an open plan, then opening this folder is refused with a message to finish or cancel that apply first (FE §6.1 step 2). **(proposed wording)** "Another apply on this card is not finished. Finish or cancel it first."
+- Given a stored decision log that is corrupt, then **(proposed, SPEC §10 decision log (d))** the session opens with the decisions before the bad event, nothing more is recorded until I choose to resume from there or start fresh, and the problem is shown.
+- Given the remembered destination is on a drive that is not connected, then it is shown as not available and I must choose another or connect it (US-21).
+- Given a source whose drive is not connected, then its recent entry says "Not connected" and cannot be started (merged UI, US-44).
+- Given any of this, then nothing on the card is written before Apply: sessions live under `%LOCALAPPDATA%\Culla\sessions` (US-41, NFR-REL-01).
+
+Open, not decided here: what happens to a session after a completed apply (FE §9.6), and how a card with the same serial but other contents is told apart on reopen (FE §6.2).
+
+Links: NFR-REL-01, NFR-REL-10, NFR-REL-13, NFR-REL-15, NFR-PRIV-06, NFR-A11Y-01; INV-15, INV-17, INV-18, INV-23. Test: Vitest (start screen model with sessions in progress and applied; resume and start fresh choices; restored options); Playwright + axe on the demo (resume restores decisions, undo after resume, start fresh, refusal for a nested open plan, corrupt log scenario, keyboard-only); Rust integration (SQLite store: kill and reopen restores every event older than 500 ms, NFR-REL-10; reconcile with files removed, added and joining; `windows-it`: VHDX remounted under another letter finds the session); golden fixtures (fold after resume equals fold before, INV-15).
+
+### US-38 An interrupted apply is finished at launch
+As a photographer, I want an interrupted apply resumed with a clear message when the app opens, so that I know my photos are safe.
+
+- Given an apply was cut off by a crash, a power cut, a killed process or a pulled card, when Culla starts, then it finds the open plan, marks it interrupted and says so before anything else (FE §10.1, architecture §6.5). **(proposed wording)** "An apply was interrupted. Culla is finishing it. Your photos are either still in place or already copied and checked."
+- Given the source or destination is not connected, then it waits with "Insert the card <label>" and touches nothing (FE §10.1, §6.3). Given the card returns under another letter, then it is identified by serial before anything is touched (US-20).
+- Given both volumes are present, then the apply rolls forward from the journal, never back, on the apply screen with the same progress, pause and stop as US-36 (SPEC §5.2, FE §10.2). **(proposed)** It starts on its own once the volumes are present, with pause and stop available; SPEC §5.2 says it rolls forward the next time the app opens, and whether to wait for a confirm is open in FE §10.1 and architecture §6.5.
+- Given recovery, then every operation ends in the end state for its kind: a move leaves the file at exactly one place, a copy at both, always with its original hash; nothing is re-copied after `verifying` with a matching partial or after `committed` (US-20, [testing.md](testing.md) §6.1).
+- Given Culla crashes again during recovery, any number of times, then the next launch converges to the same result (INV-14). Given recovery has finished, when it runs again, then it does nothing (US-20).
+- Given another Culla process holds the source's lock, then this one leaves the plan alone (FE §10.1, INV-23).
+- Given recovery finds a torn rename or a lost file (`fs_inconsistent`, `lost`), then it touches nothing for that file, and the report shows it first with the advice to run `chkdsk` (FE §10.2).
+- Given recovery ends, then the report of US-36 is shown and a log is written for the resume run (FE §9.8).
+- Given the most recently closed plan of a session had a same-volume move reverted after it closed (file back at its source), when Culla starts, then the launch check lists it as a reverted move and offers "Redo moves (n)"; nothing runs until I confirm, and the redo is a new small plan, preflighted and journaled like any other (US-20, FE §9.6).
+- Given a cross-volume move whose source came back after the plan closed (file at both places), then it is listed and "Finish moves (n)" is offered; confirming re-verifies both files and removes the source; a mismatch keeps both and says why (US-20, SPEC §2).
+- Given a launch check finds a torn state or a target gone, then it is reported as an alarm and nothing is offered (FE §9.6).
+- Given the launch check, then it only reads: nothing is written on a user volume until I confirm a redo (INV-03).
+- **(proposed)** Given the launch notice, then it is a screen of its own with a heading that takes focus and a live region for its progress, and the start screen comes after the report is closed.
+
+Links: NFR-REL-06, NFR-REL-14, NFR-A11Y-01, NFR-A11Y-09; INV-11, INV-13, INV-14, INV-18, INV-23. Test: Vitest (launch notice model: waiting for a volume, recovering, report, findings to offer); Playwright + axe on the demo (interrupted-apply and launch-check scenarios: message, wait for the card, progress, report, "Redo moves" and "Finish moves" only after confirm, keyboard-only); Rust integration (crash loop over the journal executor, `cargo xtask crash-loop`; generated recovery-table tests; launch check over closed plans; `windows-it`: process killed mid-apply and VHDX detached mid-copy, then restart, testing.md §6); manual checklist (pull the card during a cross-volume apply, reinsert under another letter, restart, resume completes).
+
+### US-39 Zoom to 100 %
+As a photographer, I want to zoom to 100 % at the cursor (Z toggle or hold Space) and pan with the arrows, so that I can check focus before deciding. Z is the key labelled Z on AZERTY and QWERTZ too ([SPEC §4.1](SPEC.md#41-keyboard-map)).
+
+- Given the swipe view has focus and the pointer is over the photo, when I press Z, then the photo shows at 100 % centred on the point under the pointer; with the pointer elsewhere, on the centre (SPEC §4.1). Pressing Z again, or Esc, returns to the fitted preview (SPEC §4.1).
+- Given the swipe view has focus, when I hold Space, then the photo zooms to 100 % until I release it (SPEC §4.1). **(proposed)** With focus on a button, Space presses the button as usual and does not zoom.
+- Given an AZERTY or QWERTZ layout, when I press the key labelled Z, then it zooms; Space matches by position (SPEC §4.1, US-22).
+- Given zoom, when I press the arrows, then they pan and never decide (SPEC §4.1). **(proposed)** Each press pans a tenth of the view, a held arrow pans continuously, panning stops at the photo's edges, and dragging the photo pans instead of swiping.
+- Given zoom, then the full image is loaded on demand through `culla://` by the photo's opaque id (SPEC §5.1, §5.3), and while it loads the preview stays visible with loading dots (SPEC §5.6).
+- Given a 45 MP JPEG, then the full image is visible within 1.0 s from a UHS-I card and 400 ms from NVMe, and panning runs at 60 fps or more (NFR-PERF-07).
+- Given one 100 % zoom on a 45 MP photo, then memory stays within NFR-PERF-09, and **(proposed)** the full image is released when zoom ends.
+- Given a lone NEF or an HE/HE\* NEF, then zoom shows its largest embedded JPEG, not RAW pixels (SPEC §9, ADR 0011). **(proposed)** A note says "Embedded preview, not the RAW".
+- Given zoom, when I click Keep or Reject **(proposed)**, then the decision is recorded, zoom ends and the next photo shows; Shift+arrows browse and also end zoom **(proposed)**.
+- Given the full image cannot be read (card pulled, damaged file), then zoom stays on the preview with a message and the session is intact (NFR-REL-12).
+- Given reduced motion, then zooming in and out is an instant swap (NFR-A11Y-05). **(proposed)**
+- Given zoom, then the swipe and zoom screens use the Night theme (SPEC §5.6), the zoom state is announced ("Zoomed to 100 %", proposed wording), and the shortcut overlay lists Z, Space and the arrows' pan (US-31, NFR-A11Y-09).
+- Given focus outside the swipe view (review, a dialog), then Z does nothing (NFR-A11Y-10). Given a held Z, then key repeat does not toggle it again **(proposed)**.
+
+Links: NFR-PERF-07, NFR-PERF-09, NFR-REL-12, NFR-A11Y-01, NFR-A11Y-05, NFR-A11Y-09, NFR-A11Y-10. Test: Vitest (zoom geometry: point under the cursor kept, centre, pan steps and clamping, the key map for Z, Space and arrows while zoomed, Z repeat ignored); Playwright + axe on the demo (Z and Space zoom and unzoom, arrows pan without deciding, Esc leaves zoom, AZERTY Z, Space on a focused button presses it, reduced motion, keyboard-only); Rust integration (full-image route serves only ids of the current scan, US-33); `culla-bench` for NFR-PERF-07 **(proposed: a `zoom` run of 50 zooms per medium)**; manual checklist (focus check on real 24 and 45 MP files).
+
+### US-40 EXIF overlay
+As a photographer, I want an EXIF overlay (I) with date, lens and exposure, so that I can tell near-identical shots apart.
+
+- Given the swipe view has focus, when I press I, then an overlay shows the current photo's capture date and time, lens and exposure; I again or Esc hides it (SPEC §4.1). **(proposed)** Exposure is shutter speed, aperture, ISO, focal length and exposure compensation, written "1/250 s · f/4 · ISO 400 · 50 mm · −0.3 EV", and the camera model is shown too.
+- Given the overlay is open, when I move to another photo, then it shows that photo's values **(proposed: it stays open until I close it)**, and decisions, undo and browsing work as without it.
+- Given a lens with no `LensModel`, then the lens comes from `LensSpecification` (SPEC §5.1). Given no capture time in DateTimeOriginal, then it falls back to `CreateDate`, then to the file time in the PC's local time zone (ADR 0028). **(proposed)** A time from the file says "from the file time"; a missing field says "Not recorded".
+- Given the EXIF pass has not reached this photo yet, then the overlay shows loading dots and fills in when it has **(proposed)**.
+- Given EXIF text from the card (lens name, camera model), then it is shown as text with control, bidi and invisible characters escaped, never as markup (threat model T6b).
+- **(proposed)** Given the overlay, then GPS position and the body serial are not shown.
+- Given the overlay, then its text has at least 4.5:1 contrast on Night (NFR-A11Y-06), it never covers the focused control or the Keep and Reject buttons (NFR-A11Y-04), it has an accessible name, and the shortcut overlay lists I (US-31).
+- Given focus outside the swipe view, then I does nothing (NFR-A11Y-10).
+- Given the web demo, then the values come from the EXIF pre-extracted to JSON (SPEC §5.5).
+
+Links: NFR-A11Y-01, NFR-A11Y-04, NFR-A11Y-06, NFR-A11Y-09, NFR-A11Y-10, NFR-SEC-06. Test: Vitest (EXIF formatting: every field, missing fields, the lens and time fallbacks, escaping); Playwright + axe on the demo (I and Esc, values follow the photo, decisions with the overlay open, focus not obscured, contrast, keyboard-only); Rust integration (EXIF fields from the adapters' fixtures, fuzzed parsers, US-06).
 
 ## M6
 
