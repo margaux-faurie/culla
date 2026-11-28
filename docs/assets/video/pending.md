@@ -12,5 +12,5 @@ which also records the hash it acknowledged (`pendingFrom` in `screens.json`); `
 - 2026-11-28 #53: demo photos changed — re-render before release
 - 2026-11-28 #54: swipe (zoom to 100 %) changed — re-render before release
 - 2026-11-28 #55: swipe (EXIF overlay) changed — re-render before release
-- 2026-11-28 #56: review and apply (lean review, short route) changed — re-render before release
 - 2026-11-28 #57: install page styles (transcript, in app.css) changed — re-render before release
+- 2026-11-28 #56: review and apply (lean review, short route) changed — re-render before release

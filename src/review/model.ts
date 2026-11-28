@@ -342,7 +342,8 @@ export function confirmText(plan: ReviewPlan): ConfirmText {
 
 /**
  * The notes shown near Apply, one line each and only when they apply (Margaux, 28 Nov 2026):
- * camera-protected photos, then a cloud-synced destination.
+ * camera-protected photos, then a cloud-synced destination, or the note that Culla could not
+ * check for one (the fail-closed form of the same warning).
  */
 export function visibleNotes(plan: ReviewPlan): string[] {
   const notes: string[] = [];
@@ -354,7 +355,7 @@ export function visibleNotes(plan: ReviewPlan): string[] {
     if (text !== null) notes.push(text);
   }
   for (const w of plan.warnings) {
-    if (w.kind === "cloudSynced") notes.push(warningText(w));
+    if (w.kind === "cloudSynced" || w.kind === "syncRootUnknown") notes.push(warningText(w));
   }
   return notes;
 }
@@ -363,7 +364,7 @@ export function visibleNotes(plan: ReviewPlan): string[] {
 export function worthKnowing(plan: ReviewPlan): string[] {
   const notes = plan.collisions.map(collisionText);
   for (const w of plan.warnings) {
-    if (w.kind !== "cloudSynced") notes.push(warningText(w));
+    if (w.kind !== "cloudSynced" && w.kind !== "syncRootUnknown") notes.push(warningText(w));
   }
   return notes;
 }

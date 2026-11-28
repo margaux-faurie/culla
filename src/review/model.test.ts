@@ -241,12 +241,17 @@ describe("lean review (decided by Margaux 28 Nov 2026: essentials visible, detai
     expect(visibleNotes(cloud)).toEqual([
       "1 kept photo is protected on the camera. It is copied, and the original stays on Photos drive (E:).",
       "C:\\Users\\demo\\OneDrive\\Photos is inside a cloud-synced folder. The sync app may upload, change or move the photos during and after the apply.",
+      "Culla could not check whether the destination is in a cloud-synced folder.",
     ]);
     expect(visibleNotes(await reviewOf([[5, "keep"]]))).toEqual([]);
     // The rest stays folded: taken names and the other warnings.
-    expect(worthKnowing(cloud)).toEqual([
+    const locked: ReviewPlan = {
+      ...cloud,
+      warnings: [...cloud.warnings, { kind: "locked", files: 1, example: "MGF_7271.JPG" }],
+    };
+    expect(worthKnowing(locked)).toEqual([
       "1 name is taken in D:\\Photos\\Selects 2026. That photo gets _1 (MGF_7271_1). Nothing is replaced.",
-      "Culla could not check whether the destination is in a cloud-synced folder.",
+      "1 file is open in another app (MGF_7271.JPG). Culla retries it, then skips it if it stays open.",
     ]);
   });
 
@@ -286,7 +291,7 @@ describe("lean review (decided by Margaux 28 Nov 2026: essentials visible, detai
     expect(readySummary({ ...quiet, otherFiles: plan.otherFiles })).toBe(
       "Checked. Nothing stops the apply. 1 thing is worth knowing.",
     );
-    expect(readySummary({ ...plan, warnings: [{ kind: "syncRootUnknown" }] })).toBe(
+    expect(readySummary({ ...plan, warnings: [{ kind: "longPaths", files: 1 }] })).toBe(
       "Checked. Nothing stops the apply. 2 things are worth knowing.",
     );
     expect(readySummary({ ...plan, blockers: [{ kind: "previewsBusy" }] })).toBeNull();

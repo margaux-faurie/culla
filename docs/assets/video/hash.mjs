@@ -195,9 +195,16 @@ function main(args) {
       console.error(`--pending takes one line: "YYYY-MM-DD #<PR or branch>: ${HINT}"`);
       return 2;
     }
-    writeFileSync(SCREENS, `${JSON.stringify({ ...screens, pendingFrom: current }, null, 2)}\n`);
     const lines = pendingText.trimEnd().split(/\r?\n/);
-    if (!lines.includes(line)) lines.push(line);
+    if (lines.some((l) => l.trim() === line)) {
+      // Each pull request acknowledges with its own line; another's line never covers it.
+      console.error(
+        "That line is already in pending.md. Write your own pull request's line; if it is your own (after a rebase), remove it from pending.md first, then run --pending again.",
+      );
+      return 2;
+    }
+    lines.push(line);
+    writeFileSync(SCREENS, `${JSON.stringify({ ...screens, pendingFrom: current }, null, 2)}\n`);
     writeFileSync(PENDING, `${lines.join("\n")}\n`);
     console.log(`Added to pending.md and recorded ${current} as pendingFrom.`);
     return 0;

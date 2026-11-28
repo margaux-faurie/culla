@@ -150,6 +150,20 @@ test.describe("apply screen (US-36)", () => {
     await expect(applyButton(page)).toHaveText("Move 1 photo");
   });
 
+  test("the short route counts the plan, with held-back photos left in place", async ({ page }) => {
+    await startWith(page, "held");
+    for (let i = 0; i < 4; i += 1) await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Enter");
+    await expect(applyButton(page)).toHaveText("Move 1 photo");
+    await applyButton(page).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Move 1 photo" }).click();
+    await expect(page.locator("main.apply")).toBeVisible();
+    // 4 kept, 3 of them held back: the apply moves 1, and 20 undecided + 3 held stay.
+    await expect(branch(page, "1 kept")).toBeVisible();
+    await expect(branch(page, "23 left in place")).toBeVisible();
+    await expect(page.getByText("Undecided and held-back photos are not touched.")).toBeVisible();
+  });
+
   test("a stop in a reject leaves the photo split between folders", async ({ page }) => {
     await applyWith(page, "slow", 0, 1);
     await stopButton(page).click();
