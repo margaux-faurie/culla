@@ -7,7 +7,7 @@
 
 use std::io::{self, IsTerminal, Write};
 use std::ops::ControlFlow;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use culla_adapters::metadata::exif::read_group_meta;
 use culla_adapters::scan::{ScanError, ScanSummary, scan};
@@ -68,19 +68,47 @@ pub(crate) enum Failure {
 /// [`Failure::Refused`] when the folder or its volume is refused, [`Failure::Io`] when it
 /// cannot be read.
 pub(crate) fn run(args: &ScanArgs, progress: &mut Progress) -> Result<Report, Failure> {
-    let (scanned, identity) = match resolve_folder(&args.folder) {
-        Ok(r) => (r.canonical.clone(), Identity::Resolved(r)),
-        Err(VolumeError::Unsupported) => (
-            args.folder.clone(),
-            Identity::Unavailable(VolumeError::Unsupported.to_string()),
-        ),
-        Err(e @ VolumeError::Path(_)) => return Err(Failure::Refused(e.to_string())),
-        Err(e @ (VolumeError::Io(_) | VolumeError::Win32 { .. })) => {
-            return Err(Failure::Io(e.to_string()));
-        }
-    };
+    let (scanned, identity) = resolve(&args.folder)?;
+    run_resolved(args, scanned, identity, None, progress)
+}
 
-    let policy = ScanPolicy::new(args.include_subfolders);
+/// The path to scan and the folder's identity: the canonical path and the volume on Windows,
+/// the folder as given off Windows.
+///
+/// # Errors
+///
+/// [`Failure::Refused`] when the folder or its volume is refused, [`Failure::Io`] when it
+/// cannot be resolved.
+pub(crate) fn resolve(folder: &Path) -> Result<(PathBuf, Identity), Failure> {
+    match resolve_folder(folder) {
+        Ok(r) => Ok((r.canonical.clone(), Identity::Resolved(r))),
+        Err(VolumeError::Unsupported) => Ok((
+            folder.to_path_buf(),
+            Identity::Unavailable(VolumeError::Unsupported.to_string()),
+        )),
+        Err(e @ VolumeError::Path(_)) => Err(Failure::Refused(e.to_string())),
+        Err(e @ (VolumeError::Io(_) | VolumeError::Win32 { .. })) => {
+            Err(Failure::Io(e.to_string()))
+        }
+    }
+}
+
+/// Runs the scan of an already resolved folder. `destination` is the destination folder when
+/// it lies inside the source, as components from the source root: it is left out of the scan
+/// (file-engine §3.2).
+///
+/// # Errors
+///
+/// As [`run`].
+pub(crate) fn run_resolved(
+    args: &ScanArgs,
+    scanned: PathBuf,
+    identity: Identity,
+    destination: Option<Vec<String>>,
+    progress: &mut Progress,
+) -> Result<Report, Failure> {
+    let mut policy = ScanPolicy::new(args.include_subfolders);
+    policy.destination = destination;
     let mut parts = Vec::new();
     let mut entries = 0u64;
     let summary = scan(&scanned, &policy, |batch| {

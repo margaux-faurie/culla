@@ -357,7 +357,7 @@ fn describe(entry: &DirEntry, folder: &Arc<[String]>) -> io::Result<ScanEntry> {
     Ok(e)
 }
 
-fn unix_ns(t: SystemTime) -> Option<i64> {
+pub(crate) fn unix_ns(t: SystemTime) -> Option<i64> {
     match t.duration_since(UNIX_EPOCH) {
         Ok(d) => i64::try_from(d.as_nanos()).ok(),
         Err(before) => i64::try_from(before.duration().as_nanos()).ok().map(|n| -n),
