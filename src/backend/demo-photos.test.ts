@@ -31,17 +31,16 @@ describe("demo scenes", () => {
     }
   });
 
-  it("give every photo of every demo source a scene of its own", () => {
+  it("cover every photo of every demo source", () => {
     for (const specs of [source2026(), sourceAlps(), sourceCard()]) {
       expect(specs.length).toBeLessThanOrEqual(SCENE_COUNT);
     }
   });
 
-  it("are files, never data: URLs, which the demo's CSP blocks (img-src 'self')", () => {
-    source2026().forEach((spec, n) => {
-      const { previewUrl } = demoPhoto(`p-${n}`, spec, n);
-      expect(previewUrl).not.toMatch(/^data:/i);
-      expect(previewUrl).toMatch(/scene-\d{2}[^/]*\.svg$/);
-    });
+  // Whether the URL is a file is the demo build's to check (tests/demo-site.test.ts, e2e): Vitest
+  // runs with Vite's default inline limit, so here a small SVG comes back as a data: URL.
+  it("give each photo of a source its own scene file", () => {
+    const urls = source2026().map((spec, n) => demoPhoto(`p-${n}`, spec, n).previewUrl);
+    expect(new Set(urls).size).toBe(urls.length);
   });
 });
