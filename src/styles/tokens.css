@@ -12,6 +12,9 @@
  * Regular (400) and Bold (700) cuts are bundled: weights 500 resolve to Regular and 600 to Bold
  * by the normal CSS matching rules, with no synthesised bold. WOFF (zlib), converted from the
  * upstream TTFs with fontTools; WOFF2 needs a Brotli encoder the build machine didn't have.
+ * Source: Bricolage Grotesque 1.001 static cuts (name table "Version 1.001;gftools[0.9.33.dev8+g029e19f]",
+ * copyright and OFL entries kept). SHA-256 of the TTFs: Regular 972a6d09…74e4f6, Bold a737b146…f26da;
+ * of the WOFFs: Regular 32015cdb…caa8f8, Bold 0668e4d3…526da (full values in src/assets/fonts/README.md).
  */
 
 @font-face {

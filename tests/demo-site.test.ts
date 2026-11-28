@@ -132,9 +132,10 @@ describe("demo build stays inside its CSP", () => {
     const sheet = css.join("\n");
     expect(sheet).toMatch(/font-family:\s*"?Bricolage Grotesque"?/);
     expect(sheet).toMatch(/font-display:\s*swap/);
-    for (const [, url] of sheet.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/g)) {
-      expect(url).toMatch(/^\/assets\/[^/]+$/);
-    }
+    // No remote stylesheet pulled in by @import, and the only url()s are the two font files.
+    expect(sheet).not.toMatch(/@import/i);
+    const urls = [...sheet.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/g)].map(([, url]) => url);
+    expect([...urls].sort()).toEqual(fonts.map((name) => `/${name}`).sort());
   });
 
   it("copies public-demo only in demo mode", async () => {
