@@ -2,7 +2,9 @@ import { expect, type Page, test } from "@playwright/test";
 import {
   applyButton,
   blockingViolations,
+  branch,
   chooseKeepMode,
+  openFold,
   startSorting,
   tabUntil,
   tally,
@@ -33,18 +35,49 @@ test.describe("review screen (US-34)", () => {
     await startWith(page, null);
     await decideAndReview(page, 2, 1);
     await expect(
-      page.getByText("Nothing has moved yet. Check the plan below, then apply."),
+      page.getByText("From E:\\2026, Photos drive (E:). Nothing has moved yet."),
     ).toBeVisible();
-    await expect(page.getByText("2 kept · moved")).toBeVisible();
-    await expect(page.getByText("1 rejected · moved")).toBeVisible();
-    await expect(page.getByText("21 undecided · stay where they are")).toBeVisible();
-    await expect(page.getByText("3 other files (.mov, .txt) are left alone.")).toBeVisible();
+    const route = page.getByRole("list", { name: "Where your photos will go" });
+    await expect(branch(page, "2 kept")).toBeVisible();
+    await expect(route.getByText("D:\\Photos\\Selects 2026", { exact: true })).toBeVisible();
+    await expect(branch(page, "1 rejected")).toBeVisible();
+    await expect(route.getByText("Moved to E:\\2026\\_rejected")).toBeVisible();
+    await expect(branch(page, "21 left in place")).toBeVisible();
     await expect(
-      page.getByText(/^Kept photos change drive, so each copy is read back/),
+      page.getByText("Checked. Nothing stops the apply. 1 thing is worth knowing."),
     ).toBeVisible();
     await expect(applyButton(page)).toHaveText("Move 3 photos");
     await expect(applyButton(page)).toBeEnabled();
     expect(await blockingViolations(page)).toEqual([]);
+  });
+
+  test("keeps the details folded: findings, time and size, every file and options", async ({
+    page,
+  }) => {
+    await startWith(page, null);
+    await decideAndReview(page, 2, 1);
+    const others = page.getByText("3 other files (.mov, .txt) are left alone.");
+    const estimate = page.getByText(/^Kept photos change drive, so each copy is read back/);
+    await expect(others).toBeHidden();
+    await expect(estimate).toBeHidden();
+    await expect(page.getByRole("table")).toBeHidden();
+    await expect(page.getByRole("checkbox", { name: /RAW and edit files follow/ })).toBeHidden();
+    // "Details" beside the visible line opens the findings and moves focus to them.
+    await page.getByRole("button", { name: "Details" }).click();
+    const found = page.getByRole("button", { name: "What the check found (1)" });
+    await expect(found).toBeFocused();
+    await expect(found).toHaveAttribute("aria-expanded", "true");
+    await expect(others).toBeVisible();
+    await openFold(page, /^Time and size$/);
+    await expect(estimate).toBeVisible();
+    await expect(page.getByText("Kept: 2 JPEG · 2 NEF · ", { exact: false })).toBeVisible();
+    await openFold(page, /^See every file/);
+    await expect(page.getByRole("list", { name: "Folders for kept photos" })).toBeVisible();
+    await openFold(page, /^Options$/);
+    await expect(page.getByRole("checkbox", { name: /RAW and edit files follow/ })).toBeChecked();
+    expect(await blockingViolations(page)).toEqual([]);
+    await found.click();
+    await expect(others).toBeHidden();
   });
 
   test("Esc and Back to sorting return to the photo I left; single keys do nothing", async ({
@@ -56,7 +89,7 @@ test.describe("review screen (US-34)", () => {
       await page.keyboard.press(key);
     }
     await expect(heading(page)).toBeVisible();
-    await expect(page.getByText("3 kept · moved")).toBeVisible();
+    await expect(branch(page, "3 kept")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("main", { name: "Sort photos" })).toBeFocused();
     await expect(page.locator(".swipe-tally .strong")).toHaveText("4 / 24");
@@ -99,6 +132,8 @@ test.describe("review screen (US-34)", () => {
     await page.getByText("Options", { exact: true }).click();
     await page.getByRole("checkbox", { name: /RAW and edit files follow/ }).uncheck();
     await expect(page.getByRole("button", { name: "See every file (2)" })).toBeVisible();
+    await expect(page.getByText("RAW and edit files stay where they are.")).toBeVisible();
+    await openFold(page, /^What the check found/);
     await expect(
       page.getByText(
         "1 name is taken in D:\\Photos\\Selects 2026. That photo gets _1 (MGF_7271_1). Nothing is replaced.",
@@ -138,6 +173,15 @@ test.describe("review screen (US-34)", () => {
   test("lists held-back photos with their reason and applies the rest", async ({ page }) => {
     await startWith(page, "held");
     await decideAndReview(page, 4);
+    await expect(
+      page.getByText(
+        "3 photos are held back. They stay where they are, and the rest can be applied.",
+      ),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("list", { name: "Kept photos, 4" }).getByRole("button", { name: /held back/ }),
+    ).toHaveCount(3);
+    await page.getByRole("button", { name: "Details" }).first().click();
     await expect(page.getByRole("heading", { name: "Held back" })).toBeVisible();
     await expect(
       page.getByText("MGF_7001 (kept, in E:\\2026): changed since scan, rescan."),
@@ -150,10 +194,33 @@ test.describe("review screen (US-34)", () => {
   test("shows warnings and still allows apply (P12, P15, P17)", async ({ page }) => {
     await startWith(page, "warnings");
     await decideAndReview(page, 2);
-    await expect(page.getByText(/is inside a cloud-synced folder/)).toBeVisible();
+    await expect(
+      page.getByText(/^Checked\. Nothing stops the apply\. \d+ things are worth knowing\.$/),
+    ).toBeVisible();
+    // A cloud-synced destination stays in view near Apply (Margaux, 28 Nov 2026).
+    const side = page.getByRole("complementary", { name: "Before you apply" });
+    await expect(side.getByText(/is inside a cloud-synced folder/)).toBeVisible();
+    await expect(page.getByText(/open in another app/)).toBeHidden();
+    await openFold(page, /^What the check found/);
     await expect(page.getByText(/open in another app/)).toBeVisible();
     await expect(page.getByText(/over 260 characters/)).toBeVisible();
     await expect(applyButton(page)).toBeEnabled();
+  });
+
+  test("keeps camera-protected photos in view near Apply", async ({ page }) => {
+    await startWith(page, null);
+    // MGF_7276, the 11th photo, is protected on the camera.
+    for (let i = 0; i < 10; i += 1) await page.keyboard.press("Shift+ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Enter");
+    await expect(page.getByText("Checking")).toBeHidden();
+    const side = page.getByRole("complementary", { name: "Before you apply" });
+    await expect(
+      side.getByText(
+        "1 kept photo is protected on the camera. It is copied, and the original stays on Photos drive (E:).",
+      ),
+    ).toBeVisible();
+    expect(await blockingViolations(page)).toEqual([]);
   });
 
   test("asks which drive when two share the card's serial", async ({ page }) => {
@@ -324,6 +391,10 @@ test.describe("confirm dialog (US-35)", () => {
     await page.getByRole("dialog").getByRole("button", { name: "Move 1 photo" }).click();
     await expect(page.getByRole("dialog")).toBeHidden();
     await expect(
+      page.getByText("1 name changed since you checked. Look at it again, then apply."),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Details" }).first().click();
+    await expect(
       page.getByText(
         /^MGF_7001 was taken in D:\\Photos\\Selects 2026 since the plan was made\. It now gets _1 \(MGF_7001_1\)\./,
       ),
@@ -365,15 +436,11 @@ test.describe("move or copy and the destination on review (decided by Margaux 28
     await expect(page.getByText("Choose move or copy for the kept photos first.")).toBeVisible();
     // No plan yet, but the decided photos are listed.
     await expect(page.getByRole("list", { name: "Rejected photos, 1" })).toBeVisible();
-    await expect(
-      page.getByText("Culla checks the plan once the kept photos have somewhere to go."),
-    ).toBeVisible();
     expect(await blockingViolations(page)).toEqual([]);
     await chooseKeepMode(page, "Copy");
     await expect(copy).toBeChecked();
     await expect(applyButton(page)).toHaveText("Apply to 2 photos");
     await expect(applyButton(page)).toBeEnabled();
-    await expect(page.getByText("1 kept · copied")).toBeVisible();
     await chooseKeepMode(page, "Move");
     await expect(applyButton(page)).toHaveText("Move 2 photos");
   });
@@ -441,6 +508,8 @@ test.describe("move or copy and the destination on review (decided by Margaux 28
     await expect(
       page.getByText("copied to D:\\Photos\\Selects 2026", { exact: true }),
     ).toBeVisible();
+    // The Kept branch, with its choices, shows once a photo is kept.
+    await page.keyboard.press("ArrowRight");
     await page.keyboard.press("Enter");
     await expect(page.getByRole("radio", { name: "Copy", exact: true })).toBeChecked();
     await expect(page.getByText("same as last time")).toBeVisible();

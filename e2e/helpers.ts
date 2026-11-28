@@ -64,6 +64,17 @@ export async function startSorting(page: Page, options: StartOptions = {}) {
 export const applyButton = (page: Page) =>
   page.locator(".apply-box").getByRole("button", { name: /^(Move|Apply to) \d+ photos?$|^Apply$/ });
 
+/** A branch of the review's route, by its count and label: "2 kept", "21 left in place". */
+export const branch = (page: Page, name: string) =>
+  page.getByRole("heading", { level: 2, name, exact: true });
+
+/** Opens one of the review's folds: "What the check found", "Time and size", "See every file". */
+export async function openFold(page: Page, name: RegExp) {
+  const toggle = page.getByRole("button", { name });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+}
+
 /** Chooses move or copy on the review screen and waits for the plan built with it. */
 export async function chooseKeepMode(page: Page, mode: "Move" | "Copy") {
   await page.getByRole("radio", { name: mode, exact: true }).check();

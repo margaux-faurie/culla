@@ -1,10 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useBackend } from "../backend/context";
 import { isNoKeepRoute, isNotReady } from "../backend/errors";
 import type {
   Blocker,
-  BranchPlan,
-  HeldPhoto,
   KeepMode,
   ReviewPlan,
   SessionChange,
@@ -12,7 +10,8 @@ import type {
   SessionPhoto,
   VolumeChoice,
 } from "../backend/types";
-import { RouteView } from "../route/RouteView";
+import { leftInPlaceNote } from "../route/places";
+import { BranchTo, RouteBranch, ShortRoute } from "../route/ShortRoute";
 import { counts, type SwipeState, stateAt } from "../swipe/session";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { KeepControls } from "./KeepControls";
@@ -22,19 +21,23 @@ import {
   branchTitle,
   bytesText,
   canApply,
-  collisionText,
   disabledReason,
   estimateText,
+  findingsCount,
   folderNote,
+  heldLine,
   heldSummary,
-  holdText,
   keepRouteHint,
   kindText,
   otherFilesText,
+  plannedPhotos,
   primaryLabel,
-  protectedText,
+  rawNote,
+  readySummary,
+  replannedSummary,
   replannedText,
-  warningText,
+  visibleNotes,
+  worthKnowing,
 } from "./model";
 
 export interface ReviewScreenProps {
@@ -57,15 +60,16 @@ export interface ReviewScreenProps {
 /** `needsRoute`: kept photos need move or copy and a connected destination before a plan. */
 type Status = "checking" | "ready" | "failed" | "notReady" | "needsRoute";
 
-/** How many thumbnails a grid shows before "See all". */
-const GRID_PREVIEW = 12;
+/** How many thumbnails a strip shows before "See all". */
+const STRIP_PREVIEW = 12;
 
 /**
- * Review screen (SPEC §4.2, US-34, US-35) on cream: the route with counts per branch and, in the Kept
- * branch, move or copy and the destination (decided by Margaux 28 Nov 2026), then the kept and
- * rejected grids, preflight results grouped as blockers, re-plans, held groups and warnings, the
- * estimate, every file of the plan one activation away, and Apply behind a confirm dialog. The plan
- * comes from the backend as display strings; nothing here builds a path. Opening it changes no
+ * Review screen (SPEC §4.2, US-34, US-35) on cream. Lean review decided by Margaux (28 Nov 2026:
+ * essentials visible, details folded); this layout is proposed, SPEC §10 "Lean review": the short
+ * route with move or copy and the destination in the Kept branch and one thumbnail strip per
+ * branch; beside it what stops the apply, the camera-protected and cloud-synced notes, and Apply
+ * behind a confirm dialog; the findings, the time and size, every file and the options folded
+ * under the route. The plan comes from the backend as display strings; nothing here builds a path. Opening it changes no
  * file: the backend's plan and preflight are read-only (INV-03). While kept photos have no route yet
  * (move or copy, a connected destination), no plan is built and Apply says what to choose.
  *
@@ -81,8 +85,6 @@ export function ReviewScreen(props: ReviewScreenProps) {
   const [status, setStatus] = useState<Status>("checking");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [filesOpen, setFilesOpen] = useState(false);
-  const [othersOpen, setOthersOpen] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const [changeError, setChangeError] = useState<string | null>(null);
   const [changing, setChanging] = useState(false);
@@ -186,14 +188,14 @@ export function ReviewScreen(props: ReviewScreenProps) {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const waiting = status === "needsRoute";
   const ready = status === "ready" && plan !== null;
   const applyEnabled = ready && canApply(plan) && !confirming && !changing;
-  const reason = waiting
-    ? keepRouteHint(keepMode, session.destination)
-    : ready
-      ? disabledReason(plan)
-      : null;
+  const reason =
+    status === "needsRoute"
+      ? keepRouteHint(keepMode, session.destination)
+      : ready
+        ? disabledReason(plan)
+        : null;
 
   // One change at a time; the controls stay focusable meanwhile (a disabled control loses focus).
   const changingRef = useRef(false);
@@ -239,11 +241,6 @@ export function ReviewScreen(props: ReviewScreenProps) {
       );
     }
   };
-  const example = useMemo(() => {
-    const photo = session.photos.find((p) => p.id === session.exampleId);
-    return photo === undefined ? null : { photo, route: photo.route };
-  }, [session]);
-
   const decidedIds = (wanted: "kept" | "rejected") =>
     state.photos.filter((_, i) => stateAt(state, i) === wanted);
   const heldIds = new Set(ready ? plan.held.map((h) => h.photoId) : []);
@@ -318,6 +315,26 @@ export function ReviewScreen(props: ReviewScreenProps) {
     }
   };
 
+  // The folds below the route; "Details" beside a visible line opens the findings and moves there.
+  const [folds, setFolds] = useState<ReadonlySet<Fold>>(new Set());
+  const toggleFold = (fold: Fold) =>
+    setFolds((open) => {
+      const next = new Set(open);
+      if (!next.delete(fold)) {
+        next.add(fold);
+      }
+      return next;
+    });
+  const showFindings = () => {
+    setFolds((open) => new Set(open).add("found"));
+    window.setTimeout(() => document.getElementById("found-toggle")?.focus(), 0);
+  };
+
+  const found = ready ? findingsCount(plan) : 0;
+  const summary = ready ? readySummary(plan) : null;
+  // Notes worth knowing, beyond the held and re-planned photos that have their own line.
+  const notes = ready ? found - plan.held.length - plan.replanned.length : 0;
+
   return (
     <>
       <main className="review" aria-labelledby="review-title">
@@ -331,7 +348,10 @@ export function ReviewScreen(props: ReviewScreenProps) {
           <h1 id="review-title" ref={titleRef} className="title" tabIndex={-1}>
             Check where your photos will go
           </h1>
-          <p className="lead">Nothing has moved yet. Check the plan below, then apply.</p>
+          <p className="lead">
+            From {session.source.folder.path}, {session.source.folder.volume}. Nothing has moved
+            yet.
+          </p>
         </div>
         {props.saveError && (
           <p className="save-error" role="alert">
@@ -341,53 +361,47 @@ export function ReviewScreen(props: ReviewScreenProps) {
         )}
 
         <div className="review-main">
-          {/* The route list carries the name "Where your photos will go"; the panel adds none. */}
-          <div className="panel review-route">
-            <RouteView
-              source={session.source}
-              photoSummary={`${tally.total} photos`}
-              example={example}
-              rejectedFolder={session.rejectedFolder}
-              rejectedFolderExists={session.rejectedFolderExists}
-              destination={session.destination}
-              keepMode={keepMode}
-              keepControls={
-                <KeepControls
-                  keepMode={pending?.keepMode ?? keepMode}
-                  destination={session.destination}
-                  sameAsLastTime={session.sameAsLastTime}
-                  onKeepMode={chooseKeepMode}
-                  onChooseDestination={chooseDestination}
-                />
-              }
-              keptDetails={
-                <BranchDetails
-                  what="kept"
-                  branch={ready ? plan.kept : null}
-                  checking={!ready}
-                  photoIds={decidedIds("kept")}
-                  heldIds={heldIds}
-                  byId={byId}
-                  onShow={props.onShow}
-                />
-              }
-              rejectedDetails={
-                <BranchDetails
-                  what="rejected"
-                  branch={ready ? plan.rejected : null}
-                  checking={!ready}
-                  photoIds={decidedIds("rejected")}
-                  heldIds={heldIds}
-                  byId={byId}
-                  onShow={props.onShow}
-                />
-              }
-              undecidedDetails={
-                <div className="branch-head">
-                  <span className="branch-title branch-title-muted">
-                    {tally.undecided} undecided · stay where they are
-                  </span>
-                  {tally.undecided > 0 && (
+          <div className="review-plan">
+            <ShortRoute>
+              {tally.kept > 0 && (
+                <RouteBranch what="kept" count={tally.kept} label="kept">
+                  <KeepControls
+                    keepMode={pending?.keepMode ?? keepMode}
+                    destination={session.destination}
+                    sameAsLastTime={session.sameAsLastTime}
+                    onKeepMode={chooseKeepMode}
+                    onChooseDestination={chooseDestination}
+                  />
+                  <span className="branch-note">{rawNote(pending?.rawFollows ?? rawFollows)}</span>
+                  <PhotoStrip
+                    what="kept"
+                    photoIds={decidedIds("kept")}
+                    heldIds={heldIds}
+                    byId={byId}
+                    onShow={props.onShow}
+                  />
+                </RouteBranch>
+              )}
+              {tally.rejected > 0 && (
+                <RouteBranch what="rejected" count={tally.rejected} label="rejected">
+                  <BranchTo
+                    place={`Moved to ${session.rejectedFolder}`}
+                    newFolder={!session.rejectedFolderExists}
+                  />
+                  <span className="branch-note">Nothing is deleted.</span>
+                  <PhotoStrip
+                    what="rejected"
+                    photoIds={decidedIds("rejected")}
+                    heldIds={heldIds}
+                    byId={byId}
+                    onShow={props.onShow}
+                  />
+                </RouteBranch>
+              )}
+              {tally.undecided > 0 && (
+                <RouteBranch what="undecided" count={tally.undecided} label="left in place">
+                  <span className="branch-note">{leftInPlaceNote(0)}</span>
+                  <span>
                     <button
                       type="button"
                       className="button button-quiet button-small"
@@ -395,29 +409,15 @@ export function ReviewScreen(props: ReviewScreenProps) {
                     >
                       Sort them now
                     </button>
-                  )}
-                </div>
-              }
-            />
+                  </span>
+                </RouteBranch>
+              )}
+            </ShortRoute>
             {changeError !== null && (
               <p className="error" role="alert">
                 {changeError}
               </p>
             )}
-            <details className="options">
-              <summary>Options</summary>
-              <div className="options-body">
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={pending?.rawFollows ?? rawFollows}
-                    onChange={(e) => change({ rawFollows: e.currentTarget.checked })}
-                  />
-                  RAW and edit files follow their JPEG
-                </label>
-                <span className="small">Photos in subfolders are always included.</span>
-              </div>
-            </details>
           </div>
 
           <aside
@@ -428,11 +428,6 @@ export function ReviewScreen(props: ReviewScreenProps) {
             <h2 id="findings-title" ref={findingsRef} className="side-title" tabIndex={-1}>
               Before you apply
             </h2>
-            {waiting && (
-              <p className="finding">
-                Culla checks the plan once the kept photos have somewhere to go.
-              </p>
-            )}
             {status === "checking" && (
               <p className="checking">
                 Checking
@@ -440,7 +435,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
               </p>
             )}
             {status === "failed" && (
-              <div className="finding-group">
+              <div className="side-line">
                 <p className="finding">Could not check the plan. Nothing has moved.</p>
                 <CheckAgain onClick={() => check(uptoSeq, true)} />
               </div>
@@ -448,14 +443,28 @@ export function ReviewScreen(props: ReviewScreenProps) {
             {status === "notReady" && (
               <p className="finding">Not ready yet: the app cannot build a plan in this version.</p>
             )}
-            {ready && (
-              <Findings
+            {ready && plan.blockers.length > 0 && (
+              <Blockers
                 plan={plan}
-                othersOpen={othersOpen}
-                onToggleOthers={() => setOthersOpen((open) => !open)}
                 onCheckAgain={() => check(uptoSeq, true)}
                 onChooseVolume={chooseVolume}
               />
+            )}
+            {ready && plan.replanned.length > 0 && (
+              <SideLine text={replannedSummary(plan.replanned.length)} onDetails={showFindings} />
+            )}
+            {ready && plan.held.length > 0 && (
+              <SideLine
+                text={heldSummary(plan.held.length, plannedPhotos(plan))}
+                onDetails={showFindings}
+              />
+            )}
+            {ready &&
+              visibleNotes(plan).map((text) => (
+                <SideLine key={text} text={text} onDetails={null} />
+              ))}
+            {summary !== null && (
+              <SideLine text={summary} onDetails={notes > 0 ? showFindings : null} />
             )}
 
             <div className="apply-box">
@@ -474,25 +483,61 @@ export function ReviewScreen(props: ReviewScreenProps) {
                   {reason}
                 </p>
               )}
-              {ready && (
-                <button
-                  type="button"
-                  className="button button-outline"
-                  aria-expanded={filesOpen}
-                  aria-controls="every-file"
-                  onClick={() => setFilesOpen((open) => !open)}
-                >
-                  See every file ({plan.operations.length})
-                </button>
-              )}
               <p className="small apply-note">
                 If anything stops it, Culla finishes the job next time.
               </p>
             </div>
           </aside>
-        </div>
 
-        {ready && filesOpen && <FileList plan={plan} />}
+          <div className="folds">
+            {ready && found > 0 && (
+              <FoldOut
+                id="found"
+                label={`What the check found (${found})`}
+                open={folds.has("found")}
+                onToggle={() => toggleFold("found")}
+              >
+                <Findings plan={plan} />
+              </FoldOut>
+            )}
+            {ready && (
+              <FoldOut
+                id="estimate"
+                label="Time and size"
+                open={folds.has("estimate")}
+                onToggle={() => toggleFold("estimate")}
+              >
+                <Estimate plan={plan} />
+              </FoldOut>
+            )}
+            {ready && (
+              <FoldOut
+                id="files"
+                label={`See every file (${plan.operations.length})`}
+                open={folds.has("files")}
+                onToggle={() => toggleFold("files")}
+              >
+                <FileList plan={plan} />
+              </FoldOut>
+            )}
+            <FoldOut
+              id="options"
+              label="Options"
+              open={folds.has("options")}
+              onToggle={() => toggleFold("options")}
+            >
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={pending?.rawFollows ?? rawFollows}
+                  onChange={(e) => change({ rawFollows: e.currentTarget.checked })}
+                />
+                RAW and edit files follow their JPEG
+              </label>
+              <span className="small">Photos in subfolders are always included.</span>
+            </FoldOut>
+          </div>
+        </div>
 
         <p className="visually-hidden" role="status">
           {announcement}
@@ -517,6 +562,9 @@ export function ReviewScreen(props: ReviewScreenProps) {
   );
 }
 
+/** The folds under the route (lean review decided by Margaux; this layout proposed, SPEC §10). */
+type Fold = "found" | "estimate" | "files" | "options";
+
 function Dots() {
   return (
     <span className="dots" aria-hidden="true">
@@ -535,58 +583,62 @@ function CheckAgain({ onClick }: { readonly onClick: () => void }) {
   );
 }
 
-interface BranchDetailsProps {
-  readonly what: "kept" | "rejected";
-  readonly branch: BranchPlan | null;
-  readonly checking: boolean;
-  /** Every photo with this decision, held ones included. */
-  readonly photoIds: readonly string[];
-  readonly heldIds: ReadonlySet<string>;
-  readonly byId: ReadonlyMap<string, SessionPhoto>;
-  readonly onShow: (photoId: string) => void;
+/** A short visible line in the side, with "Details" when the folded findings say more. */
+function SideLine({
+  text,
+  onDetails,
+}: {
+  readonly text: string;
+  readonly onDetails: (() => void) | null;
+}) {
+  return (
+    <p className="side-line">
+      <span>{text}</span>
+      {onDetails !== null && (
+        <>
+          {" "}
+          <button type="button" className="link-button" onClick={onDetails}>
+            Details
+          </button>
+        </>
+      )}
+    </p>
+  );
 }
 
-/** A branch's counts, files, target folders and photo grid. */
-function BranchDetails(props: BranchDetailsProps) {
-  const { what, branch } = props;
+interface FoldOutProps {
+  readonly id: Fold;
+  readonly label: string;
+  readonly open: boolean;
+  readonly onToggle: () => void;
+  readonly children: ReactNode;
+}
+
+/** A disclosure: a button that shows or hides what it controls. */
+function FoldOut({ id, label, open, onToggle, children }: FoldOutProps) {
   return (
-    <div className="branch">
-      {branch !== null ? (
-        <>
-          <div className="branch-head">
-            <span className={what === "kept" ? "branch-title branch-title-keep" : "branch-title"}>
-              {branchTitle(branch, what)}
-            </span>
-            <span className="small">
-              {branchFiles(branch)}
-              {what === "rejected" && " · nothing deleted"}
-            </span>
-          </div>
-          <ul className="branch-folders" aria-label={`Folders for ${what} photos`}>
-            {branch.folders.map((f) => (
-              <li key={f.folder}>
-                {f.folder} <span className="muted">· {folderNote(f.photos, f.newFolder)}</span>
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : (
-        !props.checking && <span className="small">No {what} photo to apply.</span>
-      )}
-      {props.photoIds.length > 0 && (
-        <PhotoGrid
-          what={what}
-          photoIds={props.photoIds}
-          heldIds={props.heldIds}
-          byId={props.byId}
-          onShow={props.onShow}
-        />
+    <div className={open ? "fold fold-open" : "fold"}>
+      <button
+        id={`${id}-toggle`}
+        type="button"
+        className="fold-toggle"
+        aria-expanded={open}
+        aria-controls={`${id}-body`}
+        onClick={onToggle}
+      >
+        <span className="fold-mark" aria-hidden="true" />
+        {label}
+      </button>
+      {open && (
+        <div id={`${id}-body`} className="fold-body">
+          {children}
+        </div>
       )}
     </div>
   );
 }
 
-interface PhotoGridProps {
+interface PhotoStripProps {
   readonly what: "kept" | "rejected";
   readonly photoIds: readonly string[];
   readonly heldIds: ReadonlySet<string>;
@@ -594,13 +646,13 @@ interface PhotoGridProps {
   readonly onShow: (photoId: string) => void;
 }
 
-/** Thumbnails of the decided photos; each one goes back to sorting on that photo. */
-function PhotoGrid({ what, photoIds, heldIds, byId, onShow }: PhotoGridProps) {
+/** One strip of thumbnails of the decided photos; each one goes back to sorting on that photo. */
+function PhotoStrip({ what, photoIds, heldIds, byId, onShow }: PhotoStripProps) {
   const [all, setAll] = useState(false);
-  const shown = all ? photoIds : photoIds.slice(0, GRID_PREVIEW);
+  const shown = all ? photoIds : photoIds.slice(0, STRIP_PREVIEW);
   const label = what === "kept" ? "Kept photos" : "Rejected photos";
   return (
-    <div className="grid-wrap">
+    <div className="strip">
       <ul className="grid" aria-label={`${label}, ${photoIds.length}`}>
         {shown.map((id) => {
           const photo = byId.get(id);
@@ -619,7 +671,7 @@ function PhotoGrid({ what, photoIds, heldIds, byId, onShow }: PhotoGridProps) {
                 <img src={photo.previewUrl} alt="" loading="lazy" decoding="async" />
                 {held && (
                   <span className="thumb-note" aria-hidden="true">
-                    Held back
+                    Held
                   </span>
                 )}
               </button>
@@ -627,10 +679,10 @@ function PhotoGrid({ what, photoIds, heldIds, byId, onShow }: PhotoGridProps) {
           );
         })}
       </ul>
-      {photoIds.length > GRID_PREVIEW && (
+      {photoIds.length > STRIP_PREVIEW && (
         <button
           type="button"
-          className="button button-quiet button-small"
+          className="link-button strip-more"
           aria-expanded={all}
           onClick={() => setAll((open) => !open)}
         >
@@ -641,159 +693,132 @@ function PhotoGrid({ what, photoIds, heldIds, byId, onShow }: PhotoGridProps) {
   );
 }
 
-interface FindingsProps {
+interface BlockersProps {
   readonly plan: ReviewPlan;
-  readonly othersOpen: boolean;
-  readonly onToggleOthers: () => void;
   readonly onCheckAgain: () => void;
   readonly onChooseVolume: (choice: VolumeChoice) => void;
 }
 
-/** Preflight results: blockers, re-plans, held groups, then what is worth knowing (FE §8). */
-function Findings({
-  plan,
-  othersOpen,
-  onToggleOthers,
-  onCheckAgain,
-  onChooseVolume,
-}: FindingsProps) {
-  const worth: string[] = [];
-  for (const c of plan.collisions) worth.push(collisionText(c));
-  if (plan.kept !== null) {
-    const text = protectedText(plan.kept, "kept", plan.estimate.sourceVolume);
-    if (text !== null) worth.push(text);
-  }
-  if (plan.rejected !== null) {
-    const text = protectedText(plan.rejected, "rejected", plan.estimate.sourceVolume);
-    if (text !== null) worth.push(text);
-  }
-  for (const w of plan.warnings) worth.push(warningText(w));
-  const others = otherFilesText(plan.otherFiles);
-  const bytes = bytesText(plan);
-
+/** What stops the apply stays in view, each in one sentence with what to do (FE §8). */
+function Blockers({ plan, onCheckAgain, onChooseVolume }: BlockersProps) {
   return (
-    <>
-      {plan.blockers.length > 0 && (
-        <section className="finding-group finding-blockers" aria-labelledby="blockers-title">
-          <h3 id="blockers-title" className="finding-title">
-            Needs fixing first
-          </h3>
-          <ul className="findings">
-            {plan.blockers.map((b) => (
-              <li key={blockerKey(b)} className="finding finding-blocker">
-                <span className="finding-mark finding-mark-blocker" aria-hidden="true" />
-                <span>
-                  {blockerText(b)}
-                  {b.kind === "volumeAmbiguous" && (
-                    <span className="volume-choices">
-                      {b.choices.map((c) => (
-                        <button
-                          key={c.id}
-                          type="button"
-                          className="button button-quiet button-small"
-                          onClick={() => onChooseVolume(c)}
-                        >
-                          Use {c.label}
-                        </button>
-                      ))}
-                    </span>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <CheckAgain onClick={onCheckAgain} />
-        </section>
-      )}
-
-      {plan.replanned.length > 0 && (
-        <section className="finding-group" aria-labelledby="replanned-title">
-          <h3 id="replanned-title" className="finding-title">
-            Changed since you checked
-          </h3>
-          <ul className="findings">
-            {plan.replanned.map((r) => (
-              <li key={r.name} className="finding">
-                <span className="finding-mark" aria-hidden="true" />
-                <span>{replannedText(r)}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {plan.held.length > 0 && (
-        <section className="finding-group" aria-labelledby="held-title">
-          <h3 id="held-title" className="finding-title">
-            Held back
-          </h3>
-          <p className="finding">{heldSummary(plan.held.length)}</p>
-          <ul className="findings">
-            {plan.held.map((h) => (
-              <li key={h.photoId} className="finding">
-                <span className="finding-mark" aria-hidden="true" />
-                <span>{heldLine(h)}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      <section className="finding-group" aria-labelledby="worth-title">
-        <h3 id="worth-title" className="finding-title">
-          Worth knowing
-        </h3>
-        <ul className="findings">
-          {worth.map((text) => (
-            <li key={text} className="finding">
-              <span className="finding-mark" aria-hidden="true" />
-              <span>{text}</span>
-            </li>
-          ))}
-          {others !== null && (
-            <li className="finding">
-              <span className="finding-mark finding-mark-info" aria-hidden="true" />
-              <span>
-                {others}{" "}
-                <button
-                  type="button"
-                  className="link-button"
-                  aria-expanded={othersOpen}
-                  aria-controls="other-files"
-                  onClick={onToggleOthers}
-                >
-                  {othersOpen ? "Hide them" : "Show them"}
-                </button>
-                {othersOpen && (
-                  <ul id="other-files" className="other-files">
-                    {plan.otherFiles.map((f) => (
-                      <li key={f.path}>{f.path}</li>
-                    ))}
-                  </ul>
-                )}
-              </span>
-            </li>
-          )}
-          <li className="finding">
-            <span className="finding-mark finding-mark-info" aria-hidden="true" />
+    <section className="finding-blockers" aria-labelledby="blockers-title">
+      <h3 id="blockers-title" className="finding-title">
+        Needs fixing first
+      </h3>
+      <ul className="findings">
+        {plan.blockers.map((b) => (
+          <li key={blockerKey(b)} className="finding finding-blocker">
+            <span className="finding-mark finding-mark-blocker" aria-hidden="true" />
             <span>
-              {estimateText(plan)}
-              {bytes !== null && (
-                <>
-                  {" "}
-                  <span className="muted">{bytes}.</span>
-                </>
-              )}
-              {!plan.estimate.measured && plan.estimate.bytesToWrite > 0 && (
-                <>
-                  {" "}
-                  <span className="muted">A first estimate, until Culla has timed this drive.</span>
-                </>
+              {blockerText(b)}
+              {b.kind === "volumeAmbiguous" && (
+                <span className="volume-choices">
+                  {b.choices.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className="button button-quiet button-small"
+                      onClick={() => onChooseVolume(c)}
+                    >
+                      Use {c.label}
+                    </button>
+                  ))}
+                </span>
               )}
             </span>
           </li>
-        </ul>
-      </section>
+        ))}
+      </ul>
+      <CheckAgain onClick={onCheckAgain} />
+    </section>
+  );
+}
+
+/** The folded findings: re-plans, held photos, then what is worth knowing (FE §8). */
+function Findings({ plan }: { readonly plan: ReviewPlan }) {
+  const [othersOpen, setOthersOpen] = useState(false);
+  const notes = worthKnowing(plan);
+  const others = otherFilesText(plan.otherFiles);
+  return (
+    <>
+      {plan.replanned.length > 0 && (
+        <FindingGroup title="Changed since you checked" lines={plan.replanned.map(replannedText)} />
+      )}
+      {plan.held.length > 0 && <FindingGroup title="Held back" lines={plan.held.map(heldLine)} />}
+      {(notes.length > 0 || others !== null) && (
+        <section className="finding-group" aria-labelledby="worth-title">
+          <h3 id="worth-title" className="finding-title">
+            Worth knowing
+          </h3>
+          <ul className="findings">
+            {notes.map((text) => (
+              <li key={text} className="finding">
+                <span className="finding-mark" aria-hidden="true" />
+                <span>{text}</span>
+              </li>
+            ))}
+            {others !== null && (
+              <li className="finding">
+                <span className="finding-mark" aria-hidden="true" />
+                <span>
+                  {others}{" "}
+                  <button
+                    type="button"
+                    className="link-button"
+                    aria-expanded={othersOpen}
+                    aria-controls="other-files"
+                    onClick={() => setOthersOpen((open) => !open)}
+                  >
+                    {othersOpen ? "Hide them" : "Show them"}
+                  </button>
+                  {othersOpen && (
+                    <ul id="other-files" className="other-files">
+                      {plan.otherFiles.map((f) => (
+                        <li key={f.path}>{f.path}</li>
+                      ))}
+                    </ul>
+                  )}
+                </span>
+              </li>
+            )}
+          </ul>
+        </section>
+      )}
+    </>
+  );
+}
+
+function FindingGroup({ title, lines }: { readonly title: string; readonly lines: string[] }) {
+  return (
+    <section className="finding-group">
+      <h3 className="finding-title">{title}</h3>
+      <ul className="findings">
+        {lines.map((text) => (
+          <li key={text} className="finding">
+            <span className="finding-mark" aria-hidden="true" />
+            <span>{text}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** The time and size of the apply (US-34), and the files of each branch. */
+function Estimate({ plan }: { readonly plan: ReviewPlan }) {
+  const bytes = bytesText(plan);
+  return (
+    <>
+      <p className="finding-text">
+        {estimateText(plan)}
+        {bytes !== null && <> {bytes}.</>}
+        {!plan.estimate.measured && plan.estimate.bytesToWrite > 0 && (
+          <> A first estimate, until Culla has timed this drive.</>
+        )}
+      </p>
+      {plan.kept !== null && <p className="small">Kept: {branchFiles(plan.kept)}</p>}
+      {plan.rejected !== null && <p className="small">Rejected: {branchFiles(plan.rejected)}</p>}
     </>
   );
 }
@@ -814,19 +839,34 @@ const outcomeText = (plan: ReviewPlan): string =>
       ? "Checked again. Nothing stops the apply."
       : "Checked again. Nothing to apply yet.";
 
-const heldLine = (h: HeldPhoto): string =>
-  `${h.name} (${h.decision}, in ${h.folder}): ${holdText(h.reason)}.`;
-
-/** The per-file list: every operation with its source, target (suffix included) and kind. */
+/**
+ * Every file of the plan: the target folders of each branch, then every operation with its source,
+ * target (suffix included) and kind, and the files that stay.
+ */
 function FileList({ plan }: { readonly plan: ReviewPlan }) {
+  const branches = [
+    [plan.kept, "kept"],
+    [plan.rejected, "rejected"],
+  ] as const;
+  const label = `Every file (${plan.operations.length})`;
   return (
-    // The heading names the scrolling region below it, the one landmark of the list.
-    <div id="every-file" className="every-file">
-      <h2 id="every-file-title" className="side-title">
-        Every file ({plan.operations.length})
-      </h2>
+    <>
+      {branches.map(([branch, what]) =>
+        branch === null ? null : (
+          <div key={what} className="file-folders">
+            <span className="finding-title">{branchTitle(branch, what)}</span>
+            <ul className="folder-list" aria-label={`Folders for ${what} photos`}>
+              {branch.folders.map((f) => (
+                <li key={f.folder}>
+                  {f.folder} <span className="muted">· {folderNote(f.photos, f.newFolder)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ),
+      )}
       {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a named region that scrolls sideways at 320 px takes focus so the keyboard can scroll it (WCAG 2.1.1, axe scrollable-region-focusable). */}
-      <section className="table-wrap" tabIndex={0} aria-labelledby="every-file-title">
+      <section className="table-wrap" tabIndex={0} aria-label={label}>
         <table className="file-table">
           <thead>
             <tr>
@@ -859,6 +899,6 @@ function FileList({ plan }: { readonly plan: ReviewPlan }) {
           </tbody>
         </table>
       </section>
-    </div>
+    </>
   );
 }

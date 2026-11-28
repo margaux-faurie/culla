@@ -12,11 +12,19 @@ import {
   disabledReason,
   duration,
   estimateText,
+  findingsCount,
   formatBytes,
+  heldLine,
+  heldSummary,
   keepRouteHint,
   otherFilesText,
   primaryLabel,
   protectedText,
+  rawNote,
+  readySummary,
+  replannedSummary,
+  visibleNotes,
+  worthKnowing,
 } from "./model";
 
 /** A review plan from the demo backend for these decisions (group positions, 1-based). */
@@ -213,5 +221,103 @@ describe("keep route on review (decided by Margaux 28 Nov 2026)", () => {
     expect(keepRouteHint("move", selects)).toBe(
       "Choose move or copy and a destination for the kept photos first.",
     );
+  });
+});
+
+describe("lean review (decided by Margaux 28 Nov 2026: essentials visible, details folded)", () => {
+  it("keeps camera protection and a cloud-synced destination in view (Margaux, 28 Nov 2026)", async () => {
+    const plan = await reviewOf([
+      [5, "keep"],
+      [6, "keep"],
+      [11, "keep"],
+    ]);
+    const cloud: ReviewPlan = {
+      ...plan,
+      warnings: [
+        { kind: "cloudSynced", folder: "C:\\Users\\demo\\OneDrive\\Photos" },
+        { kind: "syncRootUnknown" },
+      ],
+    };
+    expect(visibleNotes(cloud)).toEqual([
+      "1 kept photo is protected on the camera. It is copied, and the original stays on Photos drive (E:).",
+      "C:\\Users\\demo\\OneDrive\\Photos is inside a cloud-synced folder. The sync app may upload, change or move the photos during and after the apply.",
+      "Culla could not check whether the destination is in a cloud-synced folder.",
+    ]);
+    expect(visibleNotes(await reviewOf([[5, "keep"]]))).toEqual([]);
+    // The rest stays folded: taken names and the other warnings.
+    const locked: ReviewPlan = {
+      ...cloud,
+      warnings: [...cloud.warnings, { kind: "locked", files: 1, example: "MGF_7271.JPG" }],
+    };
+    expect(worthKnowing(locked)).toEqual([
+      "1 name is taken in D:\\Photos\\Selects 2026. That photo gets _1 (MGF_7271_1). Nothing is replaced.",
+      "1 file is open in another app (MGF_7271.JPG). Culla retries it, then skips it if it stays open.",
+    ]);
+  });
+
+  it("says the rest can be applied only when something is planned", () => {
+    expect(heldSummary(1, 2)).toBe(
+      "1 photo is held back. It stays where it is, and the rest can be applied.",
+    );
+    expect(heldSummary(3, 1)).toBe(
+      "3 photos are held back. They stay where they are, and the rest can be applied.",
+    );
+    expect(heldSummary(1, 0)).toBe("1 photo is held back. It stays where it is.");
+    expect(heldSummary(2, 0)).toBe("2 photos are held back. They stay where they are.");
+  });
+
+  it("counts every line the folded findings list", async () => {
+    const plan = await reviewOf([[5, "keep"]]);
+    // The demo folder has three other files: one line for them.
+    expect(findingsCount({ ...plan, collisions: [] })).toBe(1);
+    expect(findingsCount({ ...plan, collisions: [], otherFiles: [] })).toBe(0);
+    const held: ReviewPlan = {
+      ...plan,
+      collisions: [],
+      otherFiles: [],
+      held: [
+        { photoId: "a", name: "A", decision: "kept", folder: "E:\\2026", reason: "missing" },
+        { photoId: "b", name: "B", decision: "kept", folder: "E:\\2026", reason: "applied" },
+      ],
+      replanned: [{ name: "C", where: "Selects", suffix: "_1", newName: "C_1" }],
+    };
+    expect(findingsCount(held)).toBe(3);
+  });
+
+  it("says in one line that nothing stops the apply, and whether there is more to read", async () => {
+    const plan = await reviewOf([[5, "keep"]]);
+    const quiet: ReviewPlan = { ...plan, collisions: [], otherFiles: [] };
+    expect(readySummary(quiet)).toBe("Checked. Nothing stops the apply.");
+    expect(readySummary({ ...quiet, otherFiles: plan.otherFiles })).toBe(
+      "Checked. Nothing stops the apply. 1 thing is worth knowing.",
+    );
+    expect(readySummary({ ...plan, warnings: [{ kind: "longPaths", files: 1 }] })).toBe(
+      "Checked. Nothing stops the apply. 2 things are worth knowing.",
+    );
+    expect(readySummary({ ...plan, blockers: [{ kind: "previewsBusy" }] })).toBeNull();
+    expect(readySummary(await reviewOf([]))).toBeNull();
+  });
+
+  it("words a re-plan and a held photo in short", () => {
+    expect(replannedSummary(1)).toBe(
+      "1 name changed since you checked. Look at it again, then apply.",
+    );
+    expect(replannedSummary(3)).toBe(
+      "3 names changed since you checked. Look at them again, then apply.",
+    );
+    expect(
+      heldLine({
+        photoId: "a",
+        name: "MGF_7001",
+        decision: "kept",
+        folder: "E:\\2026",
+        reason: "changedSinceScan",
+      }),
+    ).toBe("MGF_7001 (kept, in E:\\2026): changed since scan, rescan.");
+  });
+
+  it("says whether RAW and edit files go with their JPEG", () => {
+    expect(rawNote(true)).toBe("RAW and edit files go with their JPEG.");
+    expect(rawNote(false)).toBe("RAW and edit files stay where they are.");
   });
 });

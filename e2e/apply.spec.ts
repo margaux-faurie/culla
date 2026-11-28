@@ -1,5 +1,13 @@
 import { expect, type Page, test } from "@playwright/test";
-import { blockingViolations, rememberKeepMode, startSorting, tabUntil } from "./helpers";
+import {
+  applyButton,
+  blockingViolations,
+  branch,
+  openFold,
+  rememberKeepMode,
+  startSorting,
+  tabUntil,
+} from "./helpers";
 
 /** Opens the demo with a scenario (`?scenario=`, demo only), move remembered, and starts sorting. */
 const startWith = (page: Page, scenario: string | null) => startSorting(page, { scenario });
@@ -39,7 +47,12 @@ test.describe("apply screen (US-36)", () => {
     await expect(now.getByText("MGF_7001 · JPEG and NEF")).toBeVisible();
     await expect(now.getByText("Reading the copy back and checking it matches")).toBeVisible();
     await expect(now.getByText("Then the original leaves E:\\2026")).toBeVisible();
-    await expect(page.getByRole("list", { name: "Where your photos will go" })).toBeVisible();
+    // The same short route as the review (Margaux, 28 Nov 2026).
+    const route = page.getByRole("list", { name: "Where your photos will go" });
+    await expect(branch(page, "2 kept")).toBeVisible();
+    await expect(route.getByText("Moved to D:\\Photos\\Selects 2026")).toBeVisible();
+    await expect(branch(page, "1 rejected")).toBeVisible();
+    await expect(branch(page, "21 left in place")).toBeVisible();
     expect(await blockingViolations(page)).toEqual([]);
 
     await expect(page.getByRole("heading", { level: 1, name: "Apply finished" })).toBeFocused({
@@ -128,10 +141,27 @@ test.describe("apply screen (US-36)", () => {
     await expect(
       page.getByRole("heading", { level: 1, name: "Check where your photos will go" }),
     ).toBeFocused();
+    await expect(branch(page, "2 kept")).toBeVisible();
+    await expect(page.getByText(/^1 photo is held back\./)).toBeVisible();
+    await openFold(page, /^What the check found/);
     await expect(
       page.getByText(/^MGF_7001 \(kept, in E:\\2026\): already applied\.$/),
     ).toBeVisible();
-    await expect(page.getByText("1 kept · moved")).toBeVisible();
+    await expect(applyButton(page)).toHaveText("Move 1 photo");
+  });
+
+  test("the short route counts the plan, with held-back photos left in place", async ({ page }) => {
+    await startWith(page, "held");
+    for (let i = 0; i < 4; i += 1) await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Enter");
+    await expect(applyButton(page)).toHaveText("Move 1 photo");
+    await applyButton(page).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Move 1 photo" }).click();
+    await expect(page.locator("main.apply")).toBeVisible();
+    // 4 kept, 3 of them held back: the apply moves 1, and 20 undecided + 3 held stay.
+    await expect(branch(page, "1 kept")).toBeVisible();
+    await expect(branch(page, "23 left in place")).toBeVisible();
+    await expect(page.getByText("Undecided and held-back photos are not touched.")).toBeVisible();
   });
 
   test("a stop in a reject leaves the photo split between folders", async ({ page }) => {

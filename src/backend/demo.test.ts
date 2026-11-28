@@ -107,7 +107,7 @@ describe("demo backend", () => {
     const backend = createBackend({ storage: null });
     const sourceId = (await backend.chooseSource())?.id ?? "";
     const session = await backend.startSession({ sourceId, includeSubfolders: true });
-    const example = session.photos.find((p) => p.id === session.exampleId);
+    const example = session.photos.find((p) => p.name === "MGF_7273");
     expect(example?.name).toBe("MGF_7273");
     expect(example?.kind).toBe("JPEG + NEF");
     expect(example?.route.folder).toBe("E:\\2026\\Barcelona");
@@ -121,7 +121,7 @@ describe("demo backend", () => {
     expect(camera?.route.keptTo).toBe("copied to D:\\Photos\\Selects 2026\\Barcelona");
 
     const copied = await backend.updateSession(session.id, { keepMode: "copy", rawFollows: false });
-    const again = copied.photos.find((p) => p.id === session.exampleId);
+    const again = copied.photos.find((p) => p.name === "MGF_7273");
     expect(again?.route.keptTo).toBe("copied to D:\\Photos\\Selects 2026\\Barcelona");
     expect(again?.route.staying).toEqual({ name: "MGF_7273", extensions: ".NEF .xmp" });
     expect(copied.options.rawFollows).toBe(false);

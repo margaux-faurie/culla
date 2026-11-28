@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useBackend } from "../backend/context";
 import { isNotReady } from "../backend/errors";
 import type {
@@ -10,7 +10,8 @@ import type {
   SessionInfo,
 } from "../backend/types";
 import { holdText } from "../review/model";
-import { RouteView } from "../route/RouteView";
+import { keptPlace, leftInPlaceNote } from "../route/places";
+import { BranchTo, RouteBranch, ShortRoute } from "../route/ShortRoute";
 import { LogDialog } from "./LogDialog";
 import {
   type Announced,
@@ -58,8 +59,9 @@ type Failure = "failed" | "notReady" | null;
 
 /**
  * Apply screen (SPEC §4.2, US-36, US-38) on cream: per-file progress, pause and stop after the
- * current file, then the report, with the route view kept in sight. Everything it shows comes
- * from the backend's status as display strings; it sends back only the plan id and run ids.
+ * current file, then the report, with the same short route as the review kept in sight. Everything
+ * it shows comes from the backend's status as display strings; it sends back only the plan id and
+ * run ids.
  * Pause and stop are acknowledged at once and taken by the engine after the current file. Esc does
  * nothing here (proposed): nothing stops on a stray key.
  */
@@ -279,11 +281,6 @@ export function ApplyScreen(props: ApplyScreenProps) {
     }
   };
 
-  const example = useMemo(() => {
-    const photo = session.photos.find((p) => p.id === session.exampleId);
-    return photo === undefined ? null : { photo, route: photo.route };
-  }, [session]);
-
   const report = status?.report ?? null;
   const title = heading(status, recovery);
 
@@ -340,20 +337,31 @@ export function ApplyScreen(props: ApplyScreenProps) {
           />
         )}
 
-        <section className="panel apply-route" aria-labelledby="apply-route-title">
-          <h2 id="apply-route-title" className="side-title">
-            Where your photos go
-          </h2>
-          <RouteView
-            source={session.source}
-            photoSummary={`${status?.progress.photos ?? 0} photos in this apply`}
-            example={example}
-            rejectedFolder={session.rejectedFolder}
-            rejectedFolderExists={session.rejectedFolderExists}
-            destination={session.destination}
-            keepMode={session.options.keepMode}
-          />
-        </section>
+        {status !== null && (
+          // The same short route as the review (decided by Margaux 28 Nov 2026).
+          <ShortRoute>
+            {status.counts.kept > 0 && (
+              <RouteBranch what="kept" count={status.counts.kept} label="kept">
+                <BranchTo place={keptPlace(session.destination, session.options.keepMode)} />
+              </RouteBranch>
+            )}
+            {status.counts.rejected > 0 && (
+              <RouteBranch what="rejected" count={status.counts.rejected} label="rejected">
+                <BranchTo place={`Moved to ${session.rejectedFolder}`} />
+                <span className="branch-note">Nothing is deleted.</span>
+              </RouteBranch>
+            )}
+            {status.counts.undecided + status.counts.held > 0 && (
+              <RouteBranch
+                what="undecided"
+                count={status.counts.undecided + status.counts.held}
+                label="left in place"
+              >
+                <span className="branch-note">{leftInPlaceNote(status.counts.held)}</span>
+              </RouteBranch>
+            )}
+          </ShortRoute>
+        )}
 
         <p className="visually-hidden" role="status">
           {announcement}
