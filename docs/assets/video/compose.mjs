@@ -507,6 +507,10 @@ async function main() {
   for (let i = 0; i < args.length; i += 1) {
     if (args[i] === "--still") {
       const [id, t] = args[i + 1].split(":");
+      // Only a scene id and plain seconds, so the file name can never leave --out.
+      if (!/^[\w-]+$/.test(id ?? "") || !/^\d+(\.\d+)?$/.test(t ?? "")) {
+        throw new Error(`--still expects <scene id>:<seconds>, got ${args[i + 1]}`);
+      }
       await still(page, byId(id), Number(t), join(OUT, `still-${id}-${t}.jpg`));
     }
   }
