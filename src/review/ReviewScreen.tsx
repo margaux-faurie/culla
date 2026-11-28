@@ -1,0 +1,692 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useBackend } from "../backend/context";
+import { isNotReady } from "../backend/errors";
+import type {
+  Blocker,
+  BranchPlan,
+  HeldPhoto,
+  ReviewPlan,
+  SessionInfo,
+  SessionPhoto,
+} from "../backend/types";
+import { RouteView } from "../route/RouteView";
+import { counts, type SwipeState, stateAt } from "../swipe/session";
+import { ConfirmDialog } from "./ConfirmDialog";
+import {
+  blockerText,
+  branchFiles,
+  branchTitle,
+  bytesText,
+  canApply,
+  collisionText,
+  disabledReason,
+  estimateText,
+  folderNote,
+  heldSummary,
+  holdText,
+  kindText,
+  otherFilesText,
+  primaryLabel,
+  protectedText,
+  replannedText,
+  warningText,
+} from "./model";
+
+export interface ReviewScreenProps {
+  readonly session: SessionInfo;
+  readonly state: SwipeState;
+  /** Every decision in `state.log` has reached the backend: the plan can be built from them. */
+  readonly saved: boolean;
+  readonly saveError: boolean;
+  readonly onBack: () => void;
+  /** Back to sorting on one photo (a grid thumbnail). */
+  readonly onShow: (photoId: string) => void;
+  /** Back to sorting on the first undecided photo. */
+  readonly onSortUndecided: () => void;
+  /** The plan is confirmed: the apply screen takes over. */
+  readonly onConfirmed: (planId: string) => void;
+}
+
+type Status = "checking" | "ready" | "failed" | "notReady";
+
+/** How many thumbnails a grid shows before "See all". */
+const GRID_PREVIEW = 12;
+
+/**
+ * Review screen (SPEC §4.2, US-34, US-35) on cream: the route with counts per branch, the kept and
+ * rejected grids, preflight results grouped as blockers, re-plans, held groups and warnings, the
+ * estimate, every file of the plan one activation away, and Apply behind a confirm dialog. The plan
+ * comes from the backend as display strings; nothing here builds a path. Opening it changes no
+ * file: the backend's plan and preflight are read-only (INV-03).
+ *
+ * Only Esc is a shortcut here, so the swipe screen's single keys do nothing (NFR-A11Y-10).
+ */
+export function ReviewScreen(props: ReviewScreenProps) {
+  const { session, state, saved, onBack } = props;
+  const backend = useBackend();
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const applyRef = useRef<HTMLButtonElement>(null);
+  const findingsRef = useRef<HTMLHeadingElement>(null);
+  const [plan, setPlan] = useState<ReviewPlan | null>(null);
+  const [status, setStatus] = useState<Status>("checking");
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [othersOpen, setOthersOpen] = useState(false);
+  const [announcement, setAnnouncement] = useState("");
+  const uptoSeq = state.log.at(-1)?.seq ?? 0;
+  const tally = counts(state);
+  const byId = useMemo(() => new Map(session.photos.map((p) => [p.id, p])), [session.photos]);
+
+  // Focus goes to the heading, never to Apply: Enter pressed again or held on the swipe screen
+  // never reaches the primary button (US-35).
+  useEffect(() => {
+    titleRef.current?.focus();
+  }, []);
+
+  // A draft plan is built and preflighted each time the review opens, once the decisions are
+  // saved; going back, changing decisions and coming back builds a new one (§7.4). Only the answer
+  // to the latest request is shown.
+  const generation = useRef(0);
+  const check = (seq: number) => {
+    generation.current += 1;
+    const mine = generation.current;
+    setStatus("checking");
+    backend.reviewPlan(session.id, seq).then(
+      (next) => {
+        if (generation.current === mine) {
+          setPlan(next);
+          setStatus("ready");
+        }
+      },
+      (error: unknown) => {
+        if (generation.current === mine) {
+          setStatus(isNotReady(error) ? "notReady" : "failed");
+        }
+      },
+    );
+  };
+  const checkRef = useRef(check);
+  checkRef.current = check;
+  useEffect(() => {
+    if (saved) {
+      checkRef.current(uptoSeq);
+    }
+  }, [saved, uptoSeq]);
+  useEffect(
+    () => () => {
+      generation.current += 1;
+    },
+    [],
+  );
+
+  // Esc goes back to sorting, unless the confirm dialog is open (it closes itself on Esc).
+  const backRef = useRef(onBack);
+  backRef.current = onBack;
+  const dialogOpen = useRef(false);
+  dialogOpen.current = confirmOpen;
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code !== "Escape" || dialogOpen.current || event.defaultPrevented) {
+        return;
+      }
+      if (event.target instanceof Element && event.target.closest("dialog") !== null) {
+        return;
+      }
+      event.preventDefault();
+      backRef.current();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  const ready = status === "ready" && plan !== null;
+  const applyEnabled = ready && canApply(plan) && !confirming;
+  const reason = ready ? disabledReason(plan) : null;
+  const example = useMemo(() => {
+    const photo = session.photos.find((p) => p.id === session.exampleId);
+    return photo === undefined ? null : { photo, route: photo.route };
+  }, [session]);
+
+  const decidedIds = (wanted: "kept" | "rejected") =>
+    state.photos.filter((_, i) => stateAt(state, i) === wanted);
+  const heldIds = new Set(ready ? plan.held.map((h) => h.photoId) : []);
+
+  const closeDialog = (focusApply: boolean) => {
+    setConfirmOpen(false);
+    window.setTimeout(() => {
+      if (focusApply && applyRef.current !== null && !applyRef.current.disabled) {
+        applyRef.current.focus();
+      } else {
+        findingsRef.current?.focus();
+      }
+    }, 0);
+  };
+
+  const confirm = async () => {
+    if (plan === null) {
+      return;
+    }
+    generation.current += 1;
+    setConfirming(true);
+    try {
+      const result = await backend.confirmPlan(plan.planId);
+      if (result.kind === "confirmed") {
+        props.onConfirmed(result.planId);
+        return;
+      }
+      setPlan(result.plan);
+      setStatus("ready");
+      setAnnouncement(
+        result.kind === "blocked"
+          ? "Nothing has started. A new problem stops the apply: see Needs fixing first."
+          : "Nothing has started. The plan changed since you checked it: look at it again, then apply.",
+      );
+      closeDialog(false);
+    } catch (error) {
+      setStatus(isNotReady(error) ? "notReady" : "failed");
+      closeDialog(false);
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const chooseVolume = async (volumeId: string) => {
+    if (plan === null) {
+      return;
+    }
+    generation.current += 1;
+    setStatus("checking");
+    try {
+      setPlan(await backend.chooseVolume(plan.planId, volumeId));
+      setStatus("ready");
+    } catch (error) {
+      setStatus(isNotReady(error) ? "notReady" : "failed");
+    }
+  };
+
+  return (
+    <>
+      <main className="review" aria-labelledby="review-title">
+        <header className="review-header">
+          <span className="brand">Culla</span>
+          <button type="button" className="button button-outline" onClick={onBack}>
+            Back to sorting
+          </button>
+        </header>
+        <div className="review-intro">
+          <h1 id="review-title" ref={titleRef} className="title" tabIndex={-1}>
+            Check where your photos will go
+          </h1>
+          <p className="lead">Nothing has moved yet. Check the plan below, then apply.</p>
+        </div>
+        {props.saveError && (
+          <p className="save-error" role="alert">
+            Could not save the last decisions. The plan waits for them: go back to sorting and they
+            are saved again with the next change.
+          </p>
+        )}
+
+        <div className="review-main">
+          {/* The route list carries the name "Where your photos will go"; the panel adds none. */}
+          <div className="panel review-route">
+            <RouteView
+              source={session.source}
+              photoSummary={`${tally.total} photos`}
+              example={example}
+              rejectedFolder={session.rejectedFolder}
+              rejectedFolderExists={session.rejectedFolderExists}
+              destination={session.destination}
+              keepMode={session.options.keepMode}
+              keptDetails={
+                <BranchDetails
+                  what="kept"
+                  branch={ready ? plan.kept : null}
+                  checking={!ready}
+                  photoIds={decidedIds("kept")}
+                  heldIds={heldIds}
+                  byId={byId}
+                  onShow={props.onShow}
+                />
+              }
+              rejectedDetails={
+                <BranchDetails
+                  what="rejected"
+                  branch={ready ? plan.rejected : null}
+                  checking={!ready}
+                  photoIds={decidedIds("rejected")}
+                  heldIds={heldIds}
+                  byId={byId}
+                  onShow={props.onShow}
+                />
+              }
+              undecidedDetails={
+                <div className="branch-head">
+                  <span className="branch-title branch-title-muted">
+                    {tally.undecided} undecided · stay where they are
+                  </span>
+                  {tally.undecided > 0 && (
+                    <button
+                      type="button"
+                      className="button button-quiet button-small"
+                      onClick={props.onSortUndecided}
+                    >
+                      Sort them now
+                    </button>
+                  )}
+                </div>
+              }
+            />
+          </div>
+
+          <aside className="review-side" aria-labelledby="findings-title" aria-busy={!ready}>
+            <h2 id="findings-title" ref={findingsRef} className="side-title" tabIndex={-1}>
+              Before you apply
+            </h2>
+            {status === "checking" && (
+              <p className="checking">
+                Checking
+                <Dots />
+              </p>
+            )}
+            {status === "failed" && (
+              <div className="finding-group">
+                <p className="finding">Could not check the plan. Nothing has moved.</p>
+                <CheckAgain onClick={() => check(uptoSeq)} />
+              </div>
+            )}
+            {status === "notReady" && (
+              <p className="finding">Not ready yet: the app cannot build a plan in this version.</p>
+            )}
+            {ready && (
+              <Findings
+                plan={plan}
+                othersOpen={othersOpen}
+                onToggleOthers={() => setOthersOpen((open) => !open)}
+                onCheckAgain={() => check(uptoSeq)}
+                onChooseVolume={chooseVolume}
+              />
+            )}
+
+            <div className="apply-box">
+              <button
+                ref={applyRef}
+                type="button"
+                className="button button-primary button-large"
+                disabled={!applyEnabled}
+                aria-describedby={reason === null ? undefined : "apply-reason"}
+                onClick={() => setConfirmOpen(true)}
+              >
+                {ready ? primaryLabel(plan) : "Apply"}
+              </button>
+              {reason !== null && (
+                <p id="apply-reason" className="small apply-reason">
+                  {reason}
+                </p>
+              )}
+              {ready && (
+                <button
+                  type="button"
+                  className="button button-outline"
+                  aria-expanded={filesOpen}
+                  aria-controls="every-file"
+                  onClick={() => setFilesOpen((open) => !open)}
+                >
+                  See every file ({plan.operations.length})
+                </button>
+              )}
+              <p className="small apply-note">
+                If anything stops it, Culla finishes the job next time.
+              </p>
+            </div>
+          </aside>
+        </div>
+
+        {ready && filesOpen && <FileList plan={plan} />}
+
+        <p className="visually-hidden" role="status">
+          {announcement}
+        </p>
+      </main>
+      {ready && (
+        <ConfirmDialog
+          open={confirmOpen}
+          plan={plan}
+          busy={confirming}
+          onCancel={() => closeDialog(true)}
+          onConfirm={confirm}
+        />
+      )}
+    </>
+  );
+}
+
+function Dots() {
+  return (
+    <span className="dots" aria-hidden="true">
+      <span />
+      <span />
+      <span />
+    </span>
+  );
+}
+
+function CheckAgain({ onClick }: { readonly onClick: () => void }) {
+  return (
+    <button type="button" className="button button-quiet button-small" onClick={onClick}>
+      Check again
+    </button>
+  );
+}
+
+interface BranchDetailsProps {
+  readonly what: "kept" | "rejected";
+  readonly branch: BranchPlan | null;
+  readonly checking: boolean;
+  /** Every photo with this decision, held ones included. */
+  readonly photoIds: readonly string[];
+  readonly heldIds: ReadonlySet<string>;
+  readonly byId: ReadonlyMap<string, SessionPhoto>;
+  readonly onShow: (photoId: string) => void;
+}
+
+/** A branch's counts, files, target folders and photo grid. */
+function BranchDetails(props: BranchDetailsProps) {
+  const { what, branch } = props;
+  return (
+    <div className="branch">
+      {branch !== null ? (
+        <>
+          <div className="branch-head">
+            <span className={what === "kept" ? "branch-title branch-title-keep" : "branch-title"}>
+              {branchTitle(branch, what)}
+            </span>
+            <span className="small">
+              {branchFiles(branch)}
+              {what === "rejected" && " · nothing deleted"}
+            </span>
+          </div>
+          <ul className="branch-folders" aria-label={`Folders for ${what} photos`}>
+            {branch.folders.map((f) => (
+              <li key={f.folder}>
+                {f.folder} <span className="muted">· {folderNote(f.photos, f.newFolder)}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        !props.checking && <span className="small">No {what} photo to apply.</span>
+      )}
+      {props.photoIds.length > 0 && (
+        <PhotoGrid
+          what={what}
+          photoIds={props.photoIds}
+          heldIds={props.heldIds}
+          byId={props.byId}
+          onShow={props.onShow}
+        />
+      )}
+    </div>
+  );
+}
+
+interface PhotoGridProps {
+  readonly what: "kept" | "rejected";
+  readonly photoIds: readonly string[];
+  readonly heldIds: ReadonlySet<string>;
+  readonly byId: ReadonlyMap<string, SessionPhoto>;
+  readonly onShow: (photoId: string) => void;
+}
+
+/** Thumbnails of the decided photos; each one goes back to sorting on that photo. */
+function PhotoGrid({ what, photoIds, heldIds, byId, onShow }: PhotoGridProps) {
+  const [all, setAll] = useState(false);
+  const shown = all ? photoIds : photoIds.slice(0, GRID_PREVIEW);
+  const label = what === "kept" ? "Kept photos" : "Rejected photos";
+  return (
+    <div className="grid-wrap">
+      <ul className="grid" aria-label={`${label}, ${photoIds.length}`}>
+        {shown.map((id) => {
+          const photo = byId.get(id);
+          if (photo === undefined) {
+            return null;
+          }
+          const held = heldIds.has(id);
+          return (
+            <li key={id}>
+              <button
+                type="button"
+                className={what === "rejected" ? "thumb thumb-rejected" : "thumb"}
+                aria-label={`${photo.name}${held ? ", held back" : ""}. Show it in sorting`}
+                onClick={() => onShow(id)}
+              >
+                <img src={photo.previewUrl} alt="" loading="lazy" decoding="async" />
+                {held && (
+                  <span className="thumb-note" aria-hidden="true">
+                    Held back
+                  </span>
+                )}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {photoIds.length > GRID_PREVIEW && (
+        <button
+          type="button"
+          className="button button-quiet button-small"
+          aria-expanded={all}
+          onClick={() => setAll((open) => !open)}
+        >
+          {all ? "Show fewer" : `See all ${photoIds.length}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+interface FindingsProps {
+  readonly plan: ReviewPlan;
+  readonly othersOpen: boolean;
+  readonly onToggleOthers: () => void;
+  readonly onCheckAgain: () => void;
+  readonly onChooseVolume: (volumeId: string) => void;
+}
+
+/** Preflight results: blockers, re-plans, held groups, then what is worth knowing (FE §8). */
+function Findings({
+  plan,
+  othersOpen,
+  onToggleOthers,
+  onCheckAgain,
+  onChooseVolume,
+}: FindingsProps) {
+  const worth: string[] = [];
+  for (const c of plan.collisions) worth.push(collisionText(c));
+  if (plan.kept !== null) {
+    const text = protectedText(plan.kept, "kept", plan.estimate.sourceVolume);
+    if (text !== null) worth.push(text);
+  }
+  if (plan.rejected !== null) {
+    const text = protectedText(plan.rejected, "rejected", plan.estimate.sourceVolume);
+    if (text !== null) worth.push(text);
+  }
+  for (const w of plan.warnings) worth.push(warningText(w));
+  const others = otherFilesText(plan.otherFiles);
+  const bytes = bytesText(plan);
+
+  return (
+    <>
+      {plan.blockers.length > 0 && (
+        <section className="finding-group finding-blockers" aria-labelledby="blockers-title">
+          <h3 id="blockers-title" className="finding-title">
+            Needs fixing first
+          </h3>
+          <ul className="findings">
+            {plan.blockers.map((b) => (
+              <li key={blockerKey(b)} className="finding finding-blocker">
+                <span className="finding-mark finding-mark-blocker" aria-hidden="true" />
+                <span>
+                  {blockerText(b)}
+                  {b.kind === "volumeAmbiguous" && (
+                    <span className="volume-choices">
+                      {b.choices.map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          className="button button-quiet button-small"
+                          onClick={() => onChooseVolume(c.id)}
+                        >
+                          Use {c.label}
+                        </button>
+                      ))}
+                    </span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <CheckAgain onClick={onCheckAgain} />
+        </section>
+      )}
+
+      {plan.replanned.length > 0 && (
+        <section className="finding-group" aria-labelledby="replanned-title">
+          <h3 id="replanned-title" className="finding-title">
+            Changed since you checked
+          </h3>
+          <ul className="findings">
+            {plan.replanned.map((r) => (
+              <li key={r.name} className="finding">
+                <span className="finding-mark" aria-hidden="true" />
+                <span>{replannedText(r)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {plan.held.length > 0 && (
+        <section className="finding-group" aria-labelledby="held-title">
+          <h3 id="held-title" className="finding-title">
+            Held back
+          </h3>
+          <p className="finding">{heldSummary(plan.held.length)}</p>
+          <ul className="findings">
+            {plan.held.map((h) => (
+              <li key={h.photoId} className="finding">
+                <span className="finding-mark" aria-hidden="true" />
+                <span>{heldLine(h)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <section className="finding-group" aria-labelledby="worth-title">
+        <h3 id="worth-title" className="finding-title">
+          Worth knowing
+        </h3>
+        <ul className="findings">
+          {worth.map((text) => (
+            <li key={text} className="finding">
+              <span className="finding-mark" aria-hidden="true" />
+              <span>{text}</span>
+            </li>
+          ))}
+          {others !== null && (
+            <li className="finding">
+              <span className="finding-mark finding-mark-info" aria-hidden="true" />
+              <span>
+                {others}{" "}
+                <button
+                  type="button"
+                  className="link-button"
+                  aria-expanded={othersOpen}
+                  aria-controls="other-files"
+                  onClick={onToggleOthers}
+                >
+                  {othersOpen ? "Hide them" : "Show them"}
+                </button>
+                {othersOpen && (
+                  <ul id="other-files" className="other-files">
+                    {plan.otherFiles.map((f) => (
+                      <li key={f.path}>{f.path}</li>
+                    ))}
+                  </ul>
+                )}
+              </span>
+            </li>
+          )}
+          <li className="finding">
+            <span className="finding-mark finding-mark-info" aria-hidden="true" />
+            <span>
+              {estimateText(plan)}
+              {bytes !== null && (
+                <>
+                  {" "}
+                  <span className="muted">{bytes}.</span>
+                </>
+              )}
+              {!plan.estimate.measured && plan.estimate.bytesToWrite > 0 && (
+                <>
+                  {" "}
+                  <span className="muted">A first estimate, until Culla has timed this drive.</span>
+                </>
+              )}
+            </span>
+          </li>
+        </ul>
+      </section>
+    </>
+  );
+}
+
+const blockerKey = (b: Blocker): string => ("role" in b ? `${b.kind}-${b.role}` : b.kind);
+
+const heldLine = (h: HeldPhoto): string =>
+  `${h.name} (${h.decision}, in ${h.folder}): ${holdText(h.reason)}.`;
+
+/** The per-file list: every operation with its source, target (suffix included) and kind. */
+function FileList({ plan }: { readonly plan: ReviewPlan }) {
+  return (
+    <section id="every-file" className="every-file" aria-labelledby="every-file-title">
+      <h2 id="every-file-title" className="side-title">
+        Every file ({plan.operations.length})
+      </h2>
+      <div className="table-wrap">
+        <table className="file-table">
+          <thead>
+            <tr>
+              <th scope="col">Photo</th>
+              <th scope="col">From</th>
+              <th scope="col">To</th>
+              <th scope="col">How</th>
+            </tr>
+          </thead>
+          <tbody>
+            {plan.operations.map((op) => (
+              <tr key={op.id}>
+                <td>
+                  {op.photoName}{" "}
+                  <span className="muted">· {op.action === "keep" ? "kept" : "rejected"}</span>
+                </td>
+                <td>{op.from}</td>
+                <td>{op.to}</td>
+                <td>{kindText(op.kind, op.cameraProtected)}</td>
+              </tr>
+            ))}
+            {plan.staying.map((file) => (
+              <tr key={file.path}>
+                <td>{file.photoName}</td>
+                <td>{file.path}</td>
+                <td>Stays where it is</td>
+                <td>Not moved: RAW and edit files do not follow</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}

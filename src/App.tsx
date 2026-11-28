@@ -8,6 +8,6 @@ export function App() {
   return session === null ? (
     <StartScreen onStarted={setSession} />
   ) : (
-    <SessionView key={session.id} session={session} />
+    <SessionView key={session.id} session={session} onExit={() => setSession(null)} />
   );
 }

@@ -136,4 +136,21 @@ describe("swipe session", () => {
     const s = run([{ type: "undo", now: 1 }, { type: "dismissFeedback" }]);
     expect(s.feedback).toBeNull();
   });
+
+  it("goes back from the review to a photo with the filter on all (US-34)", () => {
+    const filtered = run([keep, { type: "cycleFilter" }, { type: "cycleFilter" }]);
+    expect(filtered.filter).toBe("kept");
+    const s = swipeReducer(filtered, { type: "show", photoId: "p4" });
+    expect(currentPhoto(s)).toBe("p4");
+    expect(s.filter).toBe("all");
+    expect(s.log).toEqual(filtered.log);
+    expect(swipeReducer(s, { type: "show", photoId: "nope" })).toBe(s);
+  });
+
+  it("goes to the first undecided photo for Sort them now (US-34)", () => {
+    const s = run([keep, keep, { type: "next" }, { type: "firstUndecided" }]);
+    expect(currentPhoto(s)).toBe("p3");
+    const done = run([keep, keep, keep, keep, keep]);
+    expect(swipeReducer(done, { type: "firstUndecided" })).toBe(done);
+  });
 });

@@ -821,21 +821,348 @@ kbd {
   white-space: nowrap;
 }
 
-/* Review stand-in (cream). */
+/* Review screen (cream, US-34) and the apply stand-in. */
 
 .review {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
-  max-width: 960px;
+  max-width: 1440px;
   min-height: 100vh;
   margin: 0 auto;
-  padding: var(--space-8) var(--space-6);
+  padding: 36px var(--space-16) var(--space-12);
+  overflow-wrap: anywhere;
+}
+
+.review-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.review-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The heading takes focus when the review opens; its ring hugs the text. */
+.review-intro .title,
+.review > .title {
+  align-self: flex-start;
+}
+
+.review-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 28px;
+  align-items: flex-start;
+}
+
+.review-route {
+  flex: 999 1 640px;
+}
+
+.review-side {
+  display: flex;
+  flex: 1 1 360px;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.side-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.checking {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: 15px;
+}
+
+/* Loading is drawn as dots, not a spinner (SPEC §5.6). */
+.dots {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink);
+  animation: dot 1.2s ease-in-out infinite;
+}
+
+.dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+.finding-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.finding-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.findings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.finding {
+  display: flex;
+  gap: 10px;
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* Shape as well as words: outline for notes, filled for facts, a square for blockers. */
+.finding-mark {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 7px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+}
+
+.finding-mark-info {
+  background: var(--ink);
+}
+
+.finding-mark-blocker {
+  width: 10px;
+  height: 10px;
+  margin-top: 6px;
+  border-radius: 2px;
+  background: var(--ink);
+}
+
+.finding-blockers {
+  padding: var(--space-4);
+  border: 2px solid var(--ink);
+  border-radius: var(--radius-card);
+}
+
+.finding-blocker {
+  font-weight: 600;
+}
+
+.volume-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.other-files {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+  color: var(--ink-muted);
+  font-size: 14px;
+}
+
+.apply-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+  padding-top: var(--space-4);
+  border-top: var(--line-hair) solid var(--rule);
+}
+
+.apply-reason,
+.apply-note {
+  text-align: center;
+}
+
+.branch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.branch-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.branch-title {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.branch-title-keep {
+  color: var(--keep-ink);
+}
+
+.branch-title-muted {
+  color: var(--ink-muted);
+}
+
+.branch-folders {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--paper);
+  font-size: 14px;
+  list-style: none;
+}
+
+.grid-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thumb {
+  position: relative;
+  display: block;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 10px;
+  background: var(--paper);
+  cursor: pointer;
+}
+
+.thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.thumb-rejected img {
+  opacity: 0.6;
+}
+
+.thumb-note {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  left: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.every-file {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* A data table may scroll on its own at 320 px (WCAG 1.4.10 exempts it); the page does not. */
+.table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.file-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.file-table th,
+.file-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--line-hair) solid var(--rule);
+  text-align: left;
+  vertical-align: top;
+}
+
+.confirm {
+  max-width: min(560px, calc(100vw - 32px));
+  padding: var(--space-8);
+  border: 2px solid var(--ink);
+  border-radius: var(--radius-panel);
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.confirm::backdrop {
+  background: rgb(12 11 10 / 0.5);
+}
+
+.confirm-body p {
+  margin: var(--space-2) 0;
+}
+
+.confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
 }
 
 @media (max-width: 640px) {
-  .start {
+  .start,
+  .review {
     padding: var(--space-6) var(--space-4);
+  }
+
+  .review-route,
+  .review-side {
+    flex-basis: 100%;
   }
 
   .panel {
@@ -888,6 +1215,12 @@ kbd {
   }
 }
 
+@keyframes dot {
+  50% {
+    opacity: 0.25;
+  }
+}
+
 @keyframes toast-in {
   from {
     opacity: 0;
@@ -924,7 +1257,8 @@ kbd {
     transform: none;
   }
 
-  .toast {
+  .toast,
+  .dots span {
     animation: none;
   }
 }
