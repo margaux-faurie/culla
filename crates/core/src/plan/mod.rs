@@ -22,10 +22,14 @@
 //!   snapshot and none is claimed by an earlier operation of the plan, compared folded
 //!   (§7.3, INV-06, INV-07). A target is not free either when it is a folder (or above one)
 //!   that any candidate group's targets go into, whichever group comes first. No suffix free,
-//!   a target folder blocked by an existing file or by a file an earlier operation claims, or a
+//!   a target folder blocked by an existing file, or a
 //!   target name Windows would refuse ([`validate_component`], length included): the group is
 //!   held back with no operations and listed. A kept group that would get operations with no
 //!   destination chosen fails the whole plan ([`PlanError::NoDestination`]).
+//!   Because of that reservation no operation can claim a target where another candidate's
+//!   folder will be, so [`Held::TargetFolderBlocked`] comes only from the snapshot: the check
+//!   for a file an earlier operation claims (`claimed_file_at` in [`plan`]) cannot fire and is
+//!   kept as defence, should the reservation change.
 //! - The kind per §7.2: reject `rename`; keep by move `rename` on the same volume, `xmove`
 //!   otherwise; keep by copy `copy`; any read-only (camera-protected) planned member makes the
 //!   whole group `copy`.
@@ -343,7 +347,8 @@ pub enum Held {
     /// No suffix up to [`MAX_SUFFIX`] gives free targets (§7.3).
     NoFreeSuffix,
     /// A file exists, or an earlier operation of the plan puts one, where a target folder
-    /// would be: no suffix helps.
+    /// would be: no suffix helps. Only the first can happen: the folder reservation keeps
+    /// every target off a planned folder, so the second is a defence that cannot fire.
     TargetFolderBlocked,
     /// A target name would not be a valid Windows file name ([`validate_component`]): too
     /// long once the suffix is added (more than 255 UTF-16 units), or invalid as scanned.
@@ -546,6 +551,8 @@ pub fn plan(
     // Targets claimed by earlier operations.
     let mut claimed: BTreeSet<(Root, String)> = BTreeSet::new();
     for (action, g, members, root, kind, protected) in candidates {
+        // Unreachable while targets avoid `folders` (a claimed target is never a planned
+        // folder or above one); kept as defence.
         let claimed_file_at = |folder: &[String]| {
             (1..=folder.len()).any(|n| claimed.contains(&(root, key(&folder[..n]))))
         };

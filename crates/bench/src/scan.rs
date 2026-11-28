@@ -65,7 +65,7 @@ pub(crate) fn run(a: &ScanArgs) -> Result<Run, Failure> {
             Unit::Ms,
             scanned.first_group.map(ms),
         ),
-        Metric::new("first_photo_ms", "B-01", Unit::Ms, first_photo.map(ms)),
+        Metric::new("first_photo_ms", "", Unit::Ms, first_photo.map(ms)),
         Metric::new("listing_ms", "B-02", Unit::Ms, Some(ms(scanned.listing))),
     ];
     if a.exif {

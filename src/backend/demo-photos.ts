@@ -100,13 +100,16 @@ export interface DemoPhotoSpec {
 /** The file facts of a spec, which only the backend sees. */
 export function demoGroup(spec: DemoPhotoSpec): DemoGroup {
   const lone = spec.lone === true;
+  const raw = lone || spec.jpegOnly === true ? null : ".NEF";
+  // The camera's protect marks the JPEG and the NEF it wrote.
+  const written = [lone ? ".NEF" : ".JPG", ...(raw === null ? [] : [raw])];
   return {
     name: spec.name,
     folder: spec.folder,
     primary: lone ? ".NEF" : ".JPG",
-    raw: lone || spec.jpegOnly === true ? null : ".NEF",
+    raw,
     sidecars: spec.sidecars ?? [],
-    cameraProtected: spec.cameraProtected === true,
+    readOnly: spec.cameraProtected === true ? written : [],
   };
 }
 
@@ -118,7 +121,7 @@ export function demoPhoto(id: string, spec: DemoPhotoSpec, n: number): PhotoSumm
     id,
     name: group.name,
     kind: kindOf(group),
-    cameraProtected: group.cameraProtected,
+    cameraProtected: group.readOnly.length > 0,
     previewUrl: svg(scene, n),
     alt: spec.lone === true ? `${scene.alt}, from the NEF's embedded preview` : scene.alt,
   };
