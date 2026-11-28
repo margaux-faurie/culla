@@ -235,7 +235,10 @@ test.describe("swipe screen (US-22 to US-32, US-42)", () => {
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("Shift+ArrowLeft");
     await page.keyboard.press("ArrowRight");
-    await expect(page.locator(".toast")).toBeVisible();
+    const toast = page.locator(".toast");
+    await expect(toast).toBeVisible();
+    // axe checks the toast at its final state, not mid fade-in (blockingViolations waits too).
+    await expect(toast).toHaveCSS("opacity", "1");
     expect(await blockingViolations(page)).toEqual([]);
   });
 });
