@@ -36,6 +36,42 @@ describe("demo backend", () => {
     await expect(broken.fullImage(other.photos[0]?.id ?? "")).rejects.toThrow();
   });
 
+  it("answers the EXIF overlay's strings by photo id, pending until the pass reaches it (US-40)", async () => {
+    const backend = createBackend({ storage: null, scenario: null });
+    const sourceId = (await backend.chooseSource())?.id ?? "";
+    const session = await backend.startSession({ sourceId, includeSubfolders: true });
+    const exif = await backend.photoExif(session.photos[0]?.id ?? "");
+    expect(exif).toEqual({
+      kind: "ready",
+      camera: "NIKON Z 6_3",
+      lens: "NIKKOR Z 24-70mm f/4 S",
+      shutter: "1/250 s",
+      aperture: "f/4",
+      iso: "ISO 100",
+      focalLength: "24 mm",
+      exposureCompensation: "0 EV",
+      captured: "14 Nov 2026, 09:00:00",
+      capturedFromFile: false,
+    });
+    const jpegOnly = session.photos.find((p) => p.name === "MGF_7004");
+    const fromFile = await backend.photoExif(jpegOnly?.id ?? "");
+    expect(fromFile.kind === "ready" && [fromFile.lens, fromFile.capturedFromFile]).toEqual([
+      null,
+      true,
+    ]);
+    await expect(backend.photoExif("not-a-photo")).rejects.toThrow();
+    const slow = createBackend({ storage: null, scenario: "exif-pending" });
+    await slow.chooseSource();
+    const other = await slow.startSession({ sourceId, includeSubfolders: true });
+    const id = other.photos[1]?.id ?? "";
+    expect((await slow.photoExif(id)).kind).toBe("pending");
+    expect((await slow.photoExif(id)).kind).toBe("ready");
+    const broken = createBackend({ storage: null, scenario: "exif-unreadable" });
+    await broken.chooseSource();
+    const third = await broken.startSession({ sourceId, includeSubfolders: true });
+    await expect(broken.photoExif(third.photos[0]?.id ?? "")).rejects.toThrow();
+  });
+
   it("lists recent folders with their status (US-44)", async () => {
     const sources = await createBackend({ storage: null }).recentSources();
     expect(sources.map((s) => [s.name, s.status.kind, s.connected])).toEqual([
