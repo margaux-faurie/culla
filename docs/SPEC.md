@@ -193,7 +193,7 @@ A Tauri async **custom URI scheme** (`culla://preview/<id>`, which appears as `h
 
 ### 5.6 Visual design
 Screen designs (start, swipe, already decided, review, apply) live on the design canvas https://claude.ai/artifact/CfDZRFBUCphPgXVKmTxSWh, reworked on 27 Nov 2026 after research on import tools, culling apps and plan visualisation. Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsmsFesTQ7nHuMbJLms), so the app, the demo and margauxfaurie.com look like one family. In practice:
-- **Typeface:** Bricolage Grotesque, self-hosted (the app has to work offline, so it isn't loaded from Google Fonts).
+- **Typeface:** Bricolage Grotesque, self-hosted (the app has to work offline, so it isn't loaded from Google Fonts): the Regular and Bold cuts as WOFF files in `src/assets/fonts/`, under the SIL Open Font Licence 1.1 (`OFL.txt` beside them), bundled by Vite into `/assets/` so the CSP's `font-src 'self'` covers them in the app and the demo.
 - **Colours:**
   - `paper`, `ink`, `ink-muted` and `rule` for the chrome.
   - `orange` for the one thing that matters on screen: the keep feedback, the primary Apply button, the progress line.

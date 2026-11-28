@@ -100,7 +100,7 @@ export function demoCsp(): string {
   const headers = readFileSync(new URL("../public-demo/_headers", import.meta.url), "utf8");
   const line = headers
     .split(/\r?\n/)
-    .find((l) => /^\s+Content-Security-Policy:/i.test(l) && !l.trimStart().startsWith("#"));
+    .find((l) => /^\s+Content-Security-Policy:/i.test(l));
   if (line === undefined) {
     throw new Error("no Content-Security-Policy in public-demo/_headers");
   }

@@ -13,7 +13,8 @@ interface DemoOutput {
   html: Map<string, string>;
   css: string[];
   js: string[];
-  // Every other emitted asset's file name, e.g. assets/scene-01-<hash>.svg.
+  // Every other emitted asset's file name, e.g. assets/scene-01-<hash>.svg or
+  // assets/BricolageGrotesque-Regular-<hash>.woff.
   files: string[];
 }
 
@@ -147,6 +148,24 @@ describe("demo build stays inside its CSP", () => {
     const { files } = await demoOutput();
     const scenes = files.filter((name) => /^assets\/scene-\d{2}-[^/]+\.svg$/.test(name));
     expect(scenes.length).toBe(24);
+  });
+
+  it("self-hosts the typeface as files under /assets/ (SPEC §5.6)", {
+    timeout: 60_000,
+  }, async () => {
+    const { css, files } = await demoOutput();
+    const fonts = files.filter((name) => /\.woff2?$/.test(name));
+    expect(fonts.length).toBe(2);
+    for (const name of fonts) {
+      expect(name).toMatch(/^assets\/BricolageGrotesque-(Regular|Bold)-[^/]+\.woff$/);
+    }
+    const sheet = css.join("\n");
+    expect(sheet).toMatch(/font-family:\s*"?Bricolage Grotesque"?/);
+    expect(sheet).toMatch(/font-display:\s*swap/);
+    // No remote stylesheet pulled in by @import, and the only url()s are the two font files.
+    expect(sheet).not.toMatch(/@import/i);
+    const urls = [...sheet.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/g)].map(([, url]) => url);
+    expect([...urls].sort()).toEqual(fonts.map((name) => `/${name}`).sort());
   });
 
   it("copies public-demo only in demo mode", async () => {
