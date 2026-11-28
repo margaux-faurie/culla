@@ -103,7 +103,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
   - Tauri 2 shell, one capability, no fs plugin, `AppManifest::commands`, strict CSP.
   - `culla://preview/<id>` async URI scheme from the in-memory LRU.
   - `Backend` interface with `TauriBackend` and `DemoBackend`; generated bindings.
-  - Start screen (source, subfolders, RAW follows, move or copy, destination). Plus recent folders with their session status (US-44, v1 part); detected drives, the found-photos preview and drag and drop are v2.
+  - Start screen: "Choose a folder" and the recent folders with their session status; choosing one starts sorting at once, with the defaults (US-21, US-44 v1 part; ADR 0029). Move or copy and the destination are chosen on review. Detected drives, the found-photos preview and drag and drop are v2.
   - Swipe screen: Motion card (`drag="x"`, threshold on offset and velocity), at most 3 cards mounted, `img.decode()` before entry, Night theme, progress bar, decision badge, visible Keep and Reject buttons (WCAG 2.5.7).
   - Keyboard map from [SPEC.md](SPEC.md) section 4.1 except zoom (Z, Space) and EXIF overlay (I): decide, navigate, N, F, U, Ctrl+Z, Ctrl+Shift+Z, ?, Esc. Key repeat ignored. Shake and toast on a decided photo. End-of-list card.
   - TS reducer over the event log, checked against the golden fixtures from M2; autosaved to the backend (M2 session store) on each event.
