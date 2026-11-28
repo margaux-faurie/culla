@@ -19,6 +19,23 @@ describe("demo backend", () => {
     await expect(createBackend({ storage: null }).version()).resolves.toBe("demo");
   });
 
+  it("serves the full image for zoom by the photo's id, 24 MP, a lone NEF's embedded JPEG (US-39)", async () => {
+    const backend = createBackend({ storage: null, scenario: null });
+    const sourceId = (await backend.chooseSource())?.id ?? "";
+    const session = await backend.startSession({ sourceId, includeSubfolders: true });
+    const [first, , lone] = session.photos;
+    const full = await backend.fullImage(first?.id ?? "");
+    expect([full.width, full.height, full.embeddedPreview]).toEqual([6048, 4032, false]);
+    expect(full.url === first?.previewUrl).toBe(false);
+    expect(lone?.kind).toBe("NEF");
+    expect((await backend.fullImage(lone?.id ?? "")).embeddedPreview).toBe(true);
+    await expect(backend.fullImage("not-a-photo")).rejects.toThrow();
+    const broken = createBackend({ storage: null, scenario: "full-image-unreadable" });
+    await broken.chooseSource();
+    const other = await broken.startSession({ sourceId, includeSubfolders: true });
+    await expect(broken.fullImage(other.photos[0]?.id ?? "")).rejects.toThrow();
+  });
+
   it("lists recent folders with their status (US-44)", async () => {
     const sources = await createBackend({ storage: null }).recentSources();
     expect(sources.map((s) => [s.name, s.status.kind, s.connected])).toEqual([

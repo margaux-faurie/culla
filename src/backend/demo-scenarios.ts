@@ -4,7 +4,8 @@
  * previews still running, an unplugged drive, the two things preflight at confirm can find, and
  * for the apply (US-36, US-38): a slow reader, a card pulled mid-apply (cleanly, or leaving a lost
  * file), a full destination, a verify mismatch, a file another app holds, and an apply found
- * interrupted at launch, with its card in or out; and, for the start screen, a folder with no photos.
+ * interrupted at launch, with its card in or out; for the start screen, a folder with no photos; and,
+ * for zoom (US-39), a full image that cannot be read or is slow to come.
  *
  * Chosen by a query parameter, `?scenario=<name>`, read by the demo backend only (`demo.ts`): the
  * desktop backend never looks at it, and the demo bundle is the only one with this module (ADR
@@ -33,6 +34,8 @@ export const SCENARIOS = [
   "interrupted",
   "interrupted-card-out",
   "empty-folder",
+  "full-image-unreadable",
+  "full-image-slow",
 ] as const;
 
 export type ScenarioName = (typeof SCENARIOS)[number];
@@ -58,6 +61,10 @@ export interface Scenario {
   readonly interrupted?: { readonly cardOut: boolean };
   /** "Choose a folder" picks a folder with no photos (start screen). */
   readonly emptyFolder?: boolean;
+  /** Zoom cannot read the full image (card pulled, damaged file): the preview stays. */
+  readonly fullImageUnreadable?: boolean;
+  /** Zoom's full image takes this many milliseconds to come (a slow card). */
+  readonly fullImageDelayMs?: number;
 }
 
 const names = (...list: string[]): ReadonlySet<string> => new Set(list);
@@ -106,6 +113,8 @@ const TABLE: Readonly<Record<ScenarioName, Scenario>> = {
   interrupted: { facts: NORMAL_FACTS, interrupted: { cardOut: false } },
   "interrupted-card-out": { facts: NORMAL_FACTS, interrupted: { cardOut: true } },
   "empty-folder": { facts: NORMAL_FACTS, emptyFolder: true },
+  "full-image-unreadable": { facts: NORMAL_FACTS, fullImageUnreadable: true },
+  "full-image-slow": { facts: NORMAL_FACTS, fullImageDelayMs: 1500 },
 };
 
 const NORMAL: Scenario = { facts: NORMAL_FACTS };

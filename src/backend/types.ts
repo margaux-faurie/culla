@@ -30,6 +30,12 @@ export interface Backend {
   updateSession(sessionId: string, change: SessionChange): Promise<SessionInfo>;
   /** Opens the native folder dialog for the destination. Null when the user cancels. */
   chooseDestination(): Promise<DestinationSummary | null>;
+  /**
+   * The photo's full image for zoom to 100 % (US-39), loaded on demand by its opaque id:
+   * `culla://full/<id>` in the app, never a path. Rejects when the file cannot be read (card
+   * pulled, damaged file); the preview stays.
+   */
+  fullImage(photoId: string): Promise<FullImage>;
   /** Mirrors one decision event, already committed in the UI reducer (autosave, ADR 0005). */
   recordEvent(sessionId: string, event: DecisionEvent): Promise<void>;
   /**
@@ -180,6 +186,20 @@ export interface PhotoSummary {
 /** A photo of a session, with its route under the session's options. */
 export interface SessionPhoto extends PhotoSummary {
   readonly route: PhotoRoute;
+}
+
+/** A photo's full image, for zoom (US-39). */
+export interface FullImage {
+  /** `culla://full/<id>` in the app; a bundled image in the demo. */
+  readonly url: string;
+  /** Its size in pixels. */
+  readonly width: number;
+  readonly height: number;
+  /**
+   * The largest JPEG embedded in a NEF (a lone NEF, or an HE/HE* NEF), not RAW pixels (SPEC §9,
+   * ADR 0011): the screen says so.
+   */
+  readonly embeddedPreview: boolean;
 }
 
 export interface DestinationSummary {
