@@ -1278,7 +1278,7 @@ fn check_end_state(
         }
     }
     // From the files, not the states: no cross-volume group is split, one member moved (its
-    // source gone) while another kept its source with its copy in place; a source the file
+    // source gone) while another kept its source, with or without its copy; a source the file
     // system brought back after `done` (above) does not count as kept.
     for g in j.groups() {
         let at = |k: &str| wb.files.get(k).map(|r| r.content);
@@ -1291,9 +1291,7 @@ fn check_end_state(
             let c = wb.content[&op.id];
             match (at(&src_key(op)), at(&dst_key(op))) {
                 (None, Some(f)) if f == c => moved.push(op.id),
-                (Some(s), Some(f))
-                    if s == c && f == c && j.progress(i).state() != OpState::Done =>
-                {
+                (Some(s), _) if s == c && j.progress(i).state() != OpState::Done => {
                     kept.push(op.id);
                 }
                 _ => {}

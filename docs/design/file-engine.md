@@ -165,7 +165,8 @@ CREATE TABLE plan (
   id                 INTEGER PRIMARY KEY,
   session_id         INTEGER NOT NULL REFERENCES session(id),
   status             TEXT NOT NULL CHECK (status IN ('draft','confirmed','applying',
-                       'paused','interrupted','completed','cancelled','superseded')),
+                       'paused','interrupted','stopping','completed','cancelled','superseded')),
+                       -- 'stopping': proposed (§9.1, §9.5, §13)
   created_at         INTEGER NOT NULL,
   confirmed_at       INTEGER,
   decisions_upto_seq INTEGER NOT NULL,
@@ -184,7 +185,7 @@ CREATE TABLE plan (
   bytes_xmove        INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 CREATE UNIQUE INDEX plan_one_open ON plan(session_id)
-  WHERE status IN ('confirmed','applying','paused','interrupted');
+  WHERE status IN ('confirmed','applying','paused','interrupted','stopping');  -- 'stopping' proposed (§9.1)
 
 CREATE TABLE operation (
   id            INTEGER PRIMARY KEY,
@@ -358,7 +359,7 @@ Each event is one `INSERT` in its own transaction. The TS reducer and the Rust `
 
 ### 5.4 Locked and applied groups
 
-- **Locked:** the group has an operation in an open plan (`confirmed`, `applying`, `paused`, `interrupted`).
+- **Locked:** the group has an operation in an open plan (`confirmed`, `applying`, `paused`, `interrupted`, and the proposed `stopping`, §9.1). This is the "locked by another plan" of §7 and the "locked-elsewhere" of INV-04.
 - **Applied:** some operation of the group, in any plan, ever reached `committed` (read from the journal). Before `committed`, the only moved files (a `rename` in `renaming`) are resolved by recovery while the plan is open, and no file has been copied into place; a `renaming` op that ends `failed (conflict)` after a torn rename is reported as a torn volume, not offered for retry; only Culla's partials existed, and they are removed on failure (§9.4).
 
 A locked or applied group's decision cannot change: `Decided`, `Cleared`, `Undo` and `Redo` that touch it are refused. If the top of `done` targets such a group, Ctrl+Z does nothing and the UI says "Already applied". Undoing an apply is a v2 candidate, and a decision that no longer matches the disk would make the next plan wrong. To confirm with the author: this also blocks Ctrl+Z on older, unapplied decisions behind it (U still works on them). When a plan closes, its untouched groups unlock.
@@ -496,7 +497,7 @@ In `culla_core::preflight` (M2 slice C), `preflight(plan, roots, facts) -> Repor
 
 ### 9.1 Plan states
 
-`draft → confirmed → applying ⇄ paused → completed | cancelled`. A plan found in `applying` at launch is set to `interrupted` and goes through recovery (§10), then back to `applying`. `completed`, `cancelled` and `superseded` are closed. The transaction that closes a plan as `completed` or `cancelled` also journals `committed → done` for every `rename` operation still `committed` (§9.3). At most one open plan per session (index `plan_one_open`). Proposed (§9.5, §13): a cancel first sets the plan `stopping` (an open state, between `applying` or `paused` and `cancelled`), so every later run of it, the launch's roll forward included, cancels.
+`draft → confirmed → applying ⇄ paused → completed | cancelled`. A plan found in `applying` at launch is set to `interrupted` and goes through recovery (§10), then back to `applying`; a plan found in `stopping` (proposed) stays `stopping` and its run cancels (§10.1). `completed`, `cancelled` and `superseded` are closed. The transaction that closes a plan as `completed` or `cancelled` also journals `committed → done` for every `rename` operation still `committed` (§9.3). At most one open plan per session (index `plan_one_open`). Proposed (§9.5, §13): a cancel first sets the plan `stopping` (an open state, between `applying` or `paused` and `cancelled`), so every later run of it, the launch's roll forward included, cancels.
 
 ### 9.2 Operation state machine
 
@@ -693,7 +694,7 @@ A plain-text record for people (NFR-REL-14, US-20, threat model T15); the journa
 
 ### 10.1 When
 
-At launch, the app opens each session database read-only and looks for open plans. For each open plan, it first takes the source lock file (§2.2); if the lock is busy, the plan belongs to another instance and is left alone. Holding the lock, it sets a plan in `applying` to `interrupted`, binds the volumes (§6.3) and waits until both are present ("Insert the card <label>"). The lock is held until the plan is paused or closed. SPEC §5.2 says it rolls forward the next time the app opens; to decide whether it starts on its own or after a confirm (also listed in [architecture.md](../architecture.md)).
+At launch, the app opens each session database read-only and looks for open plans. For each open plan, it first takes the source lock file (§2.2); if the lock is busy, the plan belongs to another instance and is left alone. Holding the lock, it sets a plan in `applying` to `interrupted`; a plan found in `stopping` (proposed, §9.1) stays `stopping`, never becomes `interrupted` and never goes back to `applying`, so its recovery run cancels at the first check (§9.5). It binds the volumes (§6.3) and waits until both are present ("Insert the card <label>"). The lock is held until the plan is paused or closed. SPEC §5.2 says it rolls forward the next time the app opens; to decide whether it starts on its own or after a confirm (also listed in [architecture.md](../architecture.md)).
 
 ### 10.2 Algorithm
 
