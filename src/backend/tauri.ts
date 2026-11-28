@@ -20,6 +20,7 @@ export function createBackend(): Backend {
     recentSources: notYet("recentSources"),
     chooseSource: notYet("chooseSource"),
     startSession: notYet("startSession"),
+    startOver: notYet("startOver"),
     updateSession: notYet("updateSession"),
     chooseDestination: notYet("chooseDestination"),
     fullImage: notYet("fullImage"),

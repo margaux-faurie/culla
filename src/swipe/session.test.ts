@@ -5,6 +5,7 @@ import {
   counts,
   currentPhoto,
   initialState,
+  resumedState,
   type SwipeAction,
   type SwipeState,
   swipeReducer,
@@ -152,5 +153,44 @@ describe("swipe session", () => {
     expect(currentPhoto(s)).toBe("p3");
     const done = run([keep, keep, keep, keep, keep]);
     expect(swipeReducer(done, { type: "firstUndecided" })).toBe(done);
+  });
+
+  it("resumes a stored log: decisions and undo stacks as they were, on the first undecided (US-37)", () => {
+    const before = run([keep, keep, reject, { type: "undo", now: 2 }]);
+    const s = resumedState(photos, before.log);
+    expect(s.log).toEqual(before.log);
+    expect(counts(s)).toEqual({ total: 5, kept: 2, rejected: 0, undecided: 3 });
+    expect(currentPhoto(s)).toBe("p3");
+    expect(s.feedback).toEqual({ kind: "resumed", decided: 2, total: 5 });
+    expect(s.announcement).toBe("Picked up where you left off: 2 of 5 photos decided");
+    // The redo stack came back too: redo rejects p3 again.
+    const redone = swipeReducer(s, { type: "redo", now: 3 });
+    expect(stateOf(redone.folded, 3)).toBe("rejected");
+    expect(redone.log.at(-1)?.seq).toBe(5);
+  });
+
+  it("resumes on the end card when every photo is decided, and as new with no events", () => {
+    const all = run([keep, keep, reject, keep, reject]);
+    expect(atEnd(resumedState(photos, all.log))).toBe(true);
+    const none = resumedState(photos, []);
+    expect(none).toEqual(initialState(photos));
+  });
+
+  it("keeps only the events before one that does not fold", () => {
+    const good = run([keep]).log;
+    const bad = { ...(good[0] as (typeof good)[number]), seq: 2 };
+    const s = resumedState(photos, [...good, bad]);
+    expect(s.log).toEqual(good);
+    expect(currentPhoto(s)).toBe("p2");
+  });
+
+  it("cuts a log with a repeated seq by position, keeping every event before it", () => {
+    const log = run([keep, keep]).log;
+    const repeated = { ...(log[1] as (typeof log)[number]), group_id: 3 };
+    const s = resumedState(photos, [...log, repeated]);
+    // The fold stops at the third event (seq 2 again): both first events stay.
+    expect(s.log).toEqual(log);
+    expect(counts(s).kept).toBe(2);
+    expect(currentPhoto(s)).toBe("p3");
   });
 });
