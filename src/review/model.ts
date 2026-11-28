@@ -70,16 +70,15 @@ export function disabledReason(plan: ReviewPlan): string | null {
 }
 
 /**
- * Why Apply waits for the kept photos' route (decided by Margaux 28 Nov 2026): move or copy and a
- * connected destination are set on the review screen, the first time by hand. Null when nothing is
- * missing, or when no photo is kept (rejects need neither: SPEC §10, plan() (c)).
+ * Why Apply waits for the kept photos' route, once the backend said the plan needs one (a
+ * `NoKeepRouteError`: kept photos that would get operations, SPEC §10 plan() (c)). Move or copy and
+ * a connected destination are set on the review screen, the first time by hand (decided by Margaux
+ * 28 Nov 2026). Wording proposed by the agent (SPEC §10, "Simple start").
  */
 export function keepRouteHint(
   keepMode: KeepMode | null,
   destination: DestinationSummary | null,
-  kept: number,
-): string | null {
-  if (kept === 0) return null;
+): string {
   const noDestination = destination === null;
   const unplugged = destination !== null && !destination.available;
   if (keepMode === null) {
@@ -93,7 +92,8 @@ export function keepRouteHint(
   if (unplugged) {
     return "The destination's drive is not connected. Connect it, or choose another destination.";
   }
-  return null;
+  // Both look set, yet the backend asked for them (a change it has not answered yet).
+  return "Choose move or copy and a destination for the kept photos first.";
 }
 
 /** `96 kept · moved`, `1 kept · copied`, `40 kept · 39 moved, 1 copied`. */

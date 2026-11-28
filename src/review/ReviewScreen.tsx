@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useBackend } from "../backend/context";
-import { isNotReady } from "../backend/errors";
+import { isNoKeepRoute, isNotReady } from "../backend/errors";
 import type {
   Blocker,
   BranchPlan,
@@ -54,7 +54,8 @@ export interface ReviewScreenProps {
   readonly onConfirmed: (planId: string) => void;
 }
 
-type Status = "checking" | "ready" | "failed" | "notReady";
+/** `needsRoute`: kept photos need move or copy and a connected destination before a plan. */
+type Status = "checking" | "ready" | "failed" | "notReady" | "needsRoute";
 
 /** How many thumbnails a grid shows before "See all". */
 const GRID_PREVIEW = 12;
@@ -87,12 +88,11 @@ export function ReviewScreen(props: ReviewScreenProps) {
   const [changing, setChanging] = useState(false);
   // The choice being sent, shown at once so the radio or checkbox does not flick back meanwhile.
   const [pending, setPending] = useState<SessionChange | null>(null);
+  // Counts the backend's answers to `updateSession`: each one drops the draft, so each plans again.
+  const [revision, setRevision] = useState(0);
   const uptoSeq = state.log.at(-1)?.seq ?? 0;
   const tally = counts(state);
-  const { keepMode, destinationId, rawFollows } = session.options;
-  // Kept photos need move or copy and a connected destination before a plan can hold them.
-  const routeHint = keepRouteHint(keepMode, session.destination, tally.kept);
-  const waiting = routeHint !== null;
+  const { keepMode, rawFollows } = session.options;
   const byId = useMemo(() => new Map(session.photos.map((p) => [p.id, p])), [session.photos]);
 
   // Focus goes to the heading, never to Apply: Enter pressed again or held on the swipe screen
@@ -137,6 +137,10 @@ export function ReviewScreen(props: ReviewScreenProps) {
       },
       (error: unknown) => {
         if (generation.current === mine) {
+          if (isNoKeepRoute(error)) {
+            setStatus("needsRoute");
+            return;
+          }
           setStatus(isNotReady(error) ? "notReady" : "failed");
           if (announced) {
             announce(FAILED_TEXT);
@@ -147,24 +151,14 @@ export function ReviewScreen(props: ReviewScreenProps) {
   };
   const checkRef = useRef(check);
   checkRef.current = check;
-  // Changing an option builds a new draft too: the old one can no longer be confirmed.
+  // Every answer to a change of options builds a new draft too, even when nothing changed: the
+  // backend dropped the old one, which can no longer be confirmed (§7.4).
   useEffect(() => {
-    if (!saved) {
-      return;
+    if (saved) {
+      checkRef.current(uptoSeq);
     }
-    if (waiting) {
-      // An answer still in flight belongs to a plan without the kept photos' route.
-      generation.current += 1;
-      setStatus("ready");
-      setPlan(null);
-      return;
-    }
-    checkRef.current(uptoSeq);
-    // The options are listed so a change of each builds a new draft.
-    void keepMode;
-    void destinationId;
-    void rawFollows;
-  }, [saved, uptoSeq, waiting, keepMode, destinationId, rawFollows]);
+    void revision;
+  }, [saved, uptoSeq, revision]);
   useEffect(
     () => () => {
       generation.current += 1;
@@ -192,9 +186,14 @@ export function ReviewScreen(props: ReviewScreenProps) {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const ready = status === "ready" && plan !== null && !waiting;
+  const waiting = status === "needsRoute";
+  const ready = status === "ready" && plan !== null;
   const applyEnabled = ready && canApply(plan) && !confirming && !changing;
-  const reason = waiting ? routeHint : ready ? disabledReason(plan) : null;
+  const reason = waiting
+    ? keepRouteHint(keepMode, session.destination)
+    : ready
+      ? disabledReason(plan)
+      : null;
 
   // One change at a time; the controls stay focusable meanwhile (a disabled control loses focus).
   const changingRef = useRef(false);
@@ -208,6 +207,10 @@ export function ReviewScreen(props: ReviewScreenProps) {
     setChangeError(null);
     try {
       props.onSessionChanged(await backend.updateSession(session.id, next));
+      // The draft on screen is gone in the backend: never show it as confirmable meanwhile.
+      generation.current += 1;
+      setStatus("checking");
+      setRevision((n) => n + 1);
     } catch (error) {
       setChangeError(
         isNotReady(error)
@@ -412,11 +415,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
                   />
                   RAW and edit files follow their JPEG
                 </label>
-                <span className="small">
-                  {session.options.includeSubfolders
-                    ? "Subfolders are included. This is set when sorting starts."
-                    : "Subfolders are left out. This is set when sorting starts."}
-                </span>
+                <span className="small">Photos in subfolders are always included.</span>
               </div>
             </details>
           </div>
@@ -424,7 +423,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
           <aside
             className="review-side"
             aria-labelledby="findings-title"
-            aria-busy={status === "checking" && !waiting}
+            aria-busy={status === "checking"}
           >
             <h2 id="findings-title" ref={findingsRef} className="side-title" tabIndex={-1}>
               Before you apply
@@ -434,7 +433,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
                 Culla checks the plan once the kept photos have somewhere to go.
               </p>
             )}
-            {status === "checking" && !waiting && (
+            {status === "checking" && (
               <p className="checking">
                 Checking
                 <Dots />

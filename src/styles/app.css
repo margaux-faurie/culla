@@ -273,14 +273,6 @@ kbd {
   background: var(--paper-raised);
 }
 
-.panel-head {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: var(--space-4);
-}
-
 .panel-title {
   margin: 0;
   font-size: 26px;
@@ -456,14 +448,6 @@ kbd {
   margin: 0;
   padding: 0;
   border: 0;
-}
-
-.choice-legend {
-  float: left;
-  margin-right: var(--space-2);
-  padding: 0;
-  font-size: 14px;
-  color: var(--ink-muted);
 }
 
 /* Dashed until chosen, then filled: the first time neither is chosen (SPEC §2, "Keep"). */

@@ -189,16 +189,17 @@ Links: INV (nothing before Apply), NFR-REL. Test: core unit (recording port), Wi
 
 ### US-21 Start a session
 As a photographer, I want to pick a folder and start sorting at once, so that I start culling in a few seconds and set where photos go when I apply. (Decided by Margaux 28 Nov 2026, ADR 0029; this replaces the version of 27 Nov where every option and the route were on the start screen and move or copy was chosen fresh each session.)
-- Given the start screen, then it shows only "What do you want to sort?", "Choose a folder" and the recent folders: no route, no move or copy, no destination and no Start button.
-- Given the start screen, when I choose a folder in the dialog or click a connected recent folder, then the swipe screen opens on the first photo.
-- Given a new session, then include subfolders and "RAW follows JPEG" are on, move or copy is my last choice, and the destination is the last one used, labelled "same as last time" on review; nothing is asked.
-- Given I resume a source folder, then that folder's destination is restored; given a new source folder, then the last destination used anywhere is proposed.
-- Given a first run, then no destination and no move or copy are set, and I choose both on review.
-- Given the remembered destination is missing (drive unplugged), then review shows it as not available and I must choose another destination before Apply.
-- Given kept photos, when move or copy or a connected destination is missing, then Apply stays disabled on review with a hint saying which, and the swipe screen says "You choose where on Review" under Keep while there is no destination.
-- Given I choose move or copy or a destination on review, then they are remembered for next time.
-- **(proposed, SPEC §10 "Simple start")** Given the start screen, then a folded "Options" disclosure holds "Include subfolders", the only place to change it: it decides which photos are sorted, so it cannot change once swiping has started. "RAW follows JPEG" is changed on review, in its own folded "Options", at any time before Apply.
-- **(proposed)** Given only rejected photos, then Apply needs neither move or copy nor a destination.
+- Given the start screen, then it shows only "What do you want to sort?", "Choose a folder" and the recent folders: no route, no options (not even folded), no move or copy, no destination and no Start button.
+- Given the start screen, when I choose a folder in the dialog or click a recent folder, then the swipe screen opens on the first photo, with subfolders included.
+- Given a new session, then "RAW follows JPEG" is on, move or copy is my last choice, and the destination is the one used for this folder, otherwise the last one used anywhere; nothing is asked.
+- Given a first run, then no destination and no move or copy are set, and I choose both on review before kept photos can be applied.
+- Given only rejected photos, then Apply works with neither move or copy nor a destination chosen.
+- Given the remembered destination is missing (drive unplugged), then review shows it as not available and I must choose another destination before kept photos can be applied.
+- Given the review screen, then "RAW follows JPEG" is in a folded "Options", on by default, and I can change it until Apply.
+- Given no destination yet, then the swipe screen still says where kept photos go, honestly. **(proposed)** Under Keep it reads "You choose where on Review".
+- **(proposed)** Given kept photos that would get operations, when move or copy or a connected destination is missing, then Apply stays disabled with a hint saying which, and no plan is shown; kept photos held back (applied, missing) do not count.
+- **(proposed)** Given I choose move or copy or a destination on review, then they are remembered at once and again when I confirm; the remembered destination is labelled "same as last time".
+- **(proposed)** Given a recent folder whose drive is not connected, or a folder with no photos, when I choose it, then the start screen stays and says why.
 
 Links: NFR-A11Y. Test: Vitest, Playwright.
 
@@ -415,7 +416,7 @@ As a photographer, I want to resume a session or start fresh when I reopen a fol
 - Given a folder culled before, then the start screen lists it under recent folders with its status: in progress with the number decided, or applied (US-44, SPEC §4.2).
 - Given a source with an active session and no open plan, when I open it, then I can resume it or start fresh (FE §6.1 step 4). **(proposed wording)** "Resume sorting" and "Start fresh", with the count decided so far.
 - Given I resume, then every decision is restored, the undo and redo stacks are the same as before, and the list keeps its stored order with no re-sort (FE §5.3, US-06, NFR-REL-15). **(proposed)** The swipe screen opens on the first undecided photo in that order.
-- Given I resume, then the destination is restored and labelled "same as last time" (US-21), and moved or copied starts as last chosen, as for a new session (decided by Margaux 28 Nov 2026, ADR 0029); both can be changed on review. **(proposed)** "Include subfolders" and "RAW follows JPEG" are restored as the session had them; RAW follows can be changed on review.
+- Given I resume, then the destination is restored and labelled "same as last time" (US-21), and moved or copied starts as last chosen, as for a new session; both can be changed on review (decided by Margaux 28 Nov 2026, ADR 0029). **(proposed)** "RAW follows JPEG" is restored as the session had it, and can be changed on review; subfolders are always included.
 - Given I start fresh, then the old session is archived with its events and journal kept, and every photo starts undecided (FE §6.1 step 4).
 - Given the card comes back under another drive letter, then its session and cache are found by volume serial and relative path (US-09, NFR-REL-13).
 - Given two cards with the same folder names, then each has its own session (US-09).

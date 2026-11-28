@@ -436,4 +436,44 @@ test.describe("move or copy and the destination on review (decided by Margaux 28
     await tabUntil(page, ".apply-box .button-primary");
     await expect(applyButton(page)).toBeFocused();
   });
+
+  test("the first time: choose move or copy and a destination, confirm, and the apply runs", async ({
+    page,
+  }) => {
+    await page.addInitScript(
+      `localStorage.setItem("culla-demo:destinations", '{"bySource":{},"lastUsed":null,"keepMode":null}')`,
+    );
+    await startSorting(page, { keepMode: null });
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.press("Enter");
+    await expect(applyButton(page)).toBeDisabled();
+    await page.getByRole("button", { name: "Choose a destination" }).click();
+    await expect(page.getByText("Choose move or copy for the kept photos first.")).toBeVisible();
+    await chooseKeepMode(page, "Move");
+    await expect(applyButton(page)).toHaveText("Move 2 photos");
+    await applyButton(page).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Move 2 photos" }).click();
+    await expect(page.locator("#apply-title")).toBeFocused();
+    await expect(page.getByRole("heading", { level: 1, name: "Apply finished" })).toBeVisible({
+      timeout: 15_000,
+    });
+  });
+
+  test("Change to the same destination plans again, and the new plan applies", async ({ page }) => {
+    await startSorting(page);
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Enter");
+    await expect(applyButton(page)).toHaveText("Move 1 photo");
+    await expect(applyButton(page)).toBeEnabled();
+    // The demo's dialog always answers the same destination: the backend drops the draft anyway.
+    await page.getByRole("button", { name: "Change" }).click();
+    await expect(page.getByText("same as last time")).toBeHidden();
+    await expect(applyButton(page)).toHaveText("Move 1 photo");
+    await expect(applyButton(page)).toBeEnabled();
+    await applyButton(page).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Move 1 photo" }).click();
+    await expect(page.locator("main.apply")).toBeVisible();
+    await expect(page.getByText("Could not check the plan.")).toHaveCount(0);
+  });
 });

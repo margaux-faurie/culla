@@ -30,6 +30,8 @@ import {
   DEFAULT_READ_RATE,
   type DemoFacts,
   folded,
+  keptNeedingRoute,
+  type PlanGroup,
   type PlanSettings,
   reviewPlanOf,
 } from "./demo-plan";
@@ -42,6 +44,7 @@ import {
   remember,
   rememberKeepMode,
 } from "./destinations";
+import { NoKeepRouteError } from "./errors";
 import type {
   ApplyStatus,
   Backend,
@@ -127,6 +130,21 @@ const PICKED: DemoSource = {
     { relative: ["Barcelona", "MGF_7291.MOV"], extension: ".MOV", reason: "unknownType" },
     { relative: ["notes.txt"], extension: ".txt", reason: "unknownType" },
   ],
+};
+
+/** What "Choose a folder" opens in the `empty-folder` scenario: a folder with no photos. */
+const EMPTY: DemoSource = {
+  summary: {
+    id: "src-empty",
+    name: "Scans",
+    folder: { path: "E:\\Scans", volume: "Photos drive (E:)" },
+    photoCount: 0,
+    status: { kind: "new" },
+    connected: true,
+  },
+  specs: [],
+  rejectedFolderExists: false,
+  others: [],
 };
 
 const DESTINATIONS: readonly DestinationSummary[] = [
@@ -316,12 +334,17 @@ export function createBackend(options: DemoOptions = {}): Backend {
   const plan = (session: DemoSession, uptoSeq: number, previous?: ReviewPlan): ReviewPlan => {
     const { folded: decisions } = fold(session.events.filter((e) => e.seq <= uptoSeq));
     const sourcePath = session.source.summary.folder.path;
-    const states = session.entries.map((_, i) => stateOf(decisions, i + 1));
+    const groups: PlanGroup[] = session.entries.map((e, i) => ({
+      photoId: e.photo.id,
+      group: e.group,
+      // Group ids are display positions until the backend lists groups (SPEC §10, M3).
+      state: stateOf(decisions, i + 1),
+    }));
     const route = keepRouteOf(session);
-    // As the core's plan (SPEC §10, plan() (c)): kept photos need move or copy and an available
-    // destination; a plan with rejects only needs neither.
-    if (route === null && states.includes("kept")) {
-      throw new Error("no keep route");
+    // As the core's plan (SPEC §10, plan() (c)): kept photos that would get operations need move
+    // or copy and an available destination; rejects alone, or kept photos held back, need neither.
+    if (route === null && keptNeedingRoute(groups, session.facts) > 0) {
+      throw new NoKeepRouteError();
     }
     const settings: PlanSettings = {
       sourcePath,
@@ -337,12 +360,7 @@ export function createBackend(options: DemoOptions = {}): Backend {
     const draft = reviewPlanOf({
       planId: `demo-plan-${planCount}`,
       uptoSeq,
-      groups: session.entries.map((e, i) => ({
-        photoId: e.photo.id,
-        group: e.group,
-        // Group ids are display positions until the backend lists groups (SPEC §10, M3).
-        state: states[i] ?? "undecided",
-      })),
+      groups,
       settings,
       existing: session.existing,
       facts: session.facts,
@@ -546,8 +564,9 @@ export function createBackend(options: DemoOptions = {}): Backend {
     recentSources: () => Promise.resolve(SOURCES.map((s) => s.summary)),
 
     chooseSource: () => {
-      known.set(PICKED.summary.id, PICKED);
-      return Promise.resolve(PICKED.summary);
+      const picked = scenario.emptyFolder === true ? EMPTY : PICKED;
+      known.set(picked.summary.id, picked);
+      return Promise.resolve(picked.summary);
     },
 
     startSession: async ({ sourceId, includeSubfolders }: StartOptions): Promise<SessionInfo> => {
@@ -557,8 +576,7 @@ export function createBackend(options: DemoOptions = {}): Backend {
       }
       // Nothing is asked at the start (decided by Margaux 28 Nov 2026): RAW follows JPEG, move or
       // copy as last chosen, the destination remembered for this folder or else the last one used.
-      const proposal = proposedDestinationId(memory, sourceId);
-      const destination = destinationOf(proposal?.id ?? null) ?? null;
+      const destination = destinationOf(proposedDestinationId(memory, sourceId)) ?? null;
       return openSession(source, destination, destination !== null, {
         sourceId,
         includeSubfolders,

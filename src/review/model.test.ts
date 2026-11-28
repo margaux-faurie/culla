@@ -198,23 +198,20 @@ describe("keep route on review (decided by Margaux 28 Nov 2026)", () => {
   };
   const unplugged: DestinationSummary = { ...selects, available: false };
 
-  it("asks for nothing while no photo is kept", () => {
-    expect(keepRouteHint(null, null, 0)).toBeNull();
-    expect(keepRouteHint(null, unplugged, 0)).toBeNull();
-  });
-
   it("asks for move or copy and a destination before kept photos can be applied", () => {
-    expect(keepRouteHint(null, null, 2)).toBe(
+    expect(keepRouteHint(null, null)).toBe(
       "Choose move or copy and a destination for the kept photos first.",
     );
-    expect(keepRouteHint(null, selects, 2)).toBe("Choose move or copy for the kept photos first.");
-    expect(keepRouteHint("move", null, 1)).toBe("Choose a destination for the kept photos first.");
-    expect(keepRouteHint("copy", unplugged, 1)).toBe(
+    expect(keepRouteHint(null, selects)).toBe("Choose move or copy for the kept photos first.");
+    expect(keepRouteHint("move", null)).toBe("Choose a destination for the kept photos first.");
+    expect(keepRouteHint("copy", unplugged)).toBe(
       "The destination's drive is not connected. Connect it, or choose another destination.",
     );
-    expect(keepRouteHint(null, unplugged, 1)).toBe(
+    expect(keepRouteHint(null, unplugged)).toBe(
       "Choose move or copy, and a destination that is connected, for the kept photos first.",
     );
-    expect(keepRouteHint("move", selects, 3)).toBeNull();
+    expect(keepRouteHint("move", selects)).toBe(
+      "Choose move or copy and a destination for the kept photos first.",
+    );
   });
 });

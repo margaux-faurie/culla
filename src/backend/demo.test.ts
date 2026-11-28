@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createBackend, type DemoStorage, MEMORY_KEY } from "./demo";
 import { EMPTY_MEMORY } from "./destinations";
+import { isNoKeepRoute } from "./errors";
 
 const memoryStorage = (): DemoStorage & { data: Map<string, string> } => {
   const data = new Map<string, string>();
@@ -109,13 +110,46 @@ describe("demo backend", () => {
     expect(rejects.kept).toBeNull();
     expect(rejects.blockers).toEqual([]);
     await decide(2, "keep");
-    await expect(backend.reviewPlan(session.id, 2)).rejects.toThrow();
+    const noRoute = async () => {
+      try {
+        await backend.reviewPlan(session.id, 2);
+      } catch (error) {
+        return isNoKeepRoute(error);
+      }
+      return false;
+    };
+    expect(await noRoute()).toBe(true);
     await backend.updateSession(session.id, { keepMode: "move" });
-    await expect(backend.reviewPlan(session.id, 2)).rejects.toThrow();
+    expect(await noRoute()).toBe(true);
     await backend.updateSession(session.id, { destinationId: "dst-selects" });
     const both = await backend.reviewPlan(session.id, 2);
     expect(both.counts.kept).toBe(1);
     expect(both.kept?.to).toBe("D:\\Photos\\Selects 2026");
+  });
+
+  it("needs no keep route for kept photos held back as applied, as the core's plan (c)", async () => {
+    const backend = createBackend({ storage: null, seed: EMPTY_MEMORY, scenario: "held" });
+    const sourceId = (await backend.chooseSource())?.id ?? "";
+    const session = await backend.startSession({ sourceId, includeSubfolders: true });
+    // Group 2 is MGF_7002, applied by an earlier plan in this scenario.
+    await backend.recordEvent(session.id, {
+      seq: 1,
+      ts: 1,
+      cause: "user",
+      type: "decided",
+      group_id: 2,
+      verdict: "keep",
+    });
+    const plan = await backend.reviewPlan(session.id, 1);
+    expect(plan.kept).toBeNull();
+    expect(plan.held.map((h) => [h.name, h.reason])).toEqual([["MGF_7002", "applied"]]);
+  });
+
+  it("opens a folder with no photos in the empty-folder scenario", async () => {
+    const backend = createBackend({ storage: null, scenario: "empty-folder" });
+    const sourceId = (await backend.chooseSource())?.id ?? "";
+    const session = await backend.startSession({ sourceId, includeSubfolders: true });
+    expect(session.photos).toHaveLength(0);
   });
 
   it("a draft made before the options changed cannot be confirmed", async () => {

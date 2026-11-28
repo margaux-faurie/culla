@@ -14,12 +14,13 @@ test.describe("start screen (US-21, US-44; decided by Margaux 28 Nov 2026)", () 
     await expect(page.getByRole("list", { name: "Where your photos will go" })).toBeHidden();
     await expect(page.getByRole("button", { name: "Start sorting" })).toHaveCount(0);
     await expect(page.getByRole("radio")).toHaveCount(0);
-    // Include subfolders is folded away, on by default.
-    await expect(page.getByRole("checkbox", { name: "Include subfolders" })).toBeHidden();
+    // No options at all: subfolders are always included.
+    await expect(page.getByRole("checkbox")).toHaveCount(0);
+    await expect(page.getByText("Options", { exact: true })).toHaveCount(0);
     expect(await blockingViolations(page)).toEqual([]);
   });
 
-  test("choosing a folder starts sorting at once, with its subfolders", async ({ page }) => {
+  test("choosing a folder starts sorting at once, subfolders included", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("button", { name: "Choose a folder" }).click();
     await expect(swipe(page)).toBeFocused();
@@ -27,16 +28,12 @@ test.describe("start screen (US-21, US-44; decided by Margaux 28 Nov 2026)", () 
     await expect(tally(page, "undecided")).toHaveText("24 undecided");
   });
 
-  test("Options leaves subfolders out before sorting starts", async ({ page }) => {
-    await page.goto("/");
-    await page.getByText("Options", { exact: true }).click();
-    const subfolders = page.getByRole("checkbox", { name: "Include subfolders" });
-    await expect(subfolders).toBeChecked();
-    await subfolders.uncheck();
-    expect(await blockingViolations(page)).toEqual([]);
+  test("a folder with no photos says so and stays", async ({ page }) => {
+    await page.goto("/?scenario=empty-folder");
     await page.getByRole("button", { name: "Choose a folder" }).click();
-    await expect(swipe(page)).toBeFocused();
-    await expect(page.locator(".swipe-tally .strong")).toHaveText("1 / 4");
+    await expect(page.getByRole("alert")).toHaveText("This folder has no photos.");
+    await expect(swipe(page)).toHaveCount(0);
+    expect(await blockingViolations(page)).toEqual([]);
   });
 
   test("a connected recent folder starts sorting at once", async ({ page }) => {
@@ -65,8 +62,7 @@ test.describe("start screen (US-21, US-44; decided by Margaux 28 Nov 2026)", () 
   test("reflows at 320 px without horizontal scrolling", async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 800 });
     await page.goto("/");
-    await page.getByText("Options", { exact: true }).click();
-    await expect(page.getByRole("checkbox", { name: "Include subfolders" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Choose a folder" })).toBeVisible();
     const overflow = await page.evaluate<number>(
       "document.documentElement.scrollWidth - document.documentElement.clientWidth",
     );

@@ -195,6 +195,18 @@ function kindOf(
 }
 
 /**
+ * How many kept groups would get operations, so need move or copy and a destination: those not
+ * held by the plan as applied or missing (SPEC §10, plan() (c)). Holds that depend on the
+ * destination (no free suffix) cannot be known without one, so they count, as in the core.
+ */
+export function keptNeedingRoute(groups: readonly PlanGroup[], facts: DemoFacts): number {
+  return groups.filter(
+    ({ group, state }) =>
+      state === "kept" && !facts.applied.has(group.name) && !facts.missing.has(group.name),
+  ).length;
+}
+
+/**
  * Plans the decided groups in display order (§7). `existing` holds the folded display paths of the
  * files and folders under the destination and `_rejected`.
  */

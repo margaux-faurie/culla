@@ -15,15 +15,13 @@ type Recents =
 /**
  * Start (SPEC §4.2, US-21, US-44; decided by Margaux 28 Nov 2026): "What do you want to sort?",
  * the folder dialog and the recent folders. Choosing a folder starts sorting at once; the backend
- * fills in the defaults, and move or copy and the destination are set on the review screen.
- * "Include subfolders" sits in a folded Options disclosure: it decides which photos are sorted, so
- * it is set here, before sorting starts (proposed by the agent, SPEC §10).
+ * fills in the defaults, and move or copy and the destination are set on the review screen. No
+ * options here: subfolders are always included (decided by Margaux 28 Nov 2026).
  * Resuming or starting fresh on a folder with a session (SPEC §4.2) is not built yet (SPEC §10).
  */
 export function StartScreen({ onStarted }: StartScreenProps) {
   const backend = useBackend();
   const [recents, setRecents] = useState<Recents>({ kind: "loading" });
-  const [includeSubfolders, setIncludeSubfolders] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // Desktop mode until the Tauri commands land: a notice instead of error messages.
   const [notReady, setNotReady] = useState(false);
@@ -62,13 +60,9 @@ export function StartScreen({ onStarted }: StartScreenProps) {
       return;
     }
     try {
-      const session = await backend.startSession({ sourceId: source.id, includeSubfolders });
+      const session = await backend.startSession({ sourceId: source.id, includeSubfolders: true });
       if (session.photos.length === 0) {
-        setError(
-          includeSubfolders
-            ? "This folder has no photos."
-            : "This folder has no photos outside its subfolders.",
-        );
+        setError("This folder has no photos.");
         return;
       }
       onStarted(session);
@@ -132,22 +126,6 @@ export function StartScreen({ onStarted }: StartScreenProps) {
               {error}
             </p>
           )}
-          <details className="options">
-            <summary>Options</summary>
-            <div className="options-body">
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={includeSubfolders}
-                  onChange={(e) => setIncludeSubfolders(e.currentTarget.checked)}
-                />
-                Include subfolders
-              </label>
-              <span className="small">
-                Set before sorting starts: it decides which photos you sort.
-              </span>
-            </div>
-          </details>
           <h2 className="subtitle">Recent folders</h2>
           <RecentList recents={recents} onSelect={(source) => run(() => start(source))} />
         </section>

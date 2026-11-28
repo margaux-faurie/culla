@@ -25,19 +25,10 @@ export interface DestinationMemory {
 
 export const EMPTY_MEMORY: DestinationMemory = { bySource: {}, lastUsed: null, keepMode: null };
 
-export function proposedDestinationId(
-  memory: DestinationMemory,
-  sourceId: string,
-): { id: string; reason: "thisSource" | "lastUsed" } | null {
+export function proposedDestinationId(memory: DestinationMemory, sourceId: string): string | null {
   // Own keys only: an id such as `constructor` or `__proto__` must not find an inherited value.
   const own = Object.hasOwn(memory.bySource, sourceId) ? memory.bySource[sourceId] : undefined;
-  if (own !== undefined) {
-    return { id: own, reason: "thisSource" };
-  }
-  if (memory.lastUsed !== null) {
-    return { id: memory.lastUsed, reason: "lastUsed" };
-  }
-  return null;
+  return own ?? memory.lastUsed;
 }
 
 export function remember(
