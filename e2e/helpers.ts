@@ -7,9 +7,8 @@ import { expect, type Page } from "@playwright/test";
  * color-contrast). An animation cancelled by an unmount counts as settled.
  */
 export async function animationsSettled(page: Page) {
-  await page.evaluate(async () => {
-    await Promise.allSettled(document.getAnimations().map((a) => a.finished));
-  });
+  // A string, so the e2e tsconfig needs no DOM types; Playwright awaits the promise it gives.
+  await page.evaluate("Promise.allSettled(document.getAnimations().map((a) => a.finished))");
 }
 
 /** Serious and critical axe violations once animations have settled (NFR-A11Y, testing.md §2). */
