@@ -98,6 +98,11 @@ Properties:
 - `crates/core/tests/golden.rs` compiles the cases in with `include_str!` (the core does no file I/O, tests included), parses each log, checks it is in canonical form, folds it and compares the text with the expected file byte for byte; it also folds every prefix.
 - `tests/golden.test.ts` (Vitest) reads the folder instead, so no case can be left out, and fails on a log without its expected file or the reverse. It does the same checks with the TS port of the codec (`src/decisions/codec.ts`) and reducer (`src/decisions/log.ts`): canonical log, fold text byte for byte, every prefix before a bad event.
 
+### 3.4 Apply log
+
+- `culla_core::applylog` (file-engine §9.8) is tested in `crates/core/src/applylog/tests.rs`: the whole text for a plan holding every outcome a run can leave (pinned byte for byte, inline in the test), one line per kind (`rename`, `copy`, `xmove`, `finish`) and outcome with the summary count, every way a run ends, an empty redo plan without a destination, escaping of hostile names and display strings (no unescaped control, bidi or invisible character, no extra line, quotes always paired), determinism (the same inputs, and a journal rebuilt from the same entries, give the same bytes), and the field names, so a new field (and anything NFR-PRIV-06 keeps out, such as EXIF or a serial) is a deliberate change.
+- Not a golden file: `cargo xtask golden` is std only and would have to reimplement the renderer to write one (proposed, SPEC §10). The check against the journal (NFR-REL-14) comes with the adapter that writes the file.
+
 ## 4. Nothing touches the disk before Apply
 
 This is the first invariant in `CLAUDE.md` and [ADR 0003](adr/0003-stage-decisions-in-a-queue-until-explicit-apply.md). It is tested at three levels.

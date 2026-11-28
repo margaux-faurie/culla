@@ -47,7 +47,7 @@ Group decision state (`undecided | kept | rejected`) and the undo/redo stacks ar
 - Pragmas on open: `journal_mode=WAL`, `synchronous=FULL`, `foreign_keys=ON`, `application_id=0x43554C4C`, `user_version` for migrations. `mmap_size` stays 0. WAL with `synchronous=FULL` is proposed in ADR 0009 and NFR-REL-10; to confirm (§13).
 - Every decision event and every journal transition is its own transaction, committed before the next file system step starts (write-ahead).
 - Next to each database, `<key>.lock`: recovery and apply open it with share mode 0 and hold it for their whole duration, so no second process can recover or apply the same source. It is taken before any plan status change (including `applying → interrupted` at launch). If it is already held, the plan is being applied by another instance: this instance changes nothing in that database and shows the source as busy. The app is also single-instance.
-- The plain-text apply log goes to `%LOCALAPPDATA%\Culla\logs\<date>-plan<id>.log`. To decide: whether a copy is also written into the destination (an extra write on the user's volume).
+- The plain-text apply log goes to `%LOCALAPPDATA%\Culla\logs\<date>-plan<id>.log`, one file per run of a plan (§9.8). To decide: whether a copy is also written into the destination (an extra write on the user's volume).
 
 ### 2.3 Schema (session database, v1)
 
@@ -676,6 +676,18 @@ Enforcement:
 - Changes under `winfs/` and `clippy.toml` need the author's review: Margaux is a required code owner for every protected path (`.github/CODEOWNERS`; the main ruleset requires code-owner review), and the agent hook described in [practices.md](../research/practices.md) blocks agent edits to the same paths.
 - The core's fake `FileSystem` has no removal method except these two, and property tests assert that every removal happened with a valid proof.
 
+### 9.8 The apply log
+
+A plain-text record for people (NFR-REL-14, US-20, threat model T15); the journal stays the record the code trusts. Rendered by `culla_core::applylog::render` (pure: the same header, journal and footer give the same bytes) and written by the adapter when a run of a plan ends (an apply, a resume, a redo, also after a pause, a cancel or a journal write failure), into a new file under `%LOCALAPPDATA%\Culla\logs` opened with `create_new` (a name already taken gets a suffix; the log never replaces a file), lines ending with `\n`. The adapter part comes with the M2 apply adapters.
+
+- Header: Culla's version; the plan id, its purpose (`apply` or `redo`) and whether this run is the first or a resume; the start time as the caller formats it; the source and the destination as the display strings the route view shows (`none` without keeps); the rejected folder is named as `_rejected` in the source.
+- Alarms first (`failed (lost)`, `failed (fs_inconsistent)`, §10.2), with the advice to run `chkdsk`, only when there is one; the same lines are repeated in plan order below.
+- One line per operation, in plan order, with its state when the run ended (not one line per journal transition: the journal already holds those, and the log is for reading): `op <id>  group <id>  keep|reject  rename|copy|xmove|finish  source "<path>" → rejected|destination "<path>"  <state>`, then `attempts <n>` when more than one copy attempt was made, and `blake3 <hex>` once the journal has H1 (H1 = H2 = H3 for a committed copy; a `finish` shows the H1 it checks against). A failed state carries its reason (`failed (verify_mismatch)`, `failed (io <Win32 code>)`). Paths are the components from their root joined with `\`, in quotes.
+- Footer: the count of operations per state (in the order of §2.1, states with none left out) and of alarms; how the run ended (`finished`, `paused (<reason>)`, `cancelled`, `stopped` when the journal could not be written and the run resumes on the next launch, `stopped by an internal error` when the journal refused an entry the executor asked for, `RunError::Journal`: a bug in Culla, which the log asks the user to report, with no promise of a resume); the end time as the caller formats it.
+- Escaping (threat model T6b): every string from the card or the caller goes through the shared set of `culla_core::text` (control, bidi, zero-width and other invisible characters, written `\u{..}`), and a quote, a `\` or a `{` inside a name is escaped too, so a name cannot add a line, reorder what is shown, close its quotes or pose as a folder, and the text reads one way only: `\u{` always starts an escape and any other `\` is a separator (a name `u{a}x` in `dir` shows as `dir\u\u{7b}a}x`, a name with a newline as `dir\u{a}x`). The display strings are escaped but not quoted, each alone on its line; their `\` are kept as separators and a `{` in them is escaped, for the same reason.
+- Never in the log (NFR-PRIV-06): EXIF (so no GPS position and no body serial), volume serials, GUID paths, anything about the files but their paths, states and content hashes. The input types have no field for any of it.
+- Proposed, awaiting Margaux (SPEC §10): the layout above, one line per operation rather than per transition, the field names and their order, LF line endings, and leaving out for now the leftover partials kept because their source vanished (§9.6; the adapter knows which still exist and can add them as a section later).
+
 ## 10. Crash recovery and resume
 
 ### 10.1 When
@@ -819,6 +831,7 @@ Each invariant has at least one test in [testing.md](../testing.md): property te
 - Undo blocked behind a locked or applied group (§5.4).
 - Nested sources: refused only while the other has an open plan (§6.1), or always while it has applied groups.
 - Session after a completed apply (§9.6); auto-resume or confirm (§10.1); log copy in the destination (§2.2).
+- The apply log's format (§9.8): proposed with `culla_core::applylog`, awaiting Margaux (SPEC §10).
 - `FileRenameInfoEx` support on FAT32 and exFAT, and the path form it accepts, to check in adapter tests.
 - Proposed with the journal executor (PR #36): flushing every folder on the target's path below the root, and the parent of each, before a source removal (`flush_dirs`, §9.3). Whether `FlushFileBuffers` on a folder handle is allowed and makes the directory entries durable on FAT32 and exFAT (and which access the handle needs) is to check in adapter tests; if it is not, the alternative is to fall back to a volume flush or to accept the gap and record it.
 - For Margaux, raised in review of PR #36: on FAT32 and exFAT cards, also flush `_rejected` and any folder `make_dirs` just created right after `make_dirs` and before the first rename into it? Rejects are renames into a fresh folder and are never flushed while the plan is open; if a crash loses the folder's own entry, the files renamed into it can be orphaned (neither at S nor at F). Today the folders are flushed only before a source removal (`flush_dirs`), which renames never reach. Cost: one folder flush per new folder.
