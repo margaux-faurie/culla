@@ -10,6 +10,11 @@ export interface ConfirmDialogProps {
   /** Esc or "Go back": closes, nothing is recorded or moved. */
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
+  /**
+   * The browser closed the dialog on its own (Chromium closes a modal on a second Esc even when
+   * `cancel` is prevented): the parent syncs its state so Apply can open it again.
+   */
+  readonly onClosed: () => void;
 }
 
 /**
@@ -17,7 +22,14 @@ export interface ConfirmDialogProps {
  * starts on "Go back" (proposed), so a stray Enter closes it rather than confirming; Tab stays inside
  * while it is open; Esc closes it. It sits outside the review's main element.
  */
-export function ConfirmDialog({ open, plan, busy, onCancel, onConfirm }: ConfirmDialogProps) {
+export function ConfirmDialog({
+  open,
+  plan,
+  busy,
+  onCancel,
+  onConfirm,
+  onClosed,
+}: ConfirmDialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const backRef = useRef<HTMLButtonElement>(null);
   const text = confirmText(plan);
@@ -76,6 +88,7 @@ export function ConfirmDialog({ open, plan, busy, onCancel, onConfirm }: Confirm
       aria-labelledby="confirm-title"
       aria-describedby="confirm-body"
       onCancel={onCancelEvent}
+      onClose={onClosed}
       onKeyDown={onKeyDown}
     >
       <h2 id="confirm-title" className="panel-title">

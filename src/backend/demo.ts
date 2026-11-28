@@ -245,6 +245,17 @@ export function createBackend(options: DemoOptions = {}): Backend {
     return session;
   };
 
+  /**
+   * Once a plan is confirmed its groups are locked (design/file-engine.md §5.4): the session builds
+   * no new draft and confirms nothing more.
+   */
+  const unlocked = (session: DemoSession): DemoSession => {
+    if (session.confirmed !== null) {
+      throw new Error("plan already confirmed");
+    }
+    return session;
+  };
+
   const sessionOfPlan = (planId: string): DemoSession => {
     for (const session of sessions.values()) {
       if (session.latest?.planId === planId) {
@@ -414,7 +425,7 @@ export function createBackend(options: DemoOptions = {}): Backend {
     },
 
     reviewPlan: async (sessionId, uptoSeq) => {
-      const session = sessionOf(sessionId);
+      const session = unlocked(sessionOf(sessionId));
       const saved = session.events.at(-1)?.seq ?? 0;
       if (saved < uptoSeq) {
         throw new Error("decisions not saved yet");
@@ -427,7 +438,7 @@ export function createBackend(options: DemoOptions = {}): Backend {
     },
 
     chooseVolume: async (planId, volumeId) => {
-      const session = sessionOfPlan(planId);
+      const session = unlocked(sessionOfPlan(planId));
       const choices = session.facts.sourceChoices;
       if (choices === null || !choices.some((c) => c.id === volumeId)) {
         throw new Error("unknown volume");
@@ -437,7 +448,7 @@ export function createBackend(options: DemoOptions = {}): Backend {
     },
 
     confirmPlan: async (planId): Promise<ConfirmResult> => {
-      const session = sessionOfPlan(planId);
+      const session = unlocked(sessionOfPlan(planId));
       const previous = session.latest as ReviewPlan;
       // What changes on disk between review and confirm, once (US-35).
       if (!session.confirmChecked) {

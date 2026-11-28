@@ -357,6 +357,16 @@ describe("demo confirm (US-35)", () => {
     expect(result.kind).toBe("confirmed");
   });
 
+  it("locks the session once a plan is confirmed (design/file-engine.md §5.4)", async () => {
+    const { backend, session, seq } = await decide([[1, "keep"]]);
+    const plan = await backend.reviewPlan(session.id, seq);
+    const result = await backend.confirmPlan(plan.planId);
+    expect(result.kind).toBe("confirmed");
+    // A second confirm, a repeated one included, and a new draft are refused.
+    await expect(backend.confirmPlan(plan.planId)).rejects.toThrow();
+    await expect(backend.reviewPlan(session.id, seq)).rejects.toThrow();
+  });
+
   it("rebuilds the plan when a name was taken since the review (P11)", async () => {
     const { backend, session, seq } = await decide([[MGF_7001, "keep"]], {
       scenario: "taken-at-confirm",

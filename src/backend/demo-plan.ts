@@ -13,6 +13,9 @@
  * - preflight holds a group on its first rule in P8, P9, P10, P14 order, and checks the blockers
  *   (P1 to P5, P16) and warnings (P12, P15, P17) over the groups that are not held (SPEC §10).
  *
+ * Not modelled in the demo: the rule that a target folder name taken by a file claims it for the
+ * plan (§7.3), and the TargetFolderBlocked hold it leads to.
+ *
  * Facts the demo cannot look up (locks, links, changed files, free space) come from its scenarios.
  * Pure: no I/O, no DOM. Nothing here is sent back: the backend re-derives paths from opaque ids.
  */
@@ -227,11 +230,14 @@ export function draftPlan(
     const files = filesOf(group, settings.rawFollows);
     const root = action === "keep" ? settings.destinationPath : rejectedRoot(settings.sourcePath);
     const targetFolder = joinPath(root, group.folder);
+    // Each member keeps its own stem case (`MGF_7001.JPG` beside `mgf_7001.nef` in the app); the
+    // suffix goes after the stem (§7.3). The demo's members all spell the stem as the group does.
     const targetsFor = (n: number): string[] => {
-      const stem = n === 0 ? group.name : `${group.name}_${n}`;
-      return files.going.map((name) =>
-        joinPath(targetFolder, [stem + name.slice(group.name.length)]),
-      );
+      const tail = n === 0 ? "" : `_${n}`;
+      return files.going.map((name) => {
+        const stem = name.slice(0, group.name.length);
+        return joinPath(targetFolder, [stem + tail + name.slice(group.name.length)]);
+      });
     };
     let suffix = -1;
     for (let n = 0; n <= MAX_SUFFIX; n += 1) {

@@ -8,6 +8,7 @@ import type {
   ReviewPlan,
   SessionInfo,
   SessionPhoto,
+  VolumeChoice,
 } from "../backend/types";
 import { RouteView } from "../route/RouteView";
 import { counts, type SwipeState, stateAt } from "../swipe/session";
@@ -88,20 +89,38 @@ export function ReviewScreen(props: ReviewScreenProps) {
   // saved; going back, changing decisions and coming back builds a new one (§7.4). Only the answer
   // to the latest request is shown.
   const generation = useRef(0);
-  const check = (seq: number) => {
+  /**
+   * Puts a message in the status region. It is cleared first, so the same words said twice (two
+   * "Check again" with the same outcome) are read out again.
+   */
+  const announce = (text: string) => {
+    setAnnouncement("");
+    window.setTimeout(() => setAnnouncement(text), 50);
+  };
+  // `announced`: the user asked for this check ("Check again"), so its outcome is read out.
+  const check = (seq: number, announced = false) => {
     generation.current += 1;
     const mine = generation.current;
     setStatus("checking");
+    if (announced) {
+      setAnnouncement("");
+    }
     backend.reviewPlan(session.id, seq).then(
       (next) => {
         if (generation.current === mine) {
           setPlan(next);
           setStatus("ready");
+          if (announced) {
+            announce(outcomeText(next));
+          }
         }
       },
       (error: unknown) => {
         if (generation.current === mine) {
           setStatus(isNotReady(error) ? "notReady" : "failed");
+          if (announced) {
+            announce(FAILED_TEXT);
+          }
         }
       },
     );
@@ -163,10 +182,14 @@ export function ReviewScreen(props: ReviewScreenProps) {
     }, 0);
   };
 
+  // A second activation while the first confirm is in flight does nothing: the state flag only
+  // disables the button at the next render, the ref holds at once.
+  const confirmingRef = useRef(false);
   const confirm = async () => {
-    if (plan === null) {
+    if (plan === null || confirmingRef.current) {
       return;
     }
+    confirmingRef.current = true;
     generation.current += 1;
     setConfirming(true);
     try {
@@ -177,7 +200,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
       }
       setPlan(result.plan);
       setStatus("ready");
-      setAnnouncement(
+      announce(
         result.kind === "blocked"
           ? "Nothing has started. A new problem stops the apply: see Needs fixing first."
           : "Nothing has started. The plan changed since you checked it: look at it again, then apply.",
@@ -187,21 +210,33 @@ export function ReviewScreen(props: ReviewScreenProps) {
       setStatus(isNotReady(error) ? "notReady" : "failed");
       closeDialog(false);
     } finally {
+      confirmingRef.current = false;
       setConfirming(false);
     }
   };
 
-  const chooseVolume = async (volumeId: string) => {
+  const chooseVolume = async (choice: VolumeChoice) => {
     if (plan === null) {
       return;
     }
     generation.current += 1;
+    const mine = generation.current;
     setStatus("checking");
+    setAnnouncement("");
     try {
-      setPlan(await backend.chooseVolume(plan.planId, volumeId));
+      const next = await backend.chooseVolume(plan.planId, choice.id);
+      if (generation.current !== mine) {
+        return;
+      }
+      setPlan(next);
       setStatus("ready");
+      announce(`Using ${choice.label}. ${outcomeText(next)}`);
     } catch (error) {
+      if (generation.current !== mine) {
+        return;
+      }
       setStatus(isNotReady(error) ? "notReady" : "failed");
+      announce(FAILED_TEXT);
     }
   };
 
@@ -292,7 +327,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
             {status === "failed" && (
               <div className="finding-group">
                 <p className="finding">Could not check the plan. Nothing has moved.</p>
-                <CheckAgain onClick={() => check(uptoSeq)} />
+                <CheckAgain onClick={() => check(uptoSeq, true)} />
               </div>
             )}
             {status === "notReady" && (
@@ -303,7 +338,7 @@ export function ReviewScreen(props: ReviewScreenProps) {
                 plan={plan}
                 othersOpen={othersOpen}
                 onToggleOthers={() => setOthersOpen((open) => !open)}
-                onCheckAgain={() => check(uptoSeq)}
+                onCheckAgain={() => check(uptoSeq, true)}
                 onChooseVolume={chooseVolume}
               />
             )}
@@ -355,6 +390,12 @@ export function ReviewScreen(props: ReviewScreenProps) {
           busy={confirming}
           onCancel={() => closeDialog(true)}
           onConfirm={confirm}
+          onClosed={() => {
+            // Only a close the state did not ask for: a forced close leaves Apply able to reopen it.
+            if (dialogOpen.current) {
+              closeDialog(true);
+            }
+          }}
         />
       )}
     </>
@@ -490,7 +531,7 @@ interface FindingsProps {
   readonly othersOpen: boolean;
   readonly onToggleOthers: () => void;
   readonly onCheckAgain: () => void;
-  readonly onChooseVolume: (volumeId: string) => void;
+  readonly onChooseVolume: (choice: VolumeChoice) => void;
 }
 
 /** Preflight results: blockers, re-plans, held groups, then what is worth knowing (FE §8). */
@@ -535,7 +576,7 @@ function Findings({
                           key={c.id}
                           type="button"
                           className="button button-quiet button-small"
-                          onClick={() => onChooseVolume(c.id)}
+                          onClick={() => onChooseVolume(c)}
                         >
                           Use {c.label}
                         </button>
@@ -642,7 +683,21 @@ function Findings({
   );
 }
 
-const blockerKey = (b: Blocker): string => ("role" in b ? `${b.kind}-${b.role}` : b.kind);
+const blockerKey = (b: Blocker): string => {
+  const role = "role" in b ? `-${b.role}` : "";
+  const volume = "volume" in b ? `-${b.volume}` : "";
+  return `${b.kind}${role}${volume}`;
+};
+
+const FAILED_TEXT = "Could not check the plan. Nothing has moved.";
+
+/** What a check the user asked for found, for the status region. */
+const outcomeText = (plan: ReviewPlan): string =>
+  plan.blockers.length > 0
+    ? `Checked again. ${plan.blockers.length === 1 ? "1 problem still needs" : `${plan.blockers.length} problems still need`} fixing first.`
+    : canApply(plan)
+      ? "Checked again. Nothing stops the apply."
+      : "Checked again. Nothing to apply yet.";
 
 const heldLine = (h: HeldPhoto): string =>
   `${h.name} (${h.decision}, in ${h.folder}): ${holdText(h.reason)}.`;
@@ -650,11 +705,13 @@ const heldLine = (h: HeldPhoto): string =>
 /** The per-file list: every operation with its source, target (suffix included) and kind. */
 function FileList({ plan }: { readonly plan: ReviewPlan }) {
   return (
-    <section id="every-file" className="every-file" aria-labelledby="every-file-title">
+    // The heading names the scrolling region below it, the one landmark of the list.
+    <div id="every-file" className="every-file">
       <h2 id="every-file-title" className="side-title">
         Every file ({plan.operations.length})
       </h2>
-      <div className="table-wrap">
+      {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a named region that scrolls sideways at 320 px takes focus so the keyboard can scroll it (WCAG 2.1.1, axe scrollable-region-focusable). */}
+      <section className="table-wrap" tabIndex={0} aria-labelledby="every-file-title">
         <table className="file-table">
           <thead>
             <tr>
@@ -681,12 +738,12 @@ function FileList({ plan }: { readonly plan: ReviewPlan }) {
                 <td>{file.photoName}</td>
                 <td>{file.path}</td>
                 <td>Stays where it is</td>
-                <td>Not moved: RAW and edit files do not follow</td>
+                <td>Stays: RAW follows JPEG is off</td>
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
-    </section>
+      </section>
+    </div>
   );
 }

@@ -1115,6 +1115,11 @@ kbd {
   overflow-x: auto;
 }
 
+/* It takes focus so the keyboard can scroll it; the outline is drawn inside its edge. */
+.table-wrap:focus-visible {
+  outline-offset: -2px;
+}
+
 .file-table {
   width: 100%;
   border-collapse: collapse;

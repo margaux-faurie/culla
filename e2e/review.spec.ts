@@ -26,6 +26,9 @@ async function decideAndReview(page: Page, keep: number, reject = 0) {
   await expect(page.getByText("Checking")).toBeHidden();
 }
 
+/** The review's own status region (the dialog has its own). */
+const reviewStatus = (page: Page) => page.locator("main.review > [role=status]");
+
 const applyButton = (page: Page) =>
   page.locator(".apply-box").getByRole("button", { name: /^(Move|Apply to) \d+ photos?$|^Apply$/ });
 
@@ -166,6 +169,9 @@ test.describe("review screen (US-34)", () => {
     await page.getByRole("button", { name: "Use Photos drive (E:)" }).click();
     await expect(page.getByRole("heading", { name: "Needs fixing first" })).toBeHidden();
     await expect(applyButton(page)).toBeEnabled();
+    await expect(reviewStatus(page)).toHaveText(
+      "Using Photos drive (E:). Checked again. Nothing stops the apply.",
+    );
   });
 
   test("waits for the previews, then Check again clears it (P16)", async ({ page }) => {
@@ -175,6 +181,7 @@ test.describe("review screen (US-34)", () => {
     await page.getByRole("button", { name: "Check again" }).click();
     await expect(page.getByText(/still reading previews/)).toBeHidden();
     await expect(applyButton(page)).toBeEnabled();
+    await expect(reviewStatus(page)).toHaveText("Checked again. Nothing stops the apply.");
   });
 
   test("says why Apply is disabled with nothing decided", async ({ page }) => {
@@ -190,6 +197,12 @@ test.describe("review screen (US-34)", () => {
     await page.setViewportSize({ width: 320, height: 800 });
     await startWith(page, null);
     await decideAndReview(page, 2, 1);
+    // The file table may scroll on its own; it takes focus so the keyboard can scroll it.
+    await page.getByRole("button", { name: /^See every file/ }).click();
+    const files = page.getByRole("region", { name: /^Every file/ });
+    await expect(files).toBeVisible();
+    await files.focus();
+    await expect(files).toBeFocused();
     const overflow = await page.evaluate(
       "document.documentElement.scrollWidth > document.documentElement.clientWidth",
     );
@@ -234,6 +247,20 @@ test.describe("confirm dialog (US-35)", () => {
     await page.keyboard.press("Enter");
     await expect(dialog).toBeHidden();
     await expect(heading(page)).toBeVisible();
+  });
+
+  test("a dialog the browser closed on its own opens again from Apply", async ({ page }) => {
+    await startWith(page, null);
+    await decideAndReview(page, 1);
+    await applyButton(page).click();
+    const dialog = page.getByRole("dialog", { name: "Move 1 photo?" });
+    await expect(dialog).toBeVisible();
+    // What Chromium does on a second Esc: it closes the modal even though cancel was prevented.
+    await page.evaluate("document.querySelector('dialog.confirm').close()");
+    await expect(dialog).toBeHidden();
+    await expect(applyButton(page)).toBeFocused();
+    await applyButton(page).click();
+    await expect(dialog).toBeVisible();
   });
 
   test("Enter pressed 5 times or held on the swipe screen never starts an apply", async ({
