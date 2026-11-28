@@ -281,12 +281,10 @@ test.describe("confirm dialog (US-35)", () => {
     await page.keyboard.up("Enter");
     await expect(heading(page)).toBeFocused();
     await expect(page.getByRole("dialog")).toBeHidden();
-    await expect(page.getByRole("heading", { name: "Plan confirmed" })).toBeHidden();
+    await expect(page.locator("main.apply")).toBeHidden();
   });
 
-  test("keyboard only: reach Apply, confirm, and the plan is confirmed without touching a file", async ({
-    page,
-  }) => {
+  test("keyboard only: reach Apply, confirm, and the apply screen takes over", async ({ page }) => {
     await startWith(page, null);
     await decideAndReview(page, 1, 1);
     await tabUntil(page, ".apply-box .button-primary");
@@ -296,8 +294,9 @@ test.describe("confirm dialog (US-35)", () => {
     await expect(dialog.getByRole("button", { name: "Go back" })).toBeFocused();
     await page.keyboard.press("Tab");
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("heading", { name: "Plan confirmed" })).toBeFocused();
-    await expect(page.getByText(/the web demo never touches a file/)).toBeVisible();
+    // The apply screen takes over with its heading focused, and the simulated apply runs.
+    await expect(page.locator("#apply-title")).toBeFocused();
+    await expect(page.getByRole("heading", { level: 1, name: "Apply finished" })).toBeVisible();
   });
 
   test("a name taken since the review rebuilds the plan to confirm again (P11)", async ({
@@ -315,7 +314,7 @@ test.describe("confirm dialog (US-35)", () => {
     ).toBeVisible();
     await applyButton(page).click();
     await page.getByRole("dialog").getByRole("button", { name: "Move 1 photo" }).click();
-    await expect(page.getByRole("heading", { name: "Plan confirmed" })).toBeVisible();
+    await expect(page.locator("main.apply")).toBeVisible();
   });
 
   test("a card locked since the review stops the apply and shows why", async ({ page }) => {
@@ -327,6 +326,6 @@ test.describe("confirm dialog (US-35)", () => {
     await expect(page.getByRole("heading", { name: "Needs fixing first" })).toBeVisible();
     await expect(page.getByText(/lock switch/)).toBeVisible();
     await expect(applyButton(page)).toBeDisabled();
-    await expect(page.getByRole("heading", { name: "Plan confirmed" })).toBeHidden();
+    await expect(page.locator("main.apply")).toBeHidden();
   });
 });
