@@ -27,6 +27,8 @@ On file-engine topics (journal states, how renames are issued, verification), `d
 
 A Windows desktop app that culls a folder of Nikon photos (JPEG + NEF) one photo at a time with a swipe interface. Every decision goes into a queue. Nothing touches the disk until the user reviews the queue and confirms. Open source (GPL-3.0-only, ADR 0026), with a browser demo of the same UI.
 
+**How the author works (Margaux, 28 Nov 2026):** she copies the SD card to a folder on her PC, moves everything to an external drive formatted exFAT, and sorts there. Where kept photos go depends on the shoot: the same external drive (a rename) or another drive (a copy, verify, then remove). So the main source volume is an external exFAT drive, not the card, and both same-volume and cross-volume applies are everyday cases.
+
 **What sets it apart from QuickRawPicker, FastRawViewer and Photo Mechanic:** a swipe-first interface, plus a file engine that is provably safe. It treats a JPEG, its RAW and its sidecars as one group, never overwrites, journals every operation and resumes an apply that was interrupted.
 
 ## 2. Decisions (from the author)
