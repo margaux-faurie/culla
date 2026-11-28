@@ -1,24 +1,33 @@
-// Edits the demo video (docs/videos.md (a)) from the shots capture.spec.ts filmed.
+// Edits the 30 s demo video (docs/videos.md (a)) from the shots capture.spec.ts filmed.
 //
-//   node docs/assets/video/compose.mjs --capture <dir> --out <dir> --fonts <dir> [--check]
+//   node docs/assets/video/compose.mjs --capture <dir> --photos <dir> --fonts <dir> --out <dir>
+//        [--hero <file>] [--flicker <file,file,...>] [--bpm 120] [--offset 0] [--check]
+//        [--still <scene>:<seconds>]... [--audio <file>]
+//   node docs/assets/video/compose.mjs --master <mp4> --audio <file> --out <dir>
 //
-// --capture  the folder capture.spec.ts wrote (CULLA_VIDEO_CAPTURE), with shot-03 to shot-08
-// --out      where culla-demo.mp4, culla-demo-poster.jpg and the check frames go
-// --fonts    a folder holding Bricolage Grotesque (OFL) as .ttf or .woff2: Regular and Bold, or the
-//            variable font. Not in the repository (SPEC §5.6: self-hosted from M3).
-// --check    only draws the four check frames (title card, keep route, review route, end card)
-// --audio    optional music file: also writes culla-demo.music.mp4, the master with the track
-//            trimmed to the video, normalised to -16 LUFS (loudnorm, two passes), faded in over
-//            1 s and out over the last 2.5 s, AAC stereo. The master stays silent. The music copy
-//            and the track are never committed (docs/videos.md, Sound).
-//            With --master <mp4> (and --out), only lays the music under that finished master.
+// --capture  the folder capture.spec.ts wrote (CULLA_VIDEO_CAPTURE): swipe, review, apply
+// --photos   the photo folder (the same as CULLA_VIDEO_PHOTOS); --hero is the opening photo and
+//            --flicker the photos of the fast run (similar brightness: WCAG 2.3.1). --hero takes
+//            one or more files, comma separated: one full-bleed shot each over the opening beats.
+// --framing  optional JSON file: { "<file>": { "x": 0.5, "y": 0.5, "from": 1.1, "to": 1.4 } },
+//            the subject (fractions of the photo) and the push-in, so a full-bleed shot ends
+//            tight on its subject. Kept outside the repository with the photos.
+// --no-grade turns off the light grade on full-bleed photos (contrast 1.06, saturation 1.1)
+// --fonts    a folder holding Bricolage Grotesque (OFL) as .ttf or .woff2. Not in the repository.
+// --bpm, --offset  the music's tempo and its first downbeat in seconds: every cut and every word
+//            lands on a beat. Film again with the same CULLA_VIDEO_BPM so the decisions do too.
+// --check    only draws the check frames
+// --audio    also writes culla-demo-30s.music.mp4: the silent master with the track trimmed to
+//            the video, -16 LUFS (loudnorm, two passes), faded in over 1 s and out over 2.5 s,
+//            AAC stereo, video copied. With --master, only that, on an existing master.
 //
-// Every picture is drawn by Chromium at 1920×1080 (cards, on-screen text, key labels, lower
-// third; the filmed page sits 1:1 under the text), sent to ffmpeg as JPEG (quality 92), one H.264
-// file per scene (30 fps, -preset veryfast, no audio), then joined with the concat demuxer and
-// -c copy. Each scene is written to a .tmp.mp4 name and renamed once ffmpeg exits 0. Plain cuts
-// between scenes; only the text fades in. Needs ffmpeg on PATH (or FFMPEG) and Playwright's
-// Chromium.
+// Nothing here or in its output may be committed when it holds Margaux's photos or the music
+// (docs/videos.md): keep --capture and --out outside the repository.
+//
+// Every picture is drawn by Chromium at 1920×1080 and sent to ffmpeg as JPEG (quality 92); one
+// H.264 file per scene (30 fps, -preset veryfast, CRF 18, no audio), written to a .tmp.mp4 name
+// and renamed when ffmpeg exits 0, then joined with the concat demuxer and -c copy. Hard cuts on
+// beats; words come in with 150 ms eased scale or slide.
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -30,84 +39,153 @@ const arg = (name) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 ? args[i + 1] : undefined;
 };
-const CAPTURE = resolve(arg("capture") ?? "");
-const OUT = resolve(arg("out") ?? "");
-const FONTS = resolve(arg("fonts") ?? "");
+const path = (name) => (arg(name) ? resolve(arg(name)) : null);
+const CAPTURE = path("capture");
+const PHOTOS = path("photos");
+const FONTS = path("fonts");
+const OUT = path("out");
+const MASTER = path("master");
+const AUDIO = path("audio");
 const CHECK = args.includes("--check");
-const AUDIO = arg("audio") ? resolve(arg("audio")) : null;
+const GRADE = !args.includes("--no-grade");
+const FRAMING = path("framing");
+const BPM = Number(arg("bpm") ?? "120");
+const OFFSET = Number(arg("offset") ?? "0");
 const FFMPEG = process.env.FFMPEG ?? "ffmpeg";
 const FPS = 30;
 const W = 1920;
 const H = 1080;
+const BEAT = 60 / BPM;
+const NAME = "culla-demo-30s";
 
-const MASTER = arg("master") ? resolve(arg("master")) : null;
-if (MASTER === null && (!arg("capture") || !arg("out") || !arg("fonts"))) {
-  console.error("usage: node compose.mjs --capture <dir> --out <dir> --fonts <dir> [--check]");
-  process.exit(2);
-}
+/** Seconds from the start of the video to beat `b` (beat 0 is the first downbeat). */
+const T = (b) => OFFSET + b * BEAT;
 
-// The filmed page (1600×900) sits under a 150 px band for the on-screen text.
-const APP = { x: 160, y: 150, w: 1600, h: 900 };
-
-const shot = (n) => {
-  const dir = join(CAPTURE, `shot-0${n}`);
+const shot = (name) => {
+  const dir = join(CAPTURE, name);
   const timeline = JSON.parse(readFileSync(join(dir, "timeline.json"), "utf8"));
+  if (Math.abs((timeline.bpm ?? 120) - BPM) > 1e-6) {
+    console.warn(`${name} was filmed at ${timeline.bpm} BPM, the edit is at ${BPM}: film it again`);
+  }
   return { dir, ...timeline };
 };
 
+const photoUrl = (file) => pathToFileURL(join(PHOTOS, file)).href;
+const framing = FRAMING === null ? {} : JSON.parse(readFileSync(FRAMING, "utf8"));
+/** A full-bleed photo: where its subject is and how far the push-in goes. */
+const framed = (file, from = 1.04, to = 1.1) => ({
+  src: photoUrl(file),
+  x: 0.5,
+  y: 0.5,
+  from,
+  to,
+  ...framing[file],
+});
+
 /**
- * The scenes, from the shot list (docs/videos.md (a)). `text` is the on-screen text, with the
- * times it shows; key labels come from the key presses capture.spec.ts logged.
+ * The cut list, in beats (Margaux's storyboard of 28 Nov 2026): hero, fast run, the problem,
+ * the swipe with real photos, review, apply, end card. 60 beats: 30 s at 120 BPM.
  */
 function scenes() {
-  const s = (n) => shot(n);
-  const s8 = s(8);
+  const jpgs = readdirSync(PHOTOS).filter((f) => /\.jpe?g$/i.test(f)).sort();
+  const heroes = (arg("hero") ?? jpgs[0]).split(",");
+  const flicker = (arg("flicker") ?? jpgs.slice(1, 9).join(",")).split(",");
+  const swipe = shot("swipe");
+  const review = shot("review");
+  const apply = shot("apply");
+  // Each word stays until the next one, at most a beat and a half.
+  const words = swipe.events.map((e, i) => {
+    const next = swipe.events[i + 1];
+    return {
+      at: e.t,
+      until: Math.min(e.t + 1.5 * BEAT, next === undefined ? 99 : next.t),
+      text: e.label,
+      side: e.keys[0] === "←" ? "left" : "right",
+      style: "word",
+    };
+  });
   return [
-    { id: "01-title", duration: 6, card: "title" },
-    { id: "02-raw", duration: 6, card: "raw" },
+    // One full-bleed shot per hero photo over the first 6 beats, each pushing in on its subject.
+    ...heroes.map((file, i) => {
+      const from = i === 0 ? 0 : T((6 * i) / heroes.length);
+      const to = T((6 * (i + 1)) / heroes.length);
+      // The two lines slam in on beats 1 and 4 and stay through the later hero shots.
+      const words = [
+        [1, "600 photos.", 0],
+        [4, "One evening.", 1],
+      ]
+        .filter(([b]) => T(b) < to)
+        .map(([b, text, line]) => ({
+          at: Math.max(0, T(b) - from),
+          text,
+          style: "slam",
+          line,
+          settled: T(b) < from,
+        }));
+      return {
+        id: `1-hero-${i + 1}`,
+        from,
+        to,
+        photo: framed(file),
+        words,
+      };
+    }),
     {
-      id: "03-route",
-      duration: 12,
-      shot: s(3),
-      text: [{ from: 0.2, to: 12, text: "As you sort, see where every photo will go" }],
+      id: "2-flicker",
+      from: T(6),
+      to: T(10),
+      run: flicker.map((f, i) => ({ ...framed(f, 1.08, 1.08), at: i * 0.5 * BEAT })),
     },
     {
-      id: "04-decide",
-      duration: 10,
-      shot: s(4),
-      text: [{ from: 0, to: 10, text: "Keep or reject each photo" }],
-    },
-    {
-      id: "05-keys",
-      duration: 10,
-      shot: s(5),
-      text: [
-        { from: 0, to: 5.0, text: "Or use the arrow keys" },
-        { from: 5.0, to: 10, text: "Under each button: where this photo would go" },
+      id: "3-painful",
+      from: T(10),
+      to: T(16),
+      words: [
+        { at: 0, text: "Sorting them?", style: "big", line: 0 },
+        { at: 2 * BEAT, text: "Painful.", style: "big", line: 1 },
       ],
     },
     {
-      id: "06-undo",
-      duration: 8,
-      shot: s(6),
-      text: [{ from: 0, to: 8, text: "Changed your mind? Ctrl+Z" }],
+      id: "4-swipe",
+      from: T(16),
+      to: T(32),
+      shot: swipe,
+      words: [...words, { at: 9.5 * BEAT, until: 99, text: "The RAW follows.", style: "panel", top: true }],
     },
     {
-      id: "07-review",
-      duration: 10,
-      shot: s(7),
-      text: [{ from: 0, to: 10, text: "Review the whole plan first" }],
+      id: "5-review",
+      from: T(32),
+      to: T(40),
+      shot: review,
+      words: [{ at: 0.5 * BEAT, until: 99, text: "Nothing moves until you say so.", style: "panel" }],
     },
     {
-      id: "08-apply",
-      duration: Math.round(s8.duration * FPS) / FPS,
-      shot: s8,
-      text: [{ from: 0, to: s8.duration, text: "Nothing is deleted" }],
-      lowerThird: { from: 0.3, text: "Web demo: the apply is simulated" },
+      id: "6-apply",
+      from: T(40),
+      to: T(48),
+      shot: apply,
+      words: [
+        { at: 2 * BEAT, until: 99, text: "Nothing deleted. Ever.", style: "panel", orange: true },
+        // Honesty rule (docs/videos.md): the demo's apply is a simulation.
+        { at: 0, until: 99, text: "Web demo: the apply is simulated", style: "note", settled: true },
+      ],
     },
-    { id: "09-end", duration: 8, card: "end" },
+    {
+      id: "7-end",
+      from: T(48),
+      to: T(60),
+      end: true,
+      words: [
+        { at: 0, text: "Culla", style: "wordmark" },
+        { at: 2 * BEAT, text: "Free. Open source. Windows 11.", style: "end-line" },
+        { at: 4 * BEAT, text: "github.com/margaux-faurie/culla", style: "end-url" },
+      ],
+    },
   ];
 }
+
+/** Frames of a scene: from its first to its last frame on the 30 fps grid of the whole video. */
+const sceneFrames = (scene) => Math.round(scene.to * FPS) - Math.round(scene.from * FPS);
 
 /** The frame of a shot on screen at `t` (the last one filmed at or before it). */
 function frameAt(sh, t) {
@@ -119,30 +197,37 @@ function frameAt(sh, t) {
   return pathToFileURL(join(sh.dir, file)).href;
 }
 
-/** What to draw at `t` in a scene: plain data, also the key that says if a frame can be reused. */
+/** What to draw at `t` (seconds into the scene): plain data, also the key for reusing a frame. */
 function stateAt(scene, t) {
-  const st = { card: scene.card ?? null, t: scene.card ? t : 0 };
-  if (scene.shot) {
-    st.src = frameAt(scene.shot, t);
-    const line = scene.text.find((x) => t >= x.from && t < x.to) ?? null;
-    st.text = line?.text ?? null;
-    st.textOpacity = line === null ? 0 : fade(t - line.from, line.to - t, scene.text.indexOf(line) === 0 ? 0.35 : 0.25);
-    const key = [...scene.shot.events].reverse().find((e) => t >= e.t && t < e.t + 1.4) ?? null;
-    st.keys = key?.keys ?? null;
-    st.keyLabel = key?.label ?? null;
-    st.keyOpacity = key === null ? 0 : fade(t - key.t, key.t + 1.4 - t, 0.12);
-    if (scene.lowerThird && t >= scene.lowerThird.from) {
-      st.lower = scene.lowerThird.text;
-      st.lowerOpacity = fade(t - scene.lowerThird.from, 99, 0.3);
+  const r3 = (x) => Math.round(x * 1000) / 1000;
+  const st = { id: scene.id };
+  if (scene.photo) {
+    // Ease out: the push-in slows down and settles on the subject.
+    const k = 1 - (1 - Math.min(1, t / (scene.to - scene.from))) ** 3;
+    const p = scene.photo;
+    st.photo = { src: p.src, x: p.x, y: p.y, s: r3(p.from + (p.to - p.from) * k) };
+  }
+  if (scene.run) {
+    // Two-frame crossfade from one photo to the next: no hard flash (WCAG 2.3.1).
+    const i = scene.run.findLastIndex((p) => t >= p.at - 1e-6);
+    const layer = (p) => ({ src: p.src, x: p.x, y: p.y, s: p.from });
+    st.photo = layer(scene.run[i]);
+    const next = scene.run[i + 1];
+    const k = next === undefined ? 0 : 1 - (next.at - t) / (2 / FPS);
+    if (next !== undefined && k > 0) {
+      st.next = layer(next);
+      st.mix = r3(Math.min(1, k));
     }
   }
+  if (scene.shot) {
+    st.src = frameAt(scene.shot, t);
+  }
+  st.end = scene.end === true;
+  st.words = (scene.words ?? [])
+    .filter((w) => t >= w.at - 1e-6 && t < (w.until ?? 99))
+    .map((w) => ({ ...w, k: w.settled ? 1 : r3(Math.min(1, (t - w.at) / 0.15)) }));
+  st.grade = GRADE;
   return st;
-}
-
-/** Fades in over `d` seconds from the start and out over `d` before the end (never a flash). */
-function fade(sinceStart, untilEnd, d) {
-  const k = Math.min(1, sinceStart / d, untilEnd / d);
-  return Math.round(Math.max(0, k) * 100) / 100;
 }
 
 function fontFaces() {
@@ -159,121 +244,89 @@ function fontFaces() {
     .join("\n");
 }
 
-/** The drawing page: Night, the Portfolio Design System's colours, no gradients or shadows. */
+/** The drawing page: Night, ink, one orange line; no gradients or shadows. */
 function composeHtml() {
   return `<!doctype html><html><head><meta charset="utf-8"><style>
 ${fontFaces()}
-:root { --paper: #0c0b0a; --raised: #171513; --ink: #f1e9d8; --muted: #a8a092; --faint: #6f695f; --rule: #2c2925; --orange: #ffb38a; }
+:root { --paper: #0c0b0a; --ink: #f1e9d8; --muted: #a8a092; --orange: #ffb38a; }
 * { box-sizing: border-box; margin: 0; }
 html, body { width: ${W}px; height: ${H}px; background: var(--paper); color: var(--ink); overflow: hidden;
   font-family: "Bricolage", "DejaVu Sans", sans-serif; }
-#app { position: absolute; left: ${APP.x}px; top: ${APP.y}px; width: ${APP.w}px; height: ${APP.h}px;
-  border-radius: 18px 18px 0 0; overflow: hidden; }
-#app img { display: block; width: ${APP.w}px; height: ${APP.h}px; }
-#band { position: absolute; left: ${APP.x}px; right: ${W - APP.x - APP.w}px; top: 0; height: ${APP.y}px;
-  display: flex; align-items: center; justify-content: space-between; gap: 32px; }
-#text { font-size: 56px; line-height: 1.1; letter-spacing: -0.5px; white-space: nowrap; }
-#keys { display: flex; align-items: center; gap: 14px; font-size: 48px; }
-.cap { display: inline-flex; align-items: center; justify-content: center; min-width: 80px; height: 80px;
-  padding: 0 20px; border: 3px solid var(--ink); border-radius: 16px; font-size: 48px; line-height: 1; }
-.plus { color: var(--muted); }
-.key-label { margin-left: 10px; }
-#lower { position: absolute; right: ${W - APP.x - APP.w + 32}px; bottom: ${H - APP.y - APP.h + 32}px; padding: 14px 32px;
-  background: var(--paper); border: 2px solid var(--muted); border-radius: 999px; font-size: 48px; line-height: 1.1; }
-.wordmark { font-weight: 700; letter-spacing: -0.035em; line-height: 1; }
-.headline { font-size: 64px; line-height: 1.12; letter-spacing: -0.5px; }
-.card { position: absolute; inset: 0; }
-.file-name { font-size: 48px; text-align: center; margin-top: 24px; white-space: nowrap; }
+.full { position: absolute; inset: 0; width: ${W}px; height: ${H}px; object-fit: cover; }
+.layer { position: absolute; inset: 0; }
+.slam, .big, .word, .panel { position: absolute; font-weight: 700; letter-spacing: -0.03em; line-height: 1; white-space: nowrap; }
+.slam { left: 120px; font-size: 150px; padding: 18px 36px 26px; background: var(--paper); border-radius: 32px; transform-origin: 0 50%; }
+.big { left: 0; right: 0; text-align: center; font-size: 180px; transform-origin: 50% 50%; }
+.word { top: 400px; font-size: 150px; padding: 18px 40px 28px; background: var(--paper); border-radius: 32px; }
+.word.right { right: 96px; transform-origin: 100% 50%; }
+.word.left { left: 96px; transform-origin: 0 50%; }
+.panel { left: 96px; bottom: 96px; font-size: 96px; padding: 20px 40px 30px; background: var(--paper); border-radius: 32px; }
+.panel.top { top: 96px; bottom: auto; }
+.note { position: absolute; right: 96px; top: 96px; font-size: 48px; line-height: 1.1; padding: 12px 28px 16px;
+  background: var(--paper); border: 2px solid var(--muted); border-radius: 999px; white-space: nowrap; }
+.orange { color: var(--orange); }
+.wordmark { position: absolute; left: 0; right: 0; top: 300px; text-align: center; font-size: 240px; font-weight: 700; letter-spacing: -0.04em; line-height: 1; }
+.end-line, .end-url { position: absolute; left: 0; right: 0; text-align: center; font-size: 64px; line-height: 1.1; }
+.end-line { top: 600px; }
+.end-url { top: 700px; color: var(--muted); }
 </style></head><body><div id="root"></div>
 <script>
-const photo = (fill, stroke, sun) => \`<svg viewBox="-75 -105 150 210" width="300" height="420">
-  <rect x="-74" y="-104" width="148" height="208" rx="18" fill="\${fill}" stroke="\${stroke}" stroke-width="2.5"/>
-  <rect x="-61" y="-91" width="122" height="146" rx="8" fill="#2c2925"/>
-  <circle cx="26" cy="-56" r="12" fill="\${sun}"/>
-  <path d="M-61 34 L-24 -10 L2 18 L22 0 L61 40 L61 47 Q61 55 53 55 L-53 55 Q-61 55 -61 47 Z" fill="#6f695f"/>
-  <rect x="-61" y="70" width="70" height="6" rx="3" fill="#6f695f"/>
-  <rect x="-61" y="84" width="44" height="6" rx="3" fill="#2c2925"/></svg>\`;
-const fileIcon = (stroke, label) => \`<svg viewBox="0 0 160 200" width="220" height="275">
-  <path d="M8 8 H108 L152 52 V192 H8 Z" fill="#171513" stroke="\${stroke}" stroke-width="6" stroke-linejoin="round"/>
-  <path d="M108 8 V52 H152" fill="none" stroke="\${stroke}" stroke-width="6" stroke-linejoin="round"/>
-  <text x="80" y="140" text-anchor="middle" font-family="Bricolage, sans-serif" font-weight="700" font-size="40" fill="\${stroke}">\${label}</text></svg>\`;
-const folderIcon = \`<svg viewBox="0 0 200 160" width="250" height="200">
-  <path d="M8 30 Q8 16 22 16 H78 L96 36 H178 Q192 36 192 50 V138 Q192 152 178 152 H22 Q8 152 8 138 Z" fill="#171513" stroke="#a8a092" stroke-width="6" stroke-linejoin="round"/></svg>\`;
-const ease = (k) => (k <= 0 ? 0 : k >= 1 ? 1 : k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
-const clamp = (k) => Math.max(0, Math.min(1, k));
-
-function title(t) {
-  const cards = [
-    ["#171513", "#6f695f", "#a8a092", -14, -70, 30],
-    ["#171513", "#6f695f", "#a8a092", 9, 60, 20],
-    ["#171513", "#a8a092", "#a8a092", -5, -20, 10],
-    ["#171513", "#f1e9d8", "#ffb38a", 3, 20, 0],
-  ];
-  const stack = cards.map(([fill, stroke, sun, rot, dx, dy], i) => {
-    const k = ease(clamp((t - 0.2 - i * 0.25) / 0.6));
-    return \`<div style="position:absolute;left:\${1240 + dx}px;top:\${300 + dy + (1 - k) * 30}px;opacity:\${k};transform:rotate(\${rot}deg)">\${photo(fill, stroke, sun)}</div>\`;
-  }).join("");
-  const w = clamp((t - 0.1) / 0.5), h = clamp((t - 0.9) / 0.5);
-  return \`<div class="card">\${stack}
-    <div class="wordmark" style="position:absolute;left:160px;top:300px;font-size:150px;opacity:\${w}">Culla</div>
-    <div class="headline" style="position:absolute;left:160px;top:500px;width:880px;opacity:\${h}">After a shoot: hundreds of photos to sort</div></div>\`;
+const ease = (k) => 1 - Math.pow(1 - Math.max(0, Math.min(1, k)), 3);
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+function word(w) {
+  const e = ease(w.k);
+  const o = w.orange ? " orange" : "";
+  switch (w.style) {
+    case "slam": {
+      const top = 640 + w.line * 200;
+      return '<div class="slam" style="top:' + top + 'px;opacity:' + e + ';transform:scale(' + (1.35 - 0.35 * e) + ')">' + esc(w.text) + "</div>";
+    }
+    case "big": {
+      const top = 300 + w.line * 260;
+      return '<div class="big" style="top:' + top + 'px;opacity:' + e + ';transform:scale(' + (1.3 - 0.3 * e) + ')">' + esc(w.text) + "</div>";
+    }
+    case "word":
+      return '<div class="word ' + w.side + '" style="opacity:' + e + ';transform:scale(' + (1.3 - 0.3 * e) + ')">' + esc(w.text) + "</div>";
+    case "panel":
+      return '<div class="panel' + o + (w.top ? " top" : "") + '" style="opacity:' + e + ';transform:translateY(' + (60 * (1 - e)) + 'px)">' + esc(w.text) + "</div>";
+    case "note":
+      return '<div class="note">' + esc(w.text) + "</div>";
+    case "wordmark":
+      return '<div class="wordmark" style="opacity:' + e + ';transform:scale(' + (1.2 - 0.2 * e) + ')">' + esc(w.text) + "</div>";
+    default:
+      return '<div class="' + w.style + '" style="opacity:' + e + ';transform:translateY(' + (40 * (1 - e)) + 'px)">' + esc(w.text) + "</div>";
+  }
 }
-
-function raw(t) {
-  const h = clamp((t - 0.1) / 0.4);
-  const slide = ease(clamp((t - 1.6) / 1.4));
-  const gone = clamp((t - 2.8) / 0.4);
-  const behind = clamp((t - 3.1) / 0.4);
-  const jx = 700 + slide * 760;
-  const nefStroke = behind > 0.5 ? "#ffb38a" : "#f1e9d8";
-  return \`<div class="card">
-    <div class="headline" style="position:absolute;left:160px;top:170px;width:1600px;opacity:\${h}">Sorting by hand, the RAW gets left behind</div>
-    <div style="position:absolute;left:1440px;top:470px">\${folderIcon}<div class="file-name" style="color:#a8a092">Selects</div></div>
-    <div style="position:absolute;left:\${jx}px;top:430px;opacity:\${1 - gone}">\${fileIcon("#f1e9d8", "JPG")}<div class="file-name">DSC_0412.JPG</div></div>
-    <div style="position:absolute;left:400px;top:430px">\${fileIcon(nefStroke, "NEF")}<div class="file-name" style="color:\${nefStroke}">DSC_0412.NEF</div></div>
-  </div>\`;
+const loaded = new Map();
+async function img(src) {
+  if (!loaded.has(src)) {
+    const i = new Image();
+    i.src = src;
+    await i.decode();
+    loaded.set(src, { w: i.naturalWidth, h: i.naturalHeight });
+  }
+  return loaded.get(src);
 }
-
-function end(t) {
-  const a = clamp((t - 0.1) / 0.5), b = clamp((t - 0.6) / 0.5), c = clamp((t - 1.1) / 0.5);
-  return \`<div class="card" style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center">
-    <div class="wordmark" style="font-size:180px;opacity:\${a}">Culla</div>
-    <div class="headline" style="margin-top:48px;color:var(--orange);opacity:\${b}">Nothing overwritten, nothing deleted</div>
-    <div style="margin-top:56px;font-size:52px;color:var(--muted);opacity:\${c}">Free and open source, for Windows 11</div>
-    <div style="margin-top:20px;font-size:52px;opacity:\${c}">github.com/margaux-faurie/culla</div></div>\`;
+/** A photo filling the frame at scale s of "cover", its subject (x, y) as near the middle as fits. */
+function placed(p, size, grade, opacity) {
+  const cover = Math.max(${W} / size.w, ${H} / size.h) * p.s;
+  const w = size.w * cover, h = size.h * cover;
+  const left = Math.min(0, Math.max(${W} - w, ${W} / 2 - p.x * w));
+  const top = Math.min(0, Math.max(${H} - h, ${H} / 2 - p.y * h));
+  const filter = grade ? "filter:contrast(1.06) saturate(1.1);" : "";
+  return '<img src="' + p.src + '" style="position:absolute;left:' + left + 'px;top:' + top + 'px;width:' + w + 'px;height:' + h + 'px;' + filter + 'opacity:' + opacity + '">';
 }
-
-let built = null;
 window.render = async (st) => {
-  const root = document.getElementById("root");
-  if (st.card) {
-    built = null;
-    root.innerHTML = st.card === "title" ? title(st.t) : st.card === "raw" ? raw(st.t) : end(st.t);
-    await document.fonts.ready;
-    return;
+  const parts = [];
+  if (st.photo) parts.push(placed(st.photo, await img(st.photo.src), st.grade, 1));
+  if (st.next) parts.push(placed(st.next, await img(st.next.src), st.grade, st.mix));
+  if (st.src) {
+    await img(st.src);
+    parts.push('<img class="full" src="' + st.src + '">');
   }
-  if (built !== "app") {
-    root.innerHTML = '<div id="band"><div id="text"></div><div id="keys"></div></div><div id="app"><img alt=""></div><div id="lower"></div>';
-    built = "app";
-  }
-  const img = root.querySelector("#app img");
-  if (img.getAttribute("src") !== st.src) {
-    img.src = st.src;
-    await img.decode();
-  }
-  const text = root.querySelector("#text");
-  text.textContent = st.text ?? "";
-  text.style.opacity = st.textOpacity;
-  const keys = root.querySelector("#keys");
-  keys.innerHTML = st.keys
-    ? st.keys.map((k) => '<span class="cap">' + k + "</span>").join('<span class="plus">+</span>') +
-      '<span class="key-label">' + st.keyLabel + "</span>"
-    : "";
-  keys.style.opacity = st.keyOpacity;
-  const lower = root.querySelector("#lower");
-  lower.textContent = st.lower ?? "";
-  lower.style.display = st.lower ? "block" : "none";
-  lower.style.opacity = st.lowerOpacity ?? 0;
+  parts.push('<div class="layer">' + st.words.map(word).join("") + "</div>");
+  document.getElementById("root").innerHTML = parts.join("");
+  await Promise.all([...document.images].map((i) => i.decode().catch(() => undefined)));
   await document.fonts.ready;
 };
 </script></body></html>`;
@@ -294,7 +347,7 @@ async function encodeScene(page, scene, work) {
   const done = new Promise((ok, fail) =>
     ff.on("exit", (code) => (code === 0 ? ok() : fail(new Error(`ffmpeg exited ${code} on ${scene.id}`)))),
   );
-  const frames = Math.round(scene.duration * FPS);
+  const frames = sceneFrames(scene);
   let lastKey = "";
   let last = null;
   for (let n = 0; n < frames; n += 1) {
@@ -370,11 +423,18 @@ async function main() {
   await page.evaluate(() => document.fonts.load('700 100px "Bricolage"'));
 
   // The busiest moments, to look at before the full render.
-  await still(page, byId("01-title"), 3.5, join(OUT, "frame-1-title.jpg"));
-  await still(page, byId("05-keys"), 7.5, join(OUT, "frame-2-swipe-route.jpg"));
-  await still(page, byId("07-review"), 5.0, join(OUT, "frame-3-review-route.jpg"));
-  await still(page, byId("09-end"), 5.0, join(OUT, "frame-4-end.jpg"));
-  // More stills on request: --still <scene id>:<seconds>, repeatable.
+  const checks = [
+    ["1-hero-1", 2.9 * BEAT],
+    ["1-hero-2", 2.9 * BEAT],
+    ["4-swipe", 3.2 * BEAT],
+    ["4-swipe", 12 * BEAT],
+    ["6-apply", 6 * BEAT],
+    ["7-end", 8 * BEAT],
+  ];
+  for (const [i, [id, t]] of checks.entries()) {
+    await still(page, byId(id), t, join(OUT, `frame-${i + 1}-${id}.jpg`));
+  }
+  // More on request: --still <scene id>:<seconds into the scene>, repeatable.
   for (let i = 0; i < args.length; i += 1) {
     if (args[i] === "--still") {
       const [id, t] = args[i + 1].split(":");
@@ -390,26 +450,26 @@ async function main() {
   for (const scene of all) {
     files.push(await encodeScene(page, scene, work));
   }
-  await still(page, byId("01-title"), 4.0, join(OUT, "culla-demo-poster.jpg"));
+  await still(page, all[0], 2.9 * BEAT, join(OUT, `${NAME}-poster.jpg`));
   await browser.close();
 
   const list = join(work, "concat.txt");
-  writeFileSync(list, files.map((f) => `file '${f.replaceAll("'", "'\\''")}'`).join("\n") + "\n");
-  const tmp = join(OUT, "culla-demo.tmp.mp4");
+  writeFileSync(list, `${files.map((f) => `file '${f.replaceAll("'", "'\\''")}'`).join("\n")}\n`);
+  const tmp = join(OUT, `${NAME}.tmp.mp4`);
   await run(["-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", list, "-c", "copy", "-an", "-movflags", "+faststart", tmp]);
-  renameSync(tmp, join(OUT, "culla-demo.mp4"));
+  renameSync(tmp, join(OUT, `${NAME}.mp4`));
   if (AUDIO !== null) {
-    const duration = all.reduce((sum, scene) => sum + Math.round(scene.duration * FPS), 0) / FPS;
-    await addMusic(join(OUT, "culla-demo.mp4"), duration, join(OUT, "culla-demo.music.mp4"));
+    const duration = all.reduce((sum, scene) => sum + sceneFrames(scene), 0) / FPS;
+    await addMusic(join(OUT, `${NAME}.mp4`), duration, join(OUT, `${NAME}.music.mp4`));
   }
   if (!process.env.CULLA_VIDEO_KEEP_WORK) {
     rmSync(work, { recursive: true, force: true });
   }
-  console.log(`wrote ${join(OUT, "culla-demo.mp4")}`);
+  console.log(`wrote ${join(OUT, `${NAME}.mp4`)}`);
 }
 
 if (MASTER !== null) {
-  if (AUDIO === null || !arg("out")) {
+  if (AUDIO === null || OUT === null) {
     console.error("usage: node compose.mjs --master <mp4> --audio <file> --out <dir>");
     process.exit(2);
   }
@@ -417,8 +477,11 @@ if (MASTER !== null) {
   const info = await run(["-hide_banner", "-i", MASTER, "-f", "null", "-"], true);
   const [, h, mi, se] = info.match(/Duration: (\d+):(\d+):([\d.]+)/);
   mkdirSync(OUT, { recursive: true });
-  await addMusic(MASTER, Number(h) * 3600 + Number(mi) * 60 + Number(se), join(OUT, "culla-demo.music.mp4"));
-} else if (!existsSync(CAPTURE)) {
+  await addMusic(MASTER, Number(h) * 3600 + Number(mi) * 60 + Number(se), join(OUT, `${NAME}.music.mp4`));
+} else if ([CAPTURE, PHOTOS, FONTS, OUT].includes(null)) {
+  console.error("usage: node compose.mjs --capture <dir> --photos <dir> --fonts <dir> --out <dir> [--bpm 120] [--offset 0]");
+  process.exit(2);
+} else if (!existsSync(join(CAPTURE, "swipe", "timeline.json"))) {
   console.error(`no capture at ${CAPTURE}`);
   process.exit(2);
 } else {
