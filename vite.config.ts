@@ -35,6 +35,18 @@ export default defineConfig(({ mode }) => ({
     // The demo's CSP has no data: source (public-demo/_headers), so the demo never inlines
     // small images or fonts as data: URLs; they stay files under /assets/.
     ...(mode === "demo" ? { assetsInlineLimit: 0 } : {}),
+    // The demo site also has a download and install page (install.html, from docs/install.md;
+    // SPEC §2). The desktop build has only the app.
+    ...(mode === "demo"
+      ? {
+          rolldownOptions: {
+            input: {
+              main: fileURLToPath(new URL("./index.html", import.meta.url)),
+              install: fileURLToPath(new URL("./install.html", import.meta.url)),
+            },
+          },
+        }
+      : {}),
   },
   test: {
     include: ["src/**/*.test.{ts,tsx}", "tests/**/*.test.ts"],

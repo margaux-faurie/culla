@@ -9,7 +9,8 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const headersFile = fileURLToPath(new URL("../public-demo/_headers", import.meta.url));
 
 interface DemoOutput {
-  html: string;
+  // Built HTML pages by file name: index.html (the demo) and install.html (the install guide).
+  html: Map<string, string>;
   css: string[];
 }
 
@@ -28,7 +29,7 @@ async function demoOutput(): Promise<DemoOutput> {
     }
   }
   const outputs = Array.isArray(result) ? result : [result];
-  const out: DemoOutput = { html: "", css: [] };
+  const out: DemoOutput = { html: new Map(), css: [] };
   for (const output of outputs) {
     if ("output" in output) {
       for (const file of output.output) {
@@ -37,8 +38,8 @@ async function demoOutput(): Promise<DemoOutput> {
         }
         const source =
           typeof file.source === "string" ? file.source : new TextDecoder().decode(file.source);
-        if (file.fileName === "index.html") {
-          out.html = source;
+        if (file.fileName.endsWith(".html")) {
+          out.html.set(file.fileName, source);
         } else if (file.fileName.endsWith(".css")) {
           out.css.push(source);
         }
@@ -89,19 +90,27 @@ function csp(value: string): Map<string, string> {
 
 describe("demo build stays inside its CSP", () => {
   it("has no inline script or style and no data: URLs", { timeout: 60_000 }, async () => {
-    const { html, css } = await demoOutput();
-    expect(html).toContain('<div id="root">');
-    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\b[^>]*>/gi)];
-    expect(scripts.length).toBeGreaterThan(0);
-    // Every opening tag must be one the pattern matched, so none escapes the checks below.
-    expect(html.match(/<script\b/gi)?.length).toBe(scripts.length);
-    for (const [, attributes, body] of scripts) {
-      expect(attributes).toMatch(/\bsrc="\/assets\/[^"]+\.js"/);
-      expect(body?.trim()).toBe("");
+    const { html: pages, css } = await demoOutput();
+    expect([...pages.keys()].sort()).toEqual(["index.html", "install.html"]);
+    expect(pages.get("index.html")).toContain('<div id="root">');
+    for (const [name, html] of pages) {
+      const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\b[^>]*>/gi)];
+      expect(scripts.length, name).toBeGreaterThan(0);
+      // Every opening tag must be one the pattern matched, so none escapes the checks below.
+      expect(html.match(/<script\b/gi)?.length, name).toBe(scripts.length);
+      for (const [, attributes, body] of scripts) {
+        expect(attributes, name).toMatch(/\bsrc="\/assets\/[^"]+\.js"/);
+        expect(body?.trim(), name).toBe("");
+      }
+      expect(html, name).not.toMatch(/<style\b/i);
+      expect(html, name).not.toMatch(/\sstyle\s*=/i);
+      expect(html, name).not.toMatch(/\son[a-z]+\s*=/i);
+      expect(html, name).not.toMatch(/data:/i);
+      // Stylesheets and module preloads come from the demo's own /assets/ only.
+      for (const [, attributes] of html.matchAll(/<link\b([^>]*)>/gi)) {
+        expect(attributes, name).toMatch(/\bhref="\/assets\/[^"]+"/);
+      }
     }
-    expect(html).not.toMatch(/<style\b/i);
-    expect(html).not.toMatch(/\sstyle\s*=/i);
-    expect(html).not.toMatch(/\son[a-z]+\s*=/i);
     for (const sheet of css) {
       expect(sheet).not.toMatch(/url\(\s*["']?data:/i);
     }

@@ -43,6 +43,10 @@ These are design rules. Lints enforce them now; tests enforce more of them as th
 - **Undecided photos are left alone.** Only photos you kept or rejected appear in the plan.
 - **The window that shows your photos has no file access.** The user interface only knows opaque photo IDs. It cannot read, list or move files, and it never sees a path.
 
+## Install
+
+There is no download yet. From the first release, Culla is installed from [GitHub Releases](https://github.com/margaux-faurie/culla/releases) with a per-user installer that needs no administrator rights. Because the first versions are not code-signed, Windows shows a SmartScreen warning; [the install guide](docs/install.md) explains how to check the download, why the warning appears and how to judge it, where Culla keeps its data, updates and uninstalling; the same guide, with the demo and install videos once they are recorded, is the download page of the demo site (`culla.margauxfaurie.com/install`, not public yet). To build Culla yourself, see [Building from source](#building-from-source).
+
 ## How the repo works
 
 Culla is built as a hexagon: a pure core in the middle, real-world adapters plugged into its ports, and thin shells that wire them together.
@@ -169,6 +173,8 @@ What could go wrong and how each risk is handled is in the [threat model](docs/t
 | [Incident response](docs/incident-response.md) | What to do about a leaked key, a bad release or a vulnerability |
 | [Testing](docs/testing.md) | Test strategy and definition of done |
 | [Roadmap](docs/roadmap.md) | Milestones M0 to M6 |
+| [Install guide](docs/install.md) | Download, check, install, update and uninstall, for users (also the demo site's install page) |
+| [Videos](docs/videos.md) | Scripts and storyboards for the demo and install videos |
 
 ## Building from source
 

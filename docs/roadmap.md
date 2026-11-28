@@ -139,11 +139,14 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
   - While the demo is gated, Playwright against the deployed URL authenticates with a Cloudflare Access service token stored as a CI secret (added in M5, with a security review of that change).
   - Tokens copied into `src/styles/tokens.css` with the source version; `keep` colour contrast checked on Night and cream; additions (`keep`, Night for photo screens) proposed back to the design system.
   - Loading dots, copy pass in the system voice, motion review.
+  - Download and install page at `/install` in the demo build, rendering [install.md](install.md) (in since 28 Nov 2026; it says plainly that there is no release or video yet).
+  - Demo video (75–85 s, captions in English and French) filmed from the demo build with a Playwright script, per [videos.md](videos.md), published on the install page; a short GIF cut for the README.
 - **Exit criteria:**
   - Demo deployed; Playwright and axe green against the deployed URL in Chromium, Firefox and WebKit, gated or public.
   - No network request from the demo other than its own assets (checked in Playwright).
   - Design review against the Portfolio Design System done.
-- **Author:** choose and provide the demo photos (GPS and serial stripped); create the Cloudflare Access service token for CI and add it as a repository secret; approve the design system additions; open the demo to the public when the portfolio goes public.
+  - Demo video and its caption files ready, showing only the demo's own photos.
+- **Author:** choose and provide the demo photos (GPS and serial stripped); create the Cloudflare Access service token for CI and add it as a repository secret; approve the design system additions; approve the demo video script, record the voice-over or approve a text-to-speech voice (or choose captions only), and publish the video; open the demo to the public when the portfolio goes public.
 
 ### M6 — Release v1.0
 
@@ -157,13 +160,17 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
   - Blog enablement guide material gathered from the ADRs ([research/practices.md](research/practices.md) section 4).
   - Uninstaller option "remove my Culla data" ([SPEC.md](SPEC.md) section 5.1), US-43.
   - Final benchmark re-run on H-2.
+  - Install guide [install.md](install.md) checked against the release candidate: asset name, `SHA256SUMS`, build attestations, SmartScreen wording, installer pages, uninstall option; "(from the first release)" marks removed.
+  - Release assets: installer, `SHA256SUMS` and build provenance attestations (SPEC §10).
+  - Install video (about 45 s, captions in English and French) filmed on a clean Windows 11 account with the release candidate, per [videos.md](videos.md), and published on the demo site's install page; the page's release entry (`src/install/status.ts`) filled in.
 - **Exit criteria:**
   - Release candidate installed on a clean Windows 11 account without admin rights; updater moves it to a newer test build.
   - Full manual checklist passed on the release candidate.
   - Installer test ([testing.md](testing.md) section 5.3) green: data kept or removed as chosen, photos never touched (US-43).
   - OpenSSF Scorecard checks targeted in [research/practices.md](research/practices.md) section 2 are green or explained.
+  - Install guide matches the published release; install video published.
   - v1.0 published.
-- **Author:** generate and store the updater signing key; approve and publish the release; submit the SignPath application; write the blog post.
+- **Author:** generate and store the updater signing key; approve and publish the release; submit the SignPath application; write the blog post; add the checksum and attestation steps to the release workflow (protected path); approve the install video, record its voice-over or approve a text-to-speech voice (or choose captions only), and publish it.
 
 After v1.0: winget manifest, then the v2 candidates in [SPEC.md](SPEC.md) section 8.
 
@@ -180,4 +187,9 @@ After v1.0: winget manifest, then the v2 candidates in [SPEC.md](SPEC.md) sectio
 | Choose demo photos, create the Cloudflare Access service token and CI secret for `culla.margauxfaurie.com`, approve design system additions | M5 |
 | Remove the Access gate on the demo when the portfolio goes public | Portfolio launch |
 | Decide the WebView2 installer mode (bootstrapper download or embedded) ([SPEC.md](SPEC.md) section 10) | M6 start |
+| Decide the video proposals: lengths, bilingual captions, voice-over or captions only, extra places beyond the demo site's install page ([SPEC.md](SPEC.md) section 10) | M5 start |
+| Approve the demo video script, record the voice-over or approve a text-to-speech voice, publish the demo video ([videos.md](videos.md)) | M5 |
+| Decide the install folder versus the data folder, and the release assets (`SHA256SUMS`, attestations) ([SPEC.md](SPEC.md) section 10) | M6 start |
+| Add checksums and build attestations to the release workflow (protected path) | M6 |
+| Approve the install video, record its voice-over or approve a text-to-speech voice, publish it on the demo site's install page ([videos.md](videos.md)) | M6 |
 | Updater key custody, release approval, SignPath application | M6 |

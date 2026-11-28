@@ -1521,3 +1521,152 @@ kbd {
     transition: none;
   }
 }
+
+/* Footer link of the demo start screen ("Download and install"), and the install page header. */
+
+.start-footer {
+  margin-top: auto;
+  font-size: 15px;
+}
+
+.start-footer a,
+.doc-header a {
+  color: var(--ink);
+  text-underline-offset: 0.2em;
+}
+
+.doc-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.doc-header a.brand {
+  text-decoration: none;
+}
+
+/* Download and install page of the demo site (cream), from docs/install.md. */
+
+.doc-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-height: 100vh;
+  padding: var(--space-8) var(--space-16);
+}
+
+.doc {
+  width: 100%;
+  max-width: 72ch;
+}
+
+.doc h1 {
+  margin: 0 0 var(--space-6);
+  font-size: 40px;
+  line-height: 1.1;
+  letter-spacing: -0.015em;
+}
+
+.doc h2 {
+  margin: var(--space-12) 0 var(--space-4);
+  font-size: 26px;
+  line-height: 1.2;
+}
+
+.doc h3 {
+  margin: var(--space-8) 0 var(--space-3);
+  font-size: 20px;
+  line-height: 1.3;
+}
+
+.doc p,
+.doc ul,
+.doc ol {
+  margin: 0 0 var(--space-4);
+}
+
+.doc li > p,
+.doc li > ul,
+.doc li > ol,
+.doc li > pre {
+  margin: var(--space-2) 0;
+}
+
+.doc a {
+  color: var(--ink);
+  text-underline-offset: 0.2em;
+  overflow-wrap: anywhere;
+}
+
+.doc code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
+/* Code wraps instead of scrolling, so it needs no focusable scroll region (axe). */
+.doc-code {
+  margin: var(--space-2) 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--paper-raised);
+  line-height: 1.5;
+}
+
+.doc-code code {
+  white-space: pre-wrap;
+}
+
+.doc-table {
+  margin: 0 0 var(--space-4);
+  overflow-x: auto;
+}
+
+.doc table {
+  border-collapse: collapse;
+}
+
+.doc th,
+.doc td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--line-hair) solid var(--ink-muted);
+  text-align: left;
+  vertical-align: top;
+}
+
+.doc-status {
+  margin: 0 0 var(--space-6);
+  padding: var(--space-4) var(--space-6);
+  border: var(--line-hair) solid var(--ink-muted);
+  border-radius: var(--radius-card);
+}
+
+.doc .doc-status-line {
+  margin: 0;
+}
+
+.doc-video {
+  margin: 0 0 var(--space-6);
+}
+
+.doc-video video {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+  background: #0c0b0a;
+}
+
+.doc-video figcaption {
+  margin-top: var(--space-2);
+  color: var(--ink-muted);
+  font-size: 15px;
+}
+
+@media (max-width: 640px) {
+  .doc-page {
+    padding: var(--space-6);
+  }
+}

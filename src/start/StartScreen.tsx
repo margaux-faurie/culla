@@ -327,6 +327,12 @@ export function StartScreen({ onStarted }: StartScreenProps) {
           )}
         </section>
       </main>
+      {/* Demo only, after the main content so it is not the first tab stop. */}
+      {import.meta.env.MODE === "demo" && (
+        <footer className="start-footer">
+          <a href="/install">Download and install</a>
+        </footer>
+      )}
     </div>
   );
 }
