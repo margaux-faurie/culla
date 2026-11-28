@@ -1,33 +1,16 @@
-//! The text output of `culla scan`, and escaping for anything printed to a terminal.
+//! The text output of `culla scan`, and the escaping for anything printed to a terminal (the
+//! shared set from `culla_core::text`).
 
 use std::borrow::Cow;
-use std::fmt::Write;
 
 use culla_core::volume::VolumeId;
 
+/// The shared escape set (threat model T6b), owned by the core since the apply log uses it too:
+/// [`shown`] escapes it as `\u{..}` in text, and `--json` escapes [`needs_escape`] as `\uXXXX`.
+pub(crate) use culla_core::text::{needs_escape, shown};
+
 use crate::labels;
 use crate::scan::{Identity, Report, Totals, exclusion_detail, group_files, is_folder};
-
-/// `s` with every character that could change what a terminal shows escaped as `\u{..}`:
-/// control characters (escape sequences, carriage returns), bidi controls and isolates,
-/// zero-width and other invisible characters, the BOM, tag characters and the line and
-/// paragraph separators (the set is [`needs_escape`]). File names and
-/// volume labels come from the card, so they are untrusted (threat model T6b).
-#[must_use]
-pub(crate) fn shown(s: &str) -> Cow<'_, str> {
-    if !s.chars().any(needs_escape) {
-        return Cow::Borrowed(s);
-    }
-    let mut out = String::with_capacity(s.len() + 8);
-    for c in s.chars() {
-        if needs_escape(c) {
-            let _ = write!(out, "\\u{{{:x}}}", u32::from(c));
-        } else {
-            out.push(c);
-        }
-    }
-    Cow::Owned(out)
-}
 
 /// `n` and the noun, plural unless `n` is 1 (`entry` becomes `entries`).
 #[must_use]
@@ -37,27 +20,6 @@ pub(crate) fn count(n: u64, noun: &str) -> String {
         (_, Some(stem)) => format!("{n} {stem}ies"),
         (_, None) => format!("{n} {noun}s"),
     }
-}
-
-/// Whether `c` is escaped by [`shown`] and in `--json`: control characters, the soft hyphen,
-/// the Arabic letter mark and the Mongolian vowel separator, zero-width characters, bidi
-/// controls and isolates, the line and paragraph separators, word joiners and invisible
-/// operators, the BOM, interlinear annotation controls and the tag characters.
-#[must_use]
-pub(crate) fn needs_escape(c: char) -> bool {
-    c.is_control()
-        || matches!(
-            c,
-            '\u{00AD}'
-                | '\u{061C}'
-                | '\u{180E}'
-                | '\u{200B}'..='\u{200F}'
-                | '\u{2028}'..='\u{202E}'
-                | '\u{2060}'..='\u{206F}'
-                | '\u{FEFF}'
-                | '\u{FFF9}'..='\u{FFFB}'
-                | '\u{E0000}'..='\u{E007F}'
-        )
 }
 
 /// The report as text, ending with a newline.
@@ -274,34 +236,10 @@ mod tests {
     }
 
     #[test]
-    fn terminal_controls_are_escaped() {
+    fn the_shared_escape_set_is_used() {
+        // The set itself is tested in `culla_core::text`.
         assert!(matches!(shown("DSC_0001.JPG"), Cow::Borrowed(_)));
-        assert_eq!(shown("é 📷 ok"), "é 📷 ok");
-        assert_eq!(shown("a\u{1b}[31mb"), "a\\u{1b}[31mb");
-        assert_eq!(shown("x\r\ny\t"), "x\\u{d}\\u{a}y\\u{9}");
-        assert_eq!(shown("\u{9b}"), "\\u{9b}");
-        assert_eq!(shown("gpj.\u{202E}EXE"), "gpj.\\u{202e}EXE");
-        assert_eq!(
-            shown("a\u{200B}\u{2066}\u{FEFF}\u{2028}"),
-            "a\\u{200b}\\u{2066}\\u{feff}\\u{2028}"
-        );
-    }
-
-    #[test]
-    fn invisible_format_characters_are_escaped() {
-        assert_eq!(
-            shown("a\u{AD}b\u{61C}c\u{180E}d"),
-            "a\\u{ad}b\\u{61c}c\\u{180e}d"
-        );
-        assert_eq!(
-            shown("x\u{E0000}\u{E0041}\u{E007F}y"),
-            "x\\u{e0000}\\u{e0041}\\u{e007f}y"
-        );
-        for c in ['\u{AD}', '\u{61C}', '\u{180E}', '\u{E0000}', '\u{E007F}'] {
-            assert!(needs_escape(c), "{c:?}");
-        }
-        for c in ['a', 'é', '\u{AC}', '\u{AE}', '\u{E0080}', '\u{DFFFF}', '📷'] {
-            assert!(!needs_escape(c), "{c:?}");
-        }
+        assert_eq!(shown("gpj.\u{202E}EXE\n"), "gpj.\\u{202e}EXE\\u{a}");
+        assert!(needs_escape('\u{1b}'));
     }
 }

@@ -1,0 +1,6 @@
+{
+  "state": {},
+  "done": [],
+  "undone": [],
+  "corrupt": {"seq": 3, "reason": "undo_not_top"}
+}

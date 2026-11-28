@@ -7,6 +7,7 @@
 
 mod fixtures;
 mod golden;
+mod golden_cases;
 mod json;
 
 use std::path::PathBuf;
@@ -18,7 +19,9 @@ usage: cargo xtask <task>
 tasks:
   fixtures              write the synthetic fixtures into testdata/synthetic/ (refuses to overwrite)
   fixtures --check      compare testdata/synthetic/ with what the generator produces, write nothing
-  golden --check        check the golden decision-log fixtures in testdata/event-log/
+  golden                write the missing golden decision-log cases into testdata/event-log/
+                        (refuses to overwrite)
+  golden --check        check testdata/event-log/ is well formed and matches the generator
   crash-loop --iterations N
                         kill and resume `culla apply` N times (Windows, from M2)";
 
@@ -29,6 +32,7 @@ fn main() -> ExitCode {
     let result = match args.as_slice() {
         ["fixtures"] => fixtures::write(&root),
         ["fixtures", "--check"] => fixtures::check(&root),
+        ["golden"] => golden::write(&root),
         ["golden", "--check"] => golden::check(&root),
         ["crash-loop", "--iterations", n] => crash_loop(n),
         ["help" | "--help" | "-h"] => {

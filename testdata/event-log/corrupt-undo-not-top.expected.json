@@ -1,0 +1,9 @@
+{
+  "state": {
+    "1": "kept",
+    "2": "kept"
+  },
+  "done": [1, 2],
+  "undone": [],
+  "corrupt": {"seq": 3, "reason": "undo_not_top"}
+}
