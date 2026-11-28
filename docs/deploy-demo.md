@@ -40,7 +40,7 @@ Domains & Routes (`wrangler.jsonc` declares no routes, so `wrangler deploy` leav
 | workers.dev | Disabled (also set by `workers_dev: false`; proposed, to confirm) |
 | Preview URLs | Disabled (also set by `preview_urls: false`) |
 
-For the zone `margauxfaurie.com`, leave off for this hostname every feature that injects a script into HTML pages: Rocket Loader, email address obfuscation, Web Analytics automatic setup, Zaraz, Bot Fight Mode JavaScript detections. The CSP blocks them, so they would only add console errors. On the Free plan, Bot Fight Mode JavaScript detections cannot be turned off: expect one blocked inline script ("Executing inline script violates ... script-src 'self'") on each page load. It is Cloudflare's, not the demo's, and the demo works without it.
+For the zone `margauxfaurie.com`, leave off for this hostname every feature that injects a script into HTML pages: Rocket Loader, email address obfuscation, Web Analytics automatic setup, Zaraz, Bot Fight Mode JavaScript detections. The CSP blocks them, so they would only add console errors.
 
 ## Cloudflare Access
 
@@ -56,7 +56,7 @@ Workers Builds deploys the demo on every push to `main`, so a merged PR is live 
 2. Signed in through Access, `curl -sI https://culla.margauxfaurie.com/` (with the `CF_Authorization` cookie) shows the headers from `_headers`, and a file under `/assets/` shows `Cache-Control: public, max-age=31536000, immutable`.
 3. `curl -sI https://culla.margauxfaurie.com/assets/nope.js`, through Access (a browser session or a service token), answers 404 without `Cache-Control: ... immutable`. If a 404 carries the immutable header, a missing asset would be cached for a year: drop `immutable` from `/assets/*` in `_headers` and shorten its `max-age`.
 4. Without a session, the same requests are redirected to the Access sign-in page.
-5. The browser console on the demo shows no CSP violation, apart from the Bot Fight Mode inline script above. The Access login page has its own CSP and may log its own errors; those are not the demo's. This manual check is the only test of the CSP itself: `pnpm e2e` runs on `vite preview`, which ignores `_headers`, so the e2e tests run without the CSP or the other headers; `tests/demo-site.test.ts` only checks that the build stays inside the CSP and that `_headers` is well formed.
+5. The browser console on the demo shows no CSP violation. This manual check is the only test of the CSP itself: `pnpm e2e` runs on `vite preview`, which ignores `_headers`, so the e2e tests run without the CSP or the other headers; `tests/demo-site.test.ts` only checks that the build stays inside the CSP and that `_headers` is well formed.
 
 ## Known limits
 
