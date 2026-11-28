@@ -55,7 +55,14 @@ export type SwipeAction =
   | { readonly type: "prev" }
   | { readonly type: "nextUndecided" }
   | { readonly type: "cycleFilter" }
-  | { readonly type: "dismissFeedback" };
+  | { readonly type: "dismissFeedback" }
+  /**
+   * Back from the review on one photo (a grid thumbnail, US-34): no decision, and the filter goes
+   * to "all" so the photo is always reachable (proposed, SPEC §10).
+   */
+  | { readonly type: "show"; readonly photoId: string }
+  /** "Sort them now" on the review: the first undecided photo, with the filter on "all". */
+  | { readonly type: "firstUndecided" };
 
 export function initialState(photos: readonly string[]): SwipeState {
   return {
@@ -186,6 +193,14 @@ export function swipeReducer(s: SwipeState, action: SwipeAction): SwipeState {
     }
     case "dismissFeedback":
       return s.feedback === null ? s : { ...s, feedback: null };
+    case "show": {
+      const index = s.photos.indexOf(action.photoId);
+      return index < 0 ? s : shown(s, index);
+    }
+    case "firstUndecided": {
+      const index = s.photos.findIndex((_, i) => stateAt(s, i) === "undecided");
+      return index < 0 ? s : shown(s, index);
+    }
   }
 }
 
@@ -213,6 +228,18 @@ function commit(s: SwipeState, intent: Intent, now: number): Committed {
 
 function feedback(s: SwipeState, value: Feedback): SwipeState {
   return { ...s, feedback: value, exit: null, nonce: s.nonce + 1, announcement: announce(value) };
+}
+
+/** On one photo with the filter on "all", coming back from the review. */
+function shown(s: SwipeState, index: number): SwipeState {
+  return {
+    ...s,
+    index,
+    filter: "all",
+    feedback: null,
+    exit: null,
+    announcement: `Photo ${of(s, index)}`,
+  };
 }
 
 function moved(s: SwipeState, index: number): SwipeState {
