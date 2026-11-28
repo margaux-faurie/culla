@@ -2,8 +2,12 @@
 # Supply-chain hardening, SPEC §7 and docs/research/practices.md.
 
 # Only packages listed here may run install scripts; anything else fails the install.
-# Empty on purpose: no dependency needs an install script today (Vite 8 uses rolldown, not esbuild).
-allowBuilds: {}
+# Vite 8 uses rolldown, not esbuild. esbuild and workerd come in with wrangler (demo deploy) and are
+# denied on purpose: both ship their binary as a platform package, and their install scripts only
+# verify it, so `wrangler deploy` of static assets works without them.
+allowBuilds:
+  esbuild: false
+  workerd: false
 strictDepBuilds: true
 
 # Wait 3 days before installing a newly published version (Dependabot waits 7).
