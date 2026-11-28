@@ -48,7 +48,7 @@ Notes:
 | H-1 | ROG Zephyrus G14 2024 (Ryzen 9 8945HS) | internal NVMe | — | reference for CPU and cache-hit numbers |
 | H-2 | same | UHS-I SD card (record brand, size, speed class) | USB card reader (record model and USB port) | reference for cold numbers; the main target |
 | H-3 | same | microSD | built-in UHS-II reader | secondary |
-| H-4 | same | the author's external drive, exFAT (record SSD or HDD, model, size) | USB (record port) | the author's sorting volume (SPEC §1, 28 Nov 2026): run the M1 set on it as well as on H-2, and use it as source and destination for B-12 to B-14 |
+| H-4 | same | external SSD or HDD (if available) | USB | cross-volume apply destination, optional |
 
 Record for each run: Windows build, power source (plugged in), ASUS power mode (fixed, for example "Performance"), Defender real-time scanning state (left on, since users have it on), free RAM, file system of the medium (exFAT on most cards).
 
