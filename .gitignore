@@ -21,3 +21,5 @@ blob-report/
 *.pem
 .env
 .env.*
+# Cloudflare (wrangler local state)
+.wrangler/
