@@ -187,6 +187,16 @@ pub trait Store {
     ///
     /// [`StoreError`]; then none of them is committed.
     fn append(&mut self, entries: &[Entry]) -> Result<(), StoreError>;
+
+    /// Records that the user stopped the plan (`plan.status = stopping`, §9.1, proposed),
+    /// durably, before returning. [`run`] calls it once, before the first step of a cancel, so
+    /// a crash during the cancel is followed at launch by a run that keeps cancelling
+    /// ([`Journal::stopping`]) rather than one that applies the groups the user stopped.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`]; then nothing is recorded.
+    fn stop(&mut self) -> Result<(), StoreError>;
 }
 
 /// A request from the user, checked between steps (§9.5).
@@ -194,7 +204,9 @@ pub trait Store {
 pub enum Halt {
     /// Pause after the current step.
     Pause,
-    /// Stop starting new operations; a cross-volume group cut short is treated as failed.
+    /// Stop starting new operations; a cross-volume group cut short is treated as failed, as
+    /// is one an earlier run left mid-way (§9.5). Recorded first ([`Store::stop`]): from then
+    /// on every run of the plan cancels, whatever `halt` says.
     Cancel,
 }
 
@@ -219,7 +231,8 @@ pub enum End {
     Finished,
     /// Paused; [`run`] again resumes it.
     Paused(PauseReason),
-    /// Cancelled by the user; close the plan with [`close`].
+    /// Cancelled by the user, every group settled (none left mid-way); close the plan with
+    /// [`close`].
     Cancelled,
 }
 
@@ -261,7 +274,12 @@ type Step = Result<(), Brk>;
 /// (pending ones too, so the first run and a resume are the same code), nothing starts in a
 /// group whose look found a failure, then the operations sent back to the start run in order,
 /// and a cross-volume group removes its sources once every member is committed. `halt` is asked
-/// between groups and between operations.
+/// between groups and between operations; a cancel settles every group left mid-way first
+/// (§9.5), so [`End::Cancelled`] leaves a plan [`close`] accepts. A cancel is recorded
+/// ([`Store::stop`]) before its first step, and a plan the user stopped
+/// ([`Journal::stopping`]) cancels at its first ask: a resume after a crash during a cancel, or
+/// after a cancel that paused (a volume missing, write-protected), settles the groups and
+/// starts nothing new.
 ///
 /// # Errors
 ///
@@ -288,14 +306,54 @@ pub fn run<D: Disk + ?Sized, S: Store + ?Sized>(
     out
 }
 
+/// A cross-volume group that has started: a member that removes its source is past `pending`,
+/// or has had an attempt or a commit.
+fn xmove_started(j: &Journal, g: &Range<usize>) -> bool {
+    g.clone().any(|i| {
+        let p = j.progress(i);
+        j.ops()[i].kind.removes_source()
+            && (p.state() != OpState::Pending || p.attempts > 0 || p.ever_committed)
+    })
+}
+
+/// An operation a closed plan may not hold as it is (§9.1, §9.5): in a step (`renaming`,
+/// `copying`, `verifying`), at `source_removed`, `committed` other than a rename, or `pending`
+/// in a cross-volume group that has started (`started`).
+fn unsettled_op(kind: Kind, state: OpState, started: bool) -> bool {
+    match state {
+        OpState::Renaming | OpState::Copying | OpState::Verifying | OpState::SourceRemoved => true,
+        OpState::Committed => kind != Kind::Rename,
+        OpState::Pending => started,
+        OpState::Done | OpState::Failed | OpState::CopiedSourceKept => false,
+    }
+}
+
 /// Closes the plan (`completed` or `cancelled`, §9.1): every rename still `committed` is
 /// journaled `committed → done`, in one append. The caller sets the plan's status in the same
-/// transaction.
+/// transaction. Only after [`run`] ended [`End::Finished`] or [`End::Cancelled`]: a plan that
+/// still holds a group left mid-way is refused, because closing it would leave a cross-volume
+/// move `committed` instead of `copied_source_kept`, or an operation in a step, where neither
+/// the report nor the launch check would find it (cancel a paused plan by running it with a
+/// [`Halt::Cancel`] at the first ask).
 ///
 /// # Errors
 ///
-/// [`RunError::Store`]; nothing is applied then.
+/// [`RunError::Store`]; nothing is applied then. [`RunError::Journal`] with
+/// [`JournalError::Unsettled`] (a bug in the caller) for the first operation left mid-way;
+/// nothing is applied then either.
 pub fn close<S: Store + ?Sized>(journal: &mut Journal, store: &mut S) -> Result<(), RunError> {
+    for g in journal.groups() {
+        let started = xmove_started(journal, &g);
+        for i in g {
+            let state = journal.progress(i).state();
+            if unsettled_op(journal.ops()[i].kind, state, started) {
+                return Err(RunError::Journal(JournalError::Unsettled {
+                    op: journal.ops()[i].id,
+                    state,
+                }));
+            }
+        }
+    }
     let entries: Vec<Entry> = journal
         .ops()
         .iter()
@@ -372,20 +430,19 @@ fn call<T>(r: Result<T, DiskError>) -> Result<Result<T, DiskError>, Brk> {
 
 impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
     fn groups(&mut self) -> Result<End, RunError> {
-        for g in self.j.groups() {
-            if let Some(h) = (self.halt)() {
-                return Ok(match h {
-                    Halt::Pause => End::Paused(PauseReason::User),
-                    Halt::Cancel => End::Cancelled,
-                });
-            }
-            match self.group(g) {
-                Ok(()) => {}
-                Err(Brk::Stop(end)) => return Ok(end),
-                Err(Brk::Err(e)) => return Err(e),
-            }
+        match self.each_group() {
+            Ok(()) => Ok(End::Finished),
+            Err(Brk::Stop(end)) => Ok(end),
+            Err(Brk::Err(e)) => Err(e),
         }
-        Ok(End::Finished)
+    }
+
+    fn each_group(&mut self) -> Step {
+        for g in self.j.groups() {
+            self.halted(None)?;
+            self.group(g)?;
+        }
+        Ok(())
     }
 
     /// Drops every proof still held.
@@ -433,27 +490,116 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
         self.record(i, OpState::Failed, Detail::Failed(r))
     }
 
+    /// A member failed, or a cross-volume member was kept at `copied_source_kept`: only a
+    /// failed group (§9.5) puts one there, so a resume after a crash part-way through
+    /// [`Runner::fail_group`] finishes failing the group instead of starting its other members.
     fn group_failed(&self, g: &Range<usize>) -> bool {
-        g.clone().any(|i| self.state(i) == OpState::Failed)
+        g.clone()
+            .any(|i| matches!(self.state(i), OpState::Failed | OpState::CopiedSourceKept))
     }
 
-    fn halted(&mut self, g: &Range<usize>) -> Step {
-        match (self.halt)() {
+    /// Asks `halt`, between groups (`current` is `None`) or between the operations of
+    /// `current` once it has been looked at.
+    /// A plan the user stopped ([`Journal::stopping`]) cancels at the first ask, without
+    /// asking `halt`.
+    fn halted(&mut self, current: Option<&Range<usize>>) -> Step {
+        let h = if self.j.stopping() {
+            Some(Halt::Cancel)
+        } else {
+            (self.halt)()
+        };
+        match h {
             None => Ok(()),
             Some(Halt::Pause) => Err(Brk::Stop(End::Paused(PauseReason::User))),
             Some(Halt::Cancel) => {
-                // A cross-volume group cut short is a failed group (§9.5); others just stop.
-                let started = g.clone().any(|i| {
-                    let p = self.j.progress(i);
-                    self.j.ops()[i].kind.removes_source()
-                        && (p.state() != OpState::Pending || p.attempts > 0 || p.ever_committed)
-                });
-                if started {
-                    self.fail_group(g)?;
+                if !self.j.stopping() {
+                    self.store.stop().map_err(RunError::Store)?;
+                    self.j.set_stopping();
                 }
+                self.cancel(current)?;
                 Err(Brk::Stop(End::Cancelled))
             }
         }
+    }
+
+    fn xmove_started(&self, g: &Range<usize>) -> bool {
+        xmove_started(self.j, g)
+    }
+
+    /// A group an earlier run left mid-way, which a closed plan may not hold as it is: a member
+    /// in a step (`renaming`, `copying`, `verifying`), at `source_removed`, `committed` other
+    /// than a rename (held until the plan closes), or `pending` in a cross-volume group that
+    /// has started.
+    fn unsettled(&self, g: &Range<usize>) -> bool {
+        let started = self.xmove_started(g);
+        g.clone()
+            .any(|i| unsettled_op(self.j.ops()[i].kind, self.state(i), started))
+    }
+
+    /// A cancel (§9.5). A cross-volume group cut short is a failed group; other groups just
+    /// stop. `current` (cut between its operations, already looked at) fails if it is a
+    /// cross-volume group that has started. Every other group an earlier run ended inside (a
+    /// pause, a card pulled, a full disk, a crash) is settled before the plan can close
+    /// (proposed, SPEC §10):
+    ///
+    /// - it is looked at as on a resume: its recovery cells run, so a step that was under way
+    ///   finishes or goes back to the start, and the operations sent back stay `pending`. The
+    ///   same goes for every group with an operation that is not final and has been touched: a
+    ///   rename held at `committed`, which a crash may have reverted, or a `pending` one whose
+    ///   partial a crash put back. The final operations of the other groups are swept, as a
+    ///   run does;
+    /// - a cross-volume group whose source removals had begun (every member committed and
+    ///   verified) finishes them, under the usual gate;
+    /// - a group with a failed member, or still left mid-way (a cross-volume group that has
+    ///   started), fails as §9.5 says.
+    ///
+    /// The look probes the disk, so with a volume still missing the cancel ends `paused
+    /// (volume_lost)` instead, and a later cancel settles the group.
+    fn cancel(&mut self, current: Option<&Range<usize>>) -> Step {
+        if let Some(g) = current
+            && self.xmove_started(g)
+        {
+            self.fail_group(g)?;
+        }
+        for g in self.j.groups() {
+            // Every operation that is not final and has been touched is looked at too: a
+            // rename held at `committed` (a crash may have reverted it; it goes back to
+            // `pending`, not redone) and a `pending` one with a partial left behind.
+            let touched = g.clone().any(|i| {
+                let p = self.j.progress(i);
+                !p.state().is_final()
+                    && (p.state() != OpState::Pending || p.attempts > 0 || p.ever_committed)
+            });
+            if Some(&g) == current {
+                continue;
+            }
+            if !(touched || self.unsettled(&g)) {
+                // Still swept, as a run sweeps every group: a partial whose removal a crash
+                // lost goes while S is there.
+                for i in g.clone() {
+                    if self.state(i).is_final() {
+                        self.sweep(i)?;
+                    }
+                }
+                continue;
+            }
+            self.look(&g)?;
+            // After the look: a crash inside `remove_source`, before `source_removed` was
+            // journaled, leaves a member `committed` with its source gone, which the look
+            // carries to `done`. Its removal had begun, so the others finish theirs too
+            // rather than splitting the group.
+            let removing = g.clone().any(|i| {
+                self.j.ops()[i].kind.removes_source()
+                    && matches!(self.state(i), OpState::SourceRemoved | OpState::Done)
+            });
+            if removing && !self.group_failed(&g) {
+                self.remove_sources(&g)?;
+            }
+            if self.group_failed(&g) || self.unsettled(&g) {
+                self.fail_group(&g)?;
+            }
+        }
+        Ok(())
     }
 
     /// Removes this operation's partial if a fresh probe finds S there as planned (INV-01:
@@ -536,6 +682,29 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
     fn group(&mut self, g: Range<usize>) -> Step {
         // 1. Look at every operation that is not final and carry out its table cell; the ones
         // sent back to the start wait until the whole group has been looked at.
+        let queue = self.look(&g)?;
+        // 2. Run the operations sent back to the start, unless the group failed.
+        for i in queue {
+            if self.group_failed(&g) {
+                break;
+            }
+            self.halted(Some(&g))?;
+            self.execute(i)?;
+        }
+        // 3. Group rules (§9.5).
+        if self.group_failed(&g) {
+            return self.fail_group(&g);
+        }
+        if g.clone().any(|i| self.j.ops()[i].kind.removes_source()) {
+            self.remove_sources(&g)?;
+        }
+        Ok(())
+    }
+
+    /// Step 1 of a group: every operation that is not final is probed and its recovery cell
+    /// carried out (final ones are swept). The operations back at `pending`, waiting to be
+    /// executed, in plan order.
+    fn look(&mut self, g: &Range<usize>) -> Result<Vec<usize>, Brk> {
         let mut queue = Vec::new();
         for i in g.clone() {
             if self.state(i).is_final() {
@@ -576,22 +745,7 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
                 queue.push(i);
             }
         }
-        // 2. Run the operations sent back to the start, unless the group failed.
-        for i in queue {
-            if self.group_failed(&g) {
-                break;
-            }
-            self.halted(&g)?;
-            self.execute(i)?;
-        }
-        // 3. Group rules (§9.5).
-        if self.group_failed(&g) {
-            return self.fail_group(&g);
-        }
-        if g.clone().any(|i| self.j.ops()[i].kind.removes_source()) {
-            self.remove_sources(&g)?;
-        }
-        Ok(())
+        Ok(queue)
     }
 
     /// Carries out one table cell. True when the operation is back at `pending` and waits to be

@@ -432,6 +432,15 @@ pub enum JournalError {
     /// The detail does not fit the transition (a new attempt must be the next number, a
     /// `verifying` entry must carry H1 and the plan's size, a `failed` entry its reason).
     BadDetail(Entry),
+    /// The plan cannot close: this operation was left mid-way (in a step, at
+    /// `source_removed`, `committed` other than a rename, or `pending` in a cross-volume group
+    /// that has started).
+    Unsettled {
+        /// The operation.
+        op: OpId,
+        /// Its state.
+        state: OpState,
+    },
 }
 
 impl fmt::Display for JournalError {
@@ -453,6 +462,9 @@ impl fmt::Display for JournalError {
                 "detail does not fit {} → {} for operation {}",
                 e.from, e.to, e.op
             ),
+            Self::Unsettled { op, state } => {
+                write!(f, "operation {op} is left {state}: the plan cannot close")
+            }
         }
     }
 }
@@ -466,6 +478,9 @@ pub struct Journal {
     ops: Vec<Op>,
     progress: Vec<Progress>,
     index: BTreeMap<OpId, usize>,
+    /// The user stopped the plan (`plan.status = stopping`, §9.1, proposed): every run of it
+    /// cancels.
+    stopping: bool,
 }
 
 impl Journal {
@@ -531,6 +546,7 @@ impl Journal {
             ops,
             progress,
             index,
+            stopping: false,
         })
     }
 
@@ -609,6 +625,20 @@ impl Journal {
         }
         p.state = Some(e.to);
         Ok(())
+    }
+
+    /// The user stopped this plan ([`Store::stop`] recorded it): every run of it cancels, so a
+    /// resume at launch settles the groups left mid-way and starts nothing new (proposed, SPEC
+    /// §10).
+    pub fn stopping(&self) -> bool {
+        self.stopping
+    }
+
+    /// Marks the plan stopped, as its stored status says (`stopping`): the caller sets this
+    /// when it loads a plan whose status is `stopping`, after [`Journal::replay`]; [`run`] sets
+    /// it once [`Store::stop`] has returned. It is never cleared.
+    pub fn set_stopping(&mut self) {
+        self.stopping = true;
     }
 
     /// The operations in plan order.

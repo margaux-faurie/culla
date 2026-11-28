@@ -214,6 +214,9 @@ impl World {
     pub(super) fn reload(&self) -> Journal {
         let mut j = Journal::new(self.journal.ops().to_vec()).unwrap();
         j.replay(&self.entries).unwrap();
+        if self.journal.stopping() {
+            j.set_stopping();
+        }
         j
     }
 
@@ -746,6 +749,28 @@ impl Disk for FakeDisk {
 }
 
 impl Store for FakeStore {
+    fn stop(&mut self) -> Result<(), StoreError> {
+        let mut w = self.0.borrow_mut();
+        let Ok(mode) = w.enter() else {
+            return Err(StoreError);
+        };
+        match mode {
+            Mode::Normal => {
+                w.journal.set_stopping();
+                Ok(())
+            }
+            Mode::Before => {
+                w.crash();
+                Err(StoreError)
+            }
+            Mode::Mid | Mode::After => {
+                w.journal.set_stopping();
+                w.crash();
+                Err(StoreError)
+            }
+        }
+    }
+
     fn append(&mut self, entries: &[Entry]) -> Result<(), StoreError> {
         let mut w = self.0.borrow_mut();
         let Ok(mode) = w.enter() else {
