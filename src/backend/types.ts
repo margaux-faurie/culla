@@ -4,7 +4,7 @@ import type { DecisionEvent } from "../decisions/events";
  * Everything the UI asks of the outside world goes through this interface (ADR 0014).
  * `backend/tauri.ts` talks to the Rust side; `backend/demo.ts` simulates it in the browser.
  *
- * The UI only ever holds opaque ids. Folder strings in `DisplayFolder`, `SourceDetails` and
+ * The UI only ever holds opaque ids. Folder strings in `DisplayFolder`, `SessionInfo` and
  * `PhotoRoute` are display strings computed by the backend: the UI prints them as they are, never
  * builds, parses or sends back a path, and the backend re-derives every real path from the ids
  * (design/file-engine.md §4, threat model T7; the shape is proposed in SPEC §10).
@@ -16,16 +16,20 @@ export interface Backend {
   recentSources(): Promise<readonly SourceSummary[]>;
   /** Opens the native folder dialog (from Rust in the app). Null when the user cancels. */
   chooseSource(): Promise<SourceSummary | null>;
-  /** What the route view needs to know about a source with these options. */
-  describeSource(sourceId: string, includeSubfolders: boolean): Promise<SourceDetails>;
-  /** One real photo of the source and where it would go with these options. Null when none. */
-  exampleRoute(query: RouteQuery): Promise<RouteExample | null>;
-  /** The destination remembered for this source, else the last one used anywhere, else null. */
-  proposeDestination(sourceId: string): Promise<DestinationProposal | null>;
+  /**
+   * Starts sorting a folder at once (SPEC §4.2, decided by Margaux 28 Nov 2026). The backend fills
+   * in the rest without asking: "RAW follows JPEG" on, move or copy as last chosen, the destination
+   * remembered for this folder or else the last one used. Either may be null the first time.
+   */
+  startSession(options: StartOptions): Promise<SessionInfo>;
+  /**
+   * Changes how the session applies (review screen): move or copy, the destination, "RAW follows
+   * JPEG". Remembers move or copy and the destination for next time. Answers the session with
+   * every photo's route recomputed. Nothing on any disk changes.
+   */
+  updateSession(sessionId: string, change: SessionChange): Promise<SessionInfo>;
   /** Opens the native folder dialog for the destination. Null when the user cancels. */
   chooseDestination(): Promise<DestinationSummary | null>;
-  /** Starts a session and remembers its destination for the source (SPEC §2, "Keep"). */
-  startSession(options: SessionOptions): Promise<SessionInfo>;
   /** Mirrors one decision event, already committed in the UI reducer (autosave, ADR 0005). */
   recordEvent(sessionId: string, event: DecisionEvent): Promise<void>;
   /**
@@ -112,28 +116,7 @@ export interface SourceSummary {
   readonly connected: boolean;
 }
 
-export interface SourceDetails {
-  readonly sourceId: string;
-  readonly includeSubfolders: boolean;
-  readonly photoCount: number;
-  /** Names of the subfolders that hold photos, when subfolders are included. */
-  readonly subfolders: readonly string[];
-  /** `E:\2026\_rejected`, as Windows shows it. Display only. */
-  readonly rejectedFolder: string;
-  /** `_rejected\` is marked as a new folder only while it does not exist yet (SPEC §2). */
-  readonly rejectedFolderExists: boolean;
-}
-
-/** The options the start screen shows an example route for. Null fields are not chosen yet. */
-export interface RouteQuery {
-  readonly sourceId: string;
-  readonly includeSubfolders: boolean;
-  readonly rawFollows: boolean;
-  readonly keepMode: KeepMode | null;
-  readonly destinationId: string | null;
-}
-
-/** One real photo of the source with its route under the queried options. */
+/** One real photo of the session and its route, for the route view's example. */
 export interface RouteExample {
   readonly photo: PhotoSummary;
   readonly route: PhotoRoute;
@@ -161,8 +144,8 @@ export interface PhotoRoute {
   /** The files that stay in `folder` (the NEF and its sidecars when RAW does not follow). */
   readonly staying: FilesLabel | null;
   /**
-   * `moved to D:\Selects\Barcelona` or `copied to …`; the folder alone while moved or copied is not
-   * chosen; null while no available destination is chosen.
+   * `moved to D:\Selects\Barcelona` or `copied to …`; `moved or copied to …` while move or copy is
+   * not chosen; null while no available destination is chosen.
    */
   readonly keptTo: string | null;
   /** `moved to E:\2026\_rejected\Barcelona`, or `copied to …` for a camera-protected photo. */
@@ -207,27 +190,40 @@ export interface DestinationSummary {
   readonly available: boolean;
 }
 
-export interface DestinationProposal {
-  readonly destination: DestinationSummary;
-  /** `thisSource`: remembered for this folder; `lastUsed`: the last one used anywhere. */
-  readonly reason: "thisSource" | "lastUsed";
+export type KeepMode = "move" | "copy";
+
+/** What the start screen sends: the folder, and whether its subfolders are sorted too. */
+export interface StartOptions {
+  readonly sourceId: string;
+  readonly includeSubfolders: boolean;
 }
 
-export type KeepMode = "move" | "copy";
+/** The fields of `SessionOptions` the review screen can change; absent fields stay as they are. */
+export interface SessionChange {
+  readonly keepMode?: KeepMode;
+  readonly destinationId?: string;
+  readonly rawFollows?: boolean;
+}
 
 export interface SessionOptions {
   readonly sourceId: string;
+  /** Fixed for the session: it decides which photos are sorted (SPEC §10, proposed). */
   readonly includeSubfolders: boolean;
   readonly rawFollows: boolean;
-  readonly keepMode: KeepMode;
-  readonly destinationId: string;
+  /** Null until chosen: the first time there is no last choice. */
+  readonly keepMode: KeepMode | null;
+  /** Null until chosen: a first run has no destination to propose. */
+  readonly destinationId: string | null;
 }
 
 export interface SessionInfo {
   /** Opaque session id. */
   readonly id: string;
   readonly source: SourceSummary;
-  readonly destination: DestinationSummary;
+  /** Null until one is chosen; may be not available (its drive unplugged), then it cannot be used. */
+  readonly destination: DestinationSummary | null;
+  /** The destination is the one remembered, not changed in this session ("same as last time"). */
+  readonly sameAsLastTime: boolean;
   readonly options: SessionOptions;
   /** `E:\2026\_rejected`, as Windows shows it. Display only. */
   readonly rejectedFolder: string;

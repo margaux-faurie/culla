@@ -5,17 +5,15 @@ import { protectedNote, stayVerb } from "./staying";
 export interface RouteViewProps {
   readonly source: SourceSummary;
   readonly photoSummary: string;
-  /** One real photo and its route, computed by the backend. Null while loading or when none. */
+  /** One real photo and its route, computed by the backend. Null when the session has none. */
   readonly example: RouteExample | null;
-  /** `E:\2026\_rejected` from the backend, or null while it loads. */
-  readonly rejectedFolder: string | null;
-  /** Null while the folder's details load: the "new folder" mark waits for them. */
-  readonly rejectedFolderExists: boolean | null;
+  /** `E:\2026\_rejected` from the backend. */
+  readonly rejectedFolder: string;
+  /** `_rejected\` is marked as a new folder only while it does not exist yet (SPEC §2). */
+  readonly rejectedFolderExists: boolean;
   readonly destination: DestinationSummary | null;
   readonly keepMode: KeepMode | null;
-  /** Controls placed in the From branch (change folder, subfolders). */
-  readonly originControls?: ReactNode;
-  /** Controls placed in the Kept branch (moved or copied, destination). */
+  /** Controls placed in the Kept branch: move or copy and the destination (review screen). */
   readonly keepControls?: ReactNode;
   /** The review's counts, folders and photos under each branch (US-34). */
   readonly keptDetails?: ReactNode;
@@ -25,8 +23,9 @@ export interface RouteViewProps {
 
 /**
  * "Where photos go" (SPEC §2): the origin, a Kept branch, a Rejected branch and the photos left in
- * place, with one real example path per branch. The same view heads the start, review and apply
- * screens. Every path is a display string from the backend, printed as it is.
+ * place, with one real example path per branch. The same view heads the review and apply screens;
+ * the swipe screen shows each photo's route under its buttons. Every path is a display string from
+ * the backend, printed as it is.
  */
 export function RouteView(props: RouteViewProps) {
   const { source, example, destination, keepMode } = props;
@@ -41,7 +40,6 @@ export function RouteView(props: RouteViewProps) {
           <span className="route-note">
             {source.folder.volume} · {props.photoSummary}
           </span>
-          {props.originControls}
         </div>
       </li>
 
@@ -73,8 +71,8 @@ export function RouteView(props: RouteViewProps) {
         <div className="route-body">
           <span className="route-label">← Rejected photos</span>
           <span className="route-place">
-            Moved to {props.rejectedFolder ?? "_rejected"}
-            {props.rejectedFolderExists === false && (
+            Moved to {props.rejectedFolder}
+            {!props.rejectedFolderExists && (
               <>
                 <span className="visually-hidden">, </span>
                 <span className="pill pill-outline">new folder</span>

@@ -188,14 +188,18 @@ Links: INV (nothing before Apply), NFR-REL. Test: core unit (recording port), Wi
 ## M3 — Desktop swipe loop
 
 ### US-21 Start a session
-As a photographer, I want to pick a folder and my options on one screen, so that I can start culling in a few seconds.
-- Given the start screen, when I choose a source folder, include subfolders, RAW follows, move or copy, and a destination, then the swipe screen opens on the first photo.
-- Given I resume a source folder, when the start screen opens, then that folder's destination is restored and labelled "same as last time".
-- Given a new source folder and a destination used before in any session, then that last destination is proposed and labelled "same as last time".
-- Given a first run, then no destination is proposed and I choose one.
-- Given the remembered destination is missing (drive unplugged), then it is shown as not available and I must choose a destination.
-- Given the start screen, then neither move nor copy is selected, and Start stays disabled until I choose one.
-- Given the start screen, then it shows where kept, rejected and undecided photos will go as one route, with one real example path per branch.
+As a photographer, I want to pick a folder and start sorting at once, so that I start culling in a few seconds and set where photos go when I apply. (Decided by Margaux 28 Nov 2026, ADR 0029; this replaces the version of 27 Nov where every option and the route were on the start screen and move or copy was chosen fresh each session.)
+- Given the start screen, then it shows only "What do you want to sort?", "Choose a folder" and the recent folders: no route, no options (not even folded), no move or copy, no destination and no Start button.
+- Given the start screen, when I choose a folder in the dialog or click a recent folder, then the swipe screen opens on the first photo, with subfolders included.
+- Given a new session, then "RAW follows JPEG" is on, move or copy is my last choice, and the destination is the one used for this folder, otherwise the last one used anywhere; nothing is asked.
+- Given a first run, then no destination and no move or copy are set, and I choose both on review before kept photos can be applied.
+- Given only rejected photos, then Apply works with neither move or copy nor a destination chosen.
+- Given the remembered destination is missing (drive unplugged), then review shows it as not available and I must choose another destination before kept photos can be applied.
+- Given the review screen, then "RAW follows JPEG" is in a folded "Options", on by default, and I can change it until Apply.
+- Given no destination yet, then the swipe screen still says where kept photos go, honestly. **(proposed)** Under Keep it reads "You choose where on Review".
+- **(proposed)** Given kept photos that would get operations, when move or copy or a connected destination is missing, then Apply stays disabled with a hint saying which, and no plan is shown; kept photos held back (applied, missing) do not count.
+- **(proposed)** Given I choose move or copy or a destination on review, then they are remembered at once and again when I confirm; the remembered destination is labelled "same as last time".
+- **(proposed)** Given a recent folder whose drive is not connected, or a folder with no photos, when I choose it, then the start screen stays and says why.
 
 Links: NFR-A11Y. Test: Vitest, Playwright.
 
@@ -265,7 +269,7 @@ Links: NFR-A11Y. Test: Vitest, Playwright.
 As a photographer, I want counts and the current photo's state always visible, so that I know where I am.
 - Given the swipe screen, then it shows n / total, kept, rejected and undecided counts, and the current decision badge.
 - Given a decision, then the badge uses a label and a shape (filled for keep, outline for reject) as well as colour.
-- Given the swipe screen, then under the Keep and Reject buttons it shows where the current photo would go (example path, following "RAW follows JPEG"); on an already decided photo it shows where it will go without implying the arrows act ([ADR 0006](adr/0006-arrow-keys-do-not-change-an-existing-decision.md)).
+- Given the swipe screen, then under the Keep and Reject buttons it shows where the current photo would go (example path, following "RAW follows JPEG"), or "You choose where on Review" under Keep while no destination is chosen (ADR 0029); on an already decided photo it shows where it will go without implying the arrows act ([ADR 0006](adr/0006-arrow-keys-do-not-change-an-existing-decision.md)).
 
 Links: NFR-A11Y. Test: Playwright + axe.
 
@@ -324,7 +328,7 @@ As a photographer, I want a review screen headed by the route, with counts, kept
 
 Opening and layout
 - Given the swipe screen, when I press Enter or click Review, then the review screen opens on cream (SPEC §5.6), focus goes to its heading, and no file on the source or destination has changed (INV-03, NFR-REL-01).
-- Given the review screen, then the route view heads it, the same as on the start and swipe screens: From (source, volume, photo count), Kept (moved or copied, destination, one real example path with its JPEG, NEF and edit files), Rejected (`<source>\_rejected`, marked "new folder" only while it does not exist, "nothing deleted") and "undecided · stay where they are" (SPEC §2, "Where photos go"; canvas Review).
+- Given the review screen, then the route view heads it, the same as on the swipe and apply screens: From (source, volume, photo count), Kept (moved or copied, destination, one real example path with its JPEG, NEF and edit files), Rejected (`<source>\_rejected`, marked "new folder" only while it does not exist, "nothing deleted") and "undecided · stay where they are" (SPEC §2, "Where photos go"; canvas Review).
 - Given the route, then each branch gives its counts as on the canvas: photos, files by kind and bytes ("96 JPEG · 96 NEF · 12 edit files · 2.1 GB"), and per mirrored subfolder its photo count and whether it is a new folder ("Barcelona · 58 photos · new folder").
 - Given the review screen, then the full folder trees and the per-file list ("See every file (286)") are one activation away (SPEC §2); the per-file list shows every operation of the plan with its source, target (suffix included) and kind.
 - Given "RAW follows JPEG" is off, then the example and the per-file list show the NEF, its sidecars and bare `X.xmp`/`X.pp3` as staying in the source folder (ADR 0023, INV-08).
@@ -412,7 +416,7 @@ As a photographer, I want to resume a session or start fresh when I reopen a fol
 - Given a folder culled before, then the start screen lists it under recent folders with its status: in progress with the number decided, or applied (US-44, SPEC §4.2).
 - Given a source with an active session and no open plan, when I open it, then I can resume it or start fresh (FE §6.1 step 4). **(proposed wording)** "Resume sorting" and "Start fresh", with the count decided so far.
 - Given I resume, then every decision is restored, the undo and redo stacks are the same as before, and the list keeps its stored order with no re-sort (FE §5.3, US-06, NFR-REL-15). **(proposed)** The swipe screen opens on the first undecided photo in that order.
-- Given I resume, then the destination is restored and labelled "same as last time" (US-21). **(proposed)** "Include subfolders", "RAW follows JPEG" and moved or copied are restored as the session had them and can be changed before sorting; nothing is preselected only for a fresh start. SPEC §2 ("Keep") says moved or copied is chosen fresh each session with nothing preselected. Margaux to confirm: restore moved or copied on resume, or choose it fresh each session, resumed ones included, as SPEC §2 reads?
+- Given I resume, then the destination is restored and labelled "same as last time" (US-21), and moved or copied starts as last chosen, as for a new session; both can be changed on review (decided by Margaux 28 Nov 2026, ADR 0029). **(proposed)** "RAW follows JPEG" is restored as the session had it, and can be changed on review; subfolders are always included.
 - Given I start fresh, then the old session is archived with its events and journal kept, and every photo starts undecided (FE §6.1 step 4).
 - Given the card comes back under another drive letter, then its session and cache are found by volume serial and relative path (US-09, NFR-REL-13).
 - Given two cards with the same folder names, then each has its own session (US-09).

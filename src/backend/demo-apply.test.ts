@@ -25,10 +25,11 @@ async function confirmed(
   keepMode: "move" | "copy" = "move",
 ): Promise<string> {
   const source = await backend.chooseSource();
-  const session = await backend.startSession({
+  const started = await backend.startSession({
     sourceId: source?.id ?? "",
     includeSubfolders: true,
-    rawFollows: true,
+  });
+  const session = await backend.updateSession(started.id, {
     keepMode,
     destinationId: "dst-selects",
   });

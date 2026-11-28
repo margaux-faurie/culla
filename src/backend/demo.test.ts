@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createBackend, type DemoStorage, MEMORY_KEY } from "./demo";
 import { EMPTY_MEMORY } from "./destinations";
+import { isNoKeepRoute } from "./errors";
 
 const memoryStorage = (): DemoStorage & { data: Map<string, string> } => {
   const data = new Map<string, string>();
@@ -26,68 +27,147 @@ describe("demo backend", () => {
     ]);
   });
 
-  it("gives opaque ids and display data only", async () => {
+  it("starts sorting at once with the defaults: subfolders as asked, RAW follows (SPEC §4.2)", async () => {
     const backend = createBackend({ storage: null });
     const source = await backend.chooseSource();
-    expect(source).not.toBeNull();
-    const details = await backend.describeSource(source?.id ?? "", true);
-    expect(details.photoCount).toBe(24);
-    expect(details.subfolders).toEqual(["Barcelona", "Lyon"]);
-    expect(details.rejectedFolder).toBe("E:\\2026\\_rejected");
-    expect(details.rejectedFolderExists).toBe(false);
-    const top = await backend.describeSource(source?.id ?? "", false);
-    expect(top.photoCount).toBe(4);
-  });
-
-  it("computes the example route as display strings, for the options as set", async () => {
-    const backend = createBackend({ storage: null });
-    const sourceId = (await backend.chooseSource())?.id ?? "";
-    const query = {
-      sourceId,
-      includeSubfolders: true,
-      rawFollows: true,
-      keepMode: null,
-      destinationId: null,
-    };
-    const none = await backend.exampleRoute(query);
-    expect(none?.photo.name).toBe("MGF_7273");
-    expect(none?.photo.kind).toBe("JPEG + NEF");
-    expect(none?.route.folder).toBe("E:\\2026\\Barcelona");
-    expect(none?.route.going).toEqual({ name: "MGF_7273", extensions: ".JPG .NEF .xmp" });
-    expect(none?.route.keptTo).toBeNull();
-    expect(none?.route.rejectedTo).toBe("moved to E:\\2026\\_rejected\\Barcelona");
-    const chosen = await backend.exampleRoute({
-      ...query,
-      rawFollows: false,
-      keepMode: "copy",
-      destinationId: "dst-selects",
-    });
-    expect(chosen?.route.keptTo).toBe("copied to D:\\Photos\\Selects 2026\\Barcelona");
-    expect(chosen?.route.staying).toEqual({ name: "MGF_7273", extensions: ".NEF .xmp" });
-    // A destination on a missing drive is not a place photos can go.
-    const missing = await backend.exampleRoute({ ...query, destinationId: "dst-archive" });
-    expect(missing?.route.keptTo).toBeNull();
-    const top = await backend.exampleRoute({ ...query, includeSubfolders: false });
-    expect(top?.route.folder).toBe("E:\\2026");
-  });
-
-  it("starts a session whose photos carry their routes", async () => {
-    const backend = createBackend({ storage: null });
-    const sourceId = (await backend.chooseSource())?.id ?? "";
     const session = await backend.startSession({
-      sourceId,
+      sourceId: source?.id ?? "",
       includeSubfolders: true,
-      rawFollows: true,
-      keepMode: "move",
-      destinationId: "dst-selects",
     });
-    const first = session.photos[0];
-    expect(first?.route.keptTo).toBe("moved to D:\\Photos\\Selects 2026");
+    expect(session.photos).toHaveLength(24);
+    expect(session.options.includeSubfolders).toBe(true);
+    expect(session.options.rawFollows).toBe(true);
+    // Seeded memory: a destination used before, no move or copy chosen yet.
+    expect(session.options.keepMode).toBeNull();
+    expect(session.destination?.id).toBe("dst-selects");
+    expect(session.sameAsLastTime).toBe(true);
     expect(session.rejectedFolder).toBe("E:\\2026\\_rejected");
+    expect(session.rejectedFolderExists).toBe(false);
+    const top = await backend.startSession({
+      sourceId: source?.id ?? "",
+      includeSubfolders: false,
+    });
+    expect(top.photos).toHaveLength(4);
+  });
+
+  it("gives every photo its route as display strings, before and after the keep route is set", async () => {
+    const backend = createBackend({ storage: null });
+    const sourceId = (await backend.chooseSource())?.id ?? "";
+    const session = await backend.startSession({ sourceId, includeSubfolders: true });
     const example = session.photos.find((p) => p.id === session.exampleId);
     expect(example?.name).toBe("MGF_7273");
-    const camera = session.photos.find((p) => p.cameraProtected);
+    expect(example?.kind).toBe("JPEG + NEF");
+    expect(example?.route.folder).toBe("E:\\2026\\Barcelona");
+    expect(example?.route.going).toEqual({ name: "MGF_7273", extensions: ".JPG .NEF .xmp" });
+    expect(example?.route.keptTo).toBe("moved or copied to D:\\Photos\\Selects 2026\\Barcelona");
+    expect(example?.route.rejectedTo).toBe("moved to E:\\2026\\_rejected\\Barcelona");
+
+    const moved = await backend.updateSession(session.id, { keepMode: "move" });
+    expect(moved.photos[0]?.route.keptTo).toBe("moved to D:\\Photos\\Selects 2026");
+    const camera = moved.photos.find((p) => p.cameraProtected);
     expect(camera?.route.keptTo).toBe("copied to D:\\Photos\\Selects 2026\\Barcelona");
+
+    const copied = await backend.updateSession(session.id, { keepMode: "copy", rawFollows: false });
+    const again = copied.photos.find((p) => p.id === session.exampleId);
+    expect(again?.route.keptTo).toBe("copied to D:\\Photos\\Selects 2026\\Barcelona");
+    expect(again?.route.staying).toEqual({ name: "MGF_7273", extensions: ".NEF .xmp" });
+    expect(copied.options.rawFollows).toBe(false);
+  });
+
+  it("has no destination on a first run, and no kept route until one is chosen", async () => {
+    const backend = createBackend({ storage: null, seed: EMPTY_MEMORY });
+    const sourceId = (await backend.chooseSource())?.id ?? "";
+    const session = await backend.startSession({ sourceId, includeSubfolders: true });
+    expect(session.destination).toBeNull();
+    expect(session.sameAsLastTime).toBe(false);
+    expect(session.options.keepMode).toBeNull();
+    expect(session.photos[0]?.route.keptTo).toBeNull();
+    const destination = await backend.chooseDestination();
+    const chosen = await backend.updateSession(session.id, {
+      destinationId: destination?.id ?? "",
+    });
+    expect(chosen.destination?.id).toBe("dst-selects");
+    expect(chosen.sameAsLastTime).toBe(false);
+    await expect(backend.updateSession(session.id, { destinationId: "nope" })).rejects.toThrow();
+  });
+
+  it("plans rejects without a keep route, and refuses kept photos until it is set", async () => {
+    const backend = createBackend({ storage: null, seed: EMPTY_MEMORY, scenario: null });
+    const sourceId = (await backend.chooseSource())?.id ?? "";
+    const session = await backend.startSession({ sourceId, includeSubfolders: true });
+    const decide = (seq: number, verdict: "keep" | "reject") =>
+      backend.recordEvent(session.id, {
+        seq,
+        ts: seq,
+        cause: "user",
+        type: "decided",
+        group_id: seq,
+        verdict,
+      });
+    await decide(1, "reject");
+    const rejects = await backend.reviewPlan(session.id, 1);
+    expect(rejects.counts.rejected).toBe(1);
+    expect(rejects.kept).toBeNull();
+    expect(rejects.blockers).toEqual([]);
+    await decide(2, "keep");
+    const noRoute = async () => {
+      try {
+        await backend.reviewPlan(session.id, 2);
+      } catch (error) {
+        return isNoKeepRoute(error);
+      }
+      return false;
+    };
+    expect(await noRoute()).toBe(true);
+    await backend.updateSession(session.id, { keepMode: "move" });
+    expect(await noRoute()).toBe(true);
+    await backend.updateSession(session.id, { destinationId: "dst-selects" });
+    const both = await backend.reviewPlan(session.id, 2);
+    expect(both.counts.kept).toBe(1);
+    expect(both.kept?.to).toBe("D:\\Photos\\Selects 2026");
+  });
+
+  it("needs no keep route for kept photos held back as applied, as the core's plan (c)", async () => {
+    const backend = createBackend({ storage: null, seed: EMPTY_MEMORY, scenario: "held" });
+    const sourceId = (await backend.chooseSource())?.id ?? "";
+    const session = await backend.startSession({ sourceId, includeSubfolders: true });
+    // Group 2 is MGF_7002, applied by an earlier plan in this scenario.
+    await backend.recordEvent(session.id, {
+      seq: 1,
+      ts: 1,
+      cause: "user",
+      type: "decided",
+      group_id: 2,
+      verdict: "keep",
+    });
+    const plan = await backend.reviewPlan(session.id, 1);
+    expect(plan.kept).toBeNull();
+    expect(plan.held.map((h) => [h.name, h.reason])).toEqual([["MGF_7002", "applied"]]);
+  });
+
+  it("opens a folder with no photos in the empty-folder scenario", async () => {
+    const backend = createBackend({ storage: null, scenario: "empty-folder" });
+    const sourceId = (await backend.chooseSource())?.id ?? "";
+    const session = await backend.startSession({ sourceId, includeSubfolders: true });
+    expect(session.photos).toHaveLength(0);
+  });
+
+  it("a draft made before the options changed cannot be confirmed", async () => {
+    const backend = createBackend({ storage: null, scenario: null });
+    const sourceId = (await backend.chooseSource())?.id ?? "";
+    const session = await backend.startSession({ sourceId, includeSubfolders: true });
+    await backend.updateSession(session.id, { keepMode: "move" });
+    await backend.recordEvent(session.id, {
+      seq: 1,
+      ts: 1,
+      cause: "user",
+      type: "decided",
+      group_id: 1,
+      verdict: "keep",
+    });
+    const draft = await backend.reviewPlan(session.id, 1);
+    await backend.updateSession(session.id, { keepMode: "copy" });
+    await expect(backend.confirmPlan(draft.planId)).rejects.toThrow();
   });
 
   it("falls back to memory when the storage throws", async () => {
@@ -103,62 +183,53 @@ describe("demo backend", () => {
     };
     const backend = createBackend({ storage, seed: EMPTY_MEMORY });
     const sourceId = (await backend.chooseSource())?.id ?? "";
-    expect(await backend.proposeDestination(sourceId)).toBeNull();
-    const session = await backend.startSession({
-      sourceId,
-      includeSubfolders: true,
-      rawFollows: true,
-      keepMode: "move",
-      destinationId: "dst-selects",
-    });
-    expect(session.photos).toHaveLength(24);
+    const session = await backend.startSession({ sourceId, includeSubfolders: true });
+    expect(session.destination).toBeNull();
+    expect(writes).toBe(0);
+    await backend.updateSession(session.id, { keepMode: "move", destinationId: "dst-selects" });
     expect(writes).toBe(1);
     // The memory of this backend is updated whole, though the write failed.
-    const proposal = await backend.proposeDestination(sourceId);
-    expect(proposal?.reason).toBe("thisSource");
-    expect(proposal?.destination.id).toBe("dst-selects");
+    const next = await backend.startSession({ sourceId, includeSubfolders: true });
+    expect(next.destination?.id).toBe("dst-selects");
+    expect(next.options.keepMode).toBe("move");
   });
 
-  it("proposes, restores and remembers destinations (US-21)", async () => {
+  it("remembers move or copy and the destination for next time (US-21)", async () => {
     const storage = memoryStorage();
     const first = createBackend({ storage, seed: EMPTY_MEMORY });
-    const picked = await first.chooseSource();
-    const sourceId = picked?.id ?? "";
-    expect(await first.proposeDestination(sourceId)).toBeNull();
+    const sourceId = (await first.chooseSource())?.id ?? "";
+    const session = await first.startSession({ sourceId, includeSubfolders: true });
     const destination = await first.chooseDestination();
-    const session = await first.startSession({
-      sourceId,
-      includeSubfolders: true,
-      rawFollows: true,
+    await first.updateSession(session.id, {
       keepMode: "copy",
       destinationId: destination?.id ?? "",
     });
-    expect(session.photos).toHaveLength(24);
     expect(storage.data.has(MEMORY_KEY)).toBe(true);
 
-    // A later visit reads the stored memory.
+    // A later visit reads the stored memory: the same folder and a new one both get them.
     const later = createBackend({ storage });
     await later.chooseSource();
-    const proposal = await later.proposeDestination(sourceId);
-    expect(proposal?.reason).toBe("thisSource");
-    expect(proposal?.destination.id).toBe(destination?.id);
-    // A new folder gets the last destination used anywhere.
-    expect((await later.proposeDestination("src-card"))?.reason).toBe("lastUsed");
+    const again = await later.startSession({ sourceId, includeSubfolders: true });
+    expect(again.destination?.id).toBe(destination?.id);
+    expect(again.sameAsLastTime).toBe(true);
+    expect(again.options.keepMode).toBe("copy");
+    const alps = await later.startSession({ sourceId: "src-alps", includeSubfolders: true });
+    expect(alps.destination?.id).toBe(destination?.id);
+    expect(alps.options.keepMode).toBe("copy");
   });
 
-  it("marks a remembered destination on a missing drive unavailable and refuses it", async () => {
+  it("starts with a remembered destination on a missing drive, marked unavailable, with no kept route", async () => {
     const backend = createBackend({ storage: null });
-    const proposal = await backend.proposeDestination("src-alps");
-    expect(proposal?.reason).toBe("thisSource");
-    expect(proposal?.destination.available).toBe(false);
+    const session = await backend.startSession({ sourceId: "src-alps", includeSubfolders: true });
+    expect(session.destination?.id).toBe("dst-archive");
+    expect(session.destination?.available).toBe(false);
+    expect(session.photos[0]?.route.keptTo).toBeNull();
+  });
+
+  it("refuses a folder whose drive is not connected", async () => {
+    const backend = createBackend({ storage: null });
     await expect(
-      backend.startSession({
-        sourceId: "src-alps",
-        includeSubfolders: true,
-        rawFollows: true,
-        keepMode: "move",
-        destinationId: proposal?.destination.id ?? "",
-      }),
+      backend.startSession({ sourceId: "src-card", includeSubfolders: true }),
     ).rejects.toThrow();
   });
 

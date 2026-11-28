@@ -10,7 +10,9 @@ import type {
   Blocker,
   BranchPlan,
   Collision,
+  DestinationSummary,
   HoldReason,
+  KeepMode,
   OperationKind,
   OtherFile,
   PlanWarning,
@@ -65,6 +67,33 @@ export function disabledReason(plan: ReviewPlan): string | null {
     return "Nothing to apply yet. Keep or reject some photos first.";
   }
   return null;
+}
+
+/**
+ * Why Apply waits for the kept photos' route, once the backend said the plan needs one (a
+ * `NoKeepRouteError`: kept photos that would get operations, SPEC §10 plan() (c)). Move or copy and
+ * a connected destination are set on the review screen, the first time by hand (decided by Margaux
+ * 28 Nov 2026). Wording proposed by the agent (SPEC §10, "Simple start").
+ */
+export function keepRouteHint(
+  keepMode: KeepMode | null,
+  destination: DestinationSummary | null,
+): string {
+  const noDestination = destination === null;
+  const unplugged = destination !== null && !destination.available;
+  if (keepMode === null) {
+    if (noDestination) return "Choose move or copy and a destination for the kept photos first.";
+    if (unplugged) {
+      return "Choose move or copy, and a destination that is connected, for the kept photos first.";
+    }
+    return "Choose move or copy for the kept photos first.";
+  }
+  if (noDestination) return "Choose a destination for the kept photos first.";
+  if (unplugged) {
+    return "The destination's drive is not connected. Connect it, or choose another destination.";
+  }
+  // Both look set, yet the backend asked for them (a change it has not answered yet).
+  return "Choose move or copy and a destination for the kept photos first.";
 }
 
 /** `96 kept · moved`, `1 kept · copied`, `40 kept · 39 moved, 1 copied`. */

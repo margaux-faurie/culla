@@ -4,7 +4,7 @@
  * previews still running, an unplugged drive, the two things preflight at confirm can find, and
  * for the apply (US-36, US-38): a slow reader, a card pulled mid-apply (cleanly, or leaving a lost
  * file), a full destination, a verify mismatch, a file another app holds, and an apply found
- * interrupted at launch, with its card in or out.
+ * interrupted at launch, with its card in or out; and, for the start screen, a folder with no photos.
  *
  * Chosen by a query parameter, `?scenario=<name>`, read by the demo backend only (`demo.ts`): the
  * desktop backend never looks at it, and the demo bundle is the only one with this module (ADR
@@ -32,6 +32,7 @@ export const SCENARIOS = [
   "locked-file",
   "interrupted",
   "interrupted-card-out",
+  "empty-folder",
 ] as const;
 
 export type ScenarioName = (typeof SCENARIOS)[number];
@@ -55,6 +56,8 @@ export interface Scenario {
    * unplugged for a moment first.
    */
   readonly interrupted?: { readonly cardOut: boolean };
+  /** "Choose a folder" picks a folder with no photos (start screen). */
+  readonly emptyFolder?: boolean;
 }
 
 const names = (...list: string[]): ReadonlySet<string> => new Set(list);
@@ -102,6 +105,7 @@ const TABLE: Readonly<Record<ScenarioName, Scenario>> = {
   "locked-file": { facts: { ...NORMAL_FACTS, locked: names("MGF_7001") } },
   interrupted: { facts: NORMAL_FACTS, interrupted: { cardOut: false } },
   "interrupted-card-out": { facts: NORMAL_FACTS, interrupted: { cardOut: true } },
+  "empty-folder": { facts: NORMAL_FACTS, emptyFolder: true },
 };
 
 const NORMAL: Scenario = { facts: NORMAL_FACTS };

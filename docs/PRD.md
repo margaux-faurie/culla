@@ -39,9 +39,9 @@ To decide: a calendar time budget for v1 (weeks per milestone). Milestones are i
 
 The details live in other documents. This is the shape only.
 
-1. **Start.** Pick a source folder (subfolders included), the "RAW follows JPEG" toggle, keep = move or copy, and a destination. A session that already exists for that folder can be resumed, even if the SD card comes back under another drive letter.
+1. **Start.** Pick a source folder and sorting starts (subfolders included, "RAW follows JPEG" on, move or copy and the destination as last chosen; they are set on review, ADR 0029). A session that already exists for that folder can be resumed, even if the SD card comes back under another drive letter.
 2. **Swipe.** One photo at a time, full screen on a dark (Night) surround. Right = keep, left = reject, by keyboard, drag or the Keep and Reject buttons. A JPEG, its NEF and its sidecars are one group, decided once. Sidecars follow the file they describe: `X.NEF.xmp` follows the NEF, so it stays put when "RAW follows JPEG" is off. A lone NEF is shown through its embedded JPEG. Zoom to 100%, EXIF overlay, filters, jump to next undecided, global undo/redo.
-3. **Review.** Counts, kept and rejected grids, the full operation plan, preflight results, estimated time and size. Apply needs an explicit confirmation that states the counts. Undecided photos are never touched.
+3. **Review.** Move or copy and the destination for kept photos, counts, kept and rejected grids, the full operation plan, preflight results, estimated time and size. Apply needs an explicit confirmation that states the counts. Undecided photos are never touched.
 4. **Apply.** Rejects move to `<source>/_rejected/`, keeps move or copy to the destination, subfolders mirrored. Every operation is journalled. Culla never overwrites: a rename fails if the target exists. It never deletes a photo without a verified copy at the destination: the only removals are the source of a cross-volume move that passed verification (fsync, destination read back without the OS cache, source re-read, all three hashes matching), and Culla's own temporary `*.culla-partial` files. An interrupted apply rolls forward on the next launch. Ends with a report and a log file.
 5. **Web demo.** The same UI in a browser, with about 25 sample photos and a simulated apply, plus an optional read-only "your folder" mode.
 
