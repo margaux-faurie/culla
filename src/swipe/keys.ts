@@ -3,8 +3,9 @@
  *
  * Letters and Ctrl shortcuts match the character on the key (`KeyboardEvent.key`, case-insensitive),
  * so Z and Ctrl+Z stay on the Z key on AZERTY and QWERTZ. Arrows, Enter and Esc match by position
- * (`KeyboardEvent.code`); `?` matches by character. Zoom (Z, hold Space) and the EXIF overlay (I)
- * arrive in M4 (US-39, US-40) and map to nothing yet.
+ * (`KeyboardEvent.code`), as does Space; `?` matches by character. Z toggles zoom and a held
+ * Space zooms until released (US-39); while zoomed the arrows pan and never decide, and Shift with
+ * an arrow still browses. The EXIF overlay (I) arrives with US-40 and maps to nothing yet.
  */
 
 export type Command =
@@ -19,7 +20,15 @@ export type Command =
   | "filter"
   | "help"
   | "review"
-  | "escape";
+  | "escape"
+  /** Z: zoom to 100 % or back (US-39). */
+  | "zoom"
+  /** Space down: zoom while it is held; the screen ends it on Space up. */
+  | "zoomHold"
+  | "panLeft"
+  | "panRight"
+  | "panUp"
+  | "panDown";
 
 /** The fields of a `KeyboardEvent` the map reads. */
 export interface KeyInput {
@@ -38,15 +47,19 @@ export interface KeyInput {
  */
 const CHANGES_LOG: ReadonlySet<Command> = new Set(["keep", "reject", "clear", "undo", "redo"]);
 
-export function commandFor(input: KeyInput): Command | null {
-  const command = match(input);
-  if (command === null || (input.repeat && (CHANGES_LOG.has(command) || command === "review"))) {
+/** Toggles: a held key acts once (a held Z does not zoom in and out, proposed in US-39). */
+const ONCE: ReadonlySet<Command> = new Set(["review", "zoom", "zoomHold"]);
+
+/** `zoomed`: the photo is at 100 %, so the arrows pan instead of deciding. */
+export function commandFor(input: KeyInput, zoomed = false): Command | null {
+  const command = match(input, zoomed);
+  if (command === null || (input.repeat && (CHANGES_LOG.has(command) || ONCE.has(command)))) {
     return null;
   }
   return command;
 }
 
-function match(input: KeyInput): Command | null {
+function match(input: KeyInput, zoomed: boolean): Command | null {
   // `?` is a character: Shift+, on AZERTY, Shift+ß on QWERTZ, Shift+/ on QWERTY.
   if (input.key === "?" && !input.ctrlKey && !input.metaKey) {
     return "help";
@@ -65,9 +78,15 @@ function match(input: KeyInput): Command | null {
   }
   switch (input.code) {
     case "ArrowRight":
-      return input.shiftKey ? "next" : "keep";
+      return input.shiftKey ? "next" : zoomed ? "panRight" : "keep";
     case "ArrowLeft":
-      return input.shiftKey ? "prev" : "reject";
+      return input.shiftKey ? "prev" : zoomed ? "panLeft" : "reject";
+    case "ArrowUp":
+      return zoomed && !input.shiftKey ? "panUp" : null;
+    case "ArrowDown":
+      return zoomed && !input.shiftKey ? "panDown" : null;
+    case "Space":
+      return input.shiftKey ? null : "zoomHold";
     case "Enter":
     case "NumpadEnter":
       return input.shiftKey ? null : "review";
@@ -81,6 +100,8 @@ function match(input: KeyInput): Command | null {
       return "nextUndecided";
     case "f":
       return "filter";
+    case "z":
+      return input.shiftKey ? null : "zoom";
     default:
       return null;
   }
@@ -102,7 +123,10 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { keys: ["Ctrl", "Z"], action: "Undo the last action, on any photo" },
   { keys: ["Ctrl", "Shift", "Z"], action: "Redo" },
   { keys: ["F"], action: "Filter: all, undecided, kept, rejected" },
+  { keys: ["Z"], action: "Zoom to 100 % at the pointer, or back" },
+  { keys: ["Space"], action: "Hold to zoom to 100 %" },
+  { keys: ["←", "↑", "→", "↓"], action: "While zoomed: move around the photo" },
   { keys: ["Enter"], action: "Open the review" },
   { keys: ["?"], action: "Show this list" },
-  { keys: ["Esc"], action: "Close this list" },
+  { keys: ["Esc"], action: "Close this list, or leave zoom" },
 ];

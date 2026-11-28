@@ -22,6 +22,7 @@ export function createBackend(): Backend {
     startSession: notYet("startSession"),
     updateSession: notYet("updateSession"),
     chooseDestination: notYet("chooseDestination"),
+    fullImage: notYet("fullImage"),
     recordEvent: notYet("recordEvent"),
     reviewPlan: notYet("reviewPlan"),
     chooseVolume: notYet("chooseVolume"),

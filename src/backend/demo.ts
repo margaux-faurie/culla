@@ -20,6 +20,7 @@ import {
 } from "./demo-apply";
 import {
   type DemoPhotoSpec,
+  demoFullImage,
   demoGroup,
   demoPhoto,
   source2026,
@@ -50,6 +51,7 @@ import type {
   Backend,
   ConfirmResult,
   DestinationSummary,
+  FullImage,
   InterruptedApply,
   OtherFile,
   PhotoSummary,
@@ -229,6 +231,8 @@ function writeStored(storage: DemoStorage | null, memory: DestinationMemory): vo
 interface DemoEntry {
   readonly photo: PhotoSummary;
   readonly group: DemoGroup;
+  /** The full image zoom asks for (US-39). */
+  readonly full: () => FullImage;
 }
 
 /**
@@ -296,6 +300,7 @@ export function createBackend(options: DemoOptions = {}): Backend {
       .map(({ spec, n }) => ({
         photo: demoPhoto(`${source.summary.id}-${n + 1}`, spec, n),
         group: demoGroup(spec),
+        full: () => demoFullImage(spec, n),
       }));
 
   const destinationOf = (id: string | null): DestinationSummary | undefined =>
@@ -621,6 +626,18 @@ export function createBackend(options: DemoOptions = {}): Backend {
     },
 
     chooseDestination: () => Promise.resolve(DESTINATIONS[0] ?? null),
+
+    fullImage: async (photoId) => {
+      if (scenario.fullImageUnreadable === true) {
+        throw new Error("full image unreadable");
+      }
+      for (const session of sessions.values()) {
+        const entry = session.entries.find((e) => e.photo.id === photoId);
+        if (entry !== undefined) return entry.full();
+      }
+      // Only ids of the current scan are served (US-33).
+      throw new Error("unknown photo");
+    },
 
     recordEvent: async (sessionId, event) => {
       sessionOf(sessionId).events.push(event);

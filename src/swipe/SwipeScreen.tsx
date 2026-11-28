@@ -1,4 +1,5 @@
 import { type Dispatch, useEffect, useMemo, useRef, useState } from "react";
+import { useBackend } from "../backend/context";
 import type { SessionInfo, SessionPhoto } from "../backend/types";
 import type { GroupState, Verdict } from "../decisions/events";
 import { CheckIcon, CrossIcon } from "../route/RouteView";
@@ -14,6 +15,8 @@ import {
   type SwipeState,
   stateAt,
 } from "./session";
+import { type Zoom, ZoomLayer } from "./ZoomLayer";
+import { cssSize, type PanDirection, type Point, pan, panBy, zoomOffset } from "./zoom";
 
 export interface SwipeScreenProps {
   readonly session: SessionInfo;
@@ -38,7 +41,19 @@ const EXIT_MS = 320;
  */
 export function SwipeScreen(props: SwipeScreenProps) {
   const { session, state, dispatch, onReview } = props;
+  const backend = useBackend();
   const rootRef = useRef<HTMLElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  // Where the pointer is, for zoom at the cursor (client coordinates), or null off the stage.
+  const pointerRef = useRef<Point | null>(null);
+  const [zoom, setZoomState] = useState<Zoom | null>(null);
+  const zoomRef = useRef<Zoom | null>(null);
+  const setZoom = (next: Zoom | null) => {
+    zoomRef.current = next;
+    setZoomState(next);
+  };
+  const [zoomStatus, setZoomStatus] = useState("");
+  const [zoomNote, setZoomNote] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const byId = useMemo(() => new Map(session.photos.map((p) => [p.id, p])), [session.photos]);
   const photo = byId.get(currentPhoto(state) ?? "");
@@ -46,11 +61,74 @@ export function SwipeScreen(props: SwipeScreenProps) {
   const decision: GroupState = photo === undefined ? "undecided" : stateAt(state, state.index);
   const tally = counts(state);
 
+  /** Zoom to 100 % on the current photo (US-39): the preview stays until the full image is in. */
+  const startZoom = (held: boolean) => {
+    const stage = stageRef.current;
+    const img = stage?.querySelector<HTMLImageElement>(".card-current img");
+    if (photo === undefined || zoomRef.current !== null || stage == null || img == null) {
+      return;
+    }
+    const box = stage.getBoundingClientRect();
+    const fit = img.getBoundingClientRect();
+    const pointer = pointerRef.current;
+    const loading: Zoom = {
+      phase: "loading",
+      photoId: photo.id,
+      held,
+      view: { w: stage.clientWidth, h: stage.clientHeight },
+      fitted: { x: fit.left - box.left, y: fit.top - box.top, w: fit.width, h: fit.height },
+      pointer: pointer === null ? null : { x: pointer.x - box.left, y: pointer.y - box.top },
+    };
+    setZoom(loading);
+    setZoomNote(null);
+    backend.fullImage(photo.id).then(
+      (image) => {
+        const now = zoomRef.current;
+        if (now?.phase !== "loading" || now.photoId !== loading.photoId) return;
+        const size = cssSize({ w: image.width, h: image.height }, window.devicePixelRatio);
+        const offset = zoomOffset(now.view, size, now.fitted, now.pointer);
+        setZoom({
+          phase: "shown",
+          photoId: now.photoId,
+          held: now.held,
+          view: now.view,
+          image,
+          size,
+          offset,
+        });
+        setZoomStatus("Zoomed to 100 %");
+      },
+      () => {
+        const now = zoomRef.current;
+        if (now?.phase !== "loading" || now.photoId !== loading.photoId) return;
+        setZoom(null);
+        setZoomNote("Could not read the full image. The preview stays.");
+      },
+    );
+  };
+
+  /** Back to the fitted preview; the full image is released with the layer (proposed, US-39). */
+  const endZoom = () => {
+    if (zoomRef.current === null) return;
+    const wasShown = zoomRef.current.phase === "shown";
+    setZoom(null);
+    if (wasShown) setZoomStatus("Back to the whole photo");
+  };
+
+  const panZoom = (move: (z: Extract<Zoom, { phase: "shown" }>) => Point) => {
+    const z = zoomRef.current;
+    if (z?.phase === "shown") setZoom({ ...z, offset: move(z) });
+  };
+  const panTo = (direction: PanDirection) =>
+    panZoom((z) => pan(z.view, z.size, z.offset, direction));
+
   const run = (command: Command) => {
     const now = Date.now();
     switch (command) {
       case "keep":
       case "reject":
+        // From the buttons while zoomed: decide, leave zoom and show the next photo (proposed).
+        endZoom();
         dispatch({ type: "decide", verdict: command, now });
         return;
       case "clear":
@@ -60,6 +138,10 @@ export function SwipeScreen(props: SwipeScreenProps) {
         return;
       case "next":
       case "prev":
+        // Browsing ends zoom, even at the first or last photo (proposed, US-39).
+        endZoom();
+        dispatch({ type: command });
+        return;
       case "nextUndecided":
         dispatch({ type: command });
         return;
@@ -73,7 +155,30 @@ export function SwipeScreen(props: SwipeScreenProps) {
         onReview();
         return;
       case "escape":
+        if (zoomRef.current !== null) {
+          endZoom();
+          return;
+        }
         dispatch({ type: "dismissFeedback" });
+        return;
+      case "zoom":
+        if (zoomRef.current === null) startZoom(false);
+        else endZoom();
+        return;
+      case "zoomHold":
+        startZoom(true);
+        return;
+      case "panLeft":
+        panTo("left");
+        return;
+      case "panRight":
+        panTo("right");
+        return;
+      case "panUp":
+        panTo("up");
+        return;
+      case "panDown":
+        panTo("down");
         return;
     }
   };
@@ -99,7 +204,16 @@ export function SwipeScreen(props: SwipeScreenProps) {
         event.preventDefault();
         return;
       }
-      const command = commandFor(event);
+      // Space on a focused button presses that button and does not zoom (proposed, US-39); on the
+      // swipe view itself it never scrolls the page, held or not.
+      const space = event.code === "Space";
+      if (space && event.target !== root) {
+        return;
+      }
+      if (space) {
+        event.preventDefault();
+      }
+      const command = commandFor(event, zoomRef.current !== null);
       if (command === null) {
         return;
       }
@@ -110,9 +224,39 @@ export function SwipeScreen(props: SwipeScreenProps) {
       event.preventDefault();
       runRef.current(command);
     };
+    // A zoom held by Space ends when Space is let go, or when the window loses focus meanwhile.
+    const endHeld = () => {
+      if (zoomRef.current?.held === true) endZoomRef.current();
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code === "Space") endHeld();
+    };
     root.addEventListener("keydown", onKeyDown);
-    return () => root.removeEventListener("keydown", onKeyDown);
+    root.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", endHeld);
+    return () => {
+      root.removeEventListener("keydown", onKeyDown);
+      root.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", endHeld);
+    };
   }, []);
+
+  // Zoom belongs to one photo: a decision, browsing or the review ends it.
+  const endZoomRef = useRef(endZoom);
+  endZoomRef.current = endZoom;
+  const shownId = photo?.id;
+  useEffect(() => {
+    if (zoomRef.current !== null && zoomRef.current.photoId !== shownId) {
+      endZoomRef.current();
+    }
+  }, [shownId]);
+
+  // The note on a full image that could not be read hides itself like a toast.
+  useEffect(() => {
+    if (zoomNote === null) return;
+    const timer = window.setTimeout(() => setZoomNote(null), TOAST_MS);
+    return () => window.clearTimeout(timer);
+  }, [zoomNote]);
 
   // A focused button can unmount with the state (Undo once the photo is undecided, Jump to
   // undecided once the end card goes, Keep or Reject once the end card comes). Focus would fall to
@@ -201,14 +345,29 @@ export function SwipeScreen(props: SwipeScreenProps) {
           </p>
         )}
         <div className="toast-slot">
-          {feedback !== null && (
+          {feedback !== null ? (
             <p className="toast" key={nonce}>
               {toastText(feedback, byId)}
             </p>
+          ) : (
+            zoomNote !== null && (
+              <p className="toast" role="alert">
+                {zoomNote}
+              </p>
+            )
           )}
         </div>
 
-        <div className="stage">
+        <div
+          ref={stageRef}
+          className="stage"
+          onPointerMove={(event) => {
+            pointerRef.current = { x: event.clientX, y: event.clientY };
+          }}
+          onPointerLeave={() => {
+            pointerRef.current = null;
+          }}
+        >
           {photo === undefined ? (
             <EndCard
               undecided={tally.undecided}
@@ -239,6 +398,13 @@ export function SwipeScreen(props: SwipeScreenProps) {
               hidden
             />
           )}
+          {zoom !== null && photo !== undefined && zoom.photoId === photo.id && (
+            <ZoomLayer
+              zoom={zoom}
+              photo={photo}
+              onDrag={(dx, dy) => panZoom((z) => panBy(z.view, z.size, z.offset, dx, dy))}
+            />
+          )}
         </div>
 
         {photo !== undefined && <Actions photo={photo} decision={decision} onCommand={run} />}
@@ -257,6 +423,9 @@ export function SwipeScreen(props: SwipeScreenProps) {
             <kbd>F</kbd> filter
           </span>
           <span>
+            <kbd>Z</kbd> zoom
+          </span>
+          <span>
             <kbd>?</kbd> all keys
           </span>
         </p>
@@ -267,6 +436,7 @@ export function SwipeScreen(props: SwipeScreenProps) {
           {state.announcement}
           {state.nonce % 2 === 1 ? "\u00a0" : ""}
         </output>
+        <output className="visually-hidden">{zoomStatus}</output>
       </main>
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
     </>
