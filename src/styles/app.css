@@ -821,7 +821,7 @@ kbd {
   white-space: nowrap;
 }
 
-/* Review screen (cream, US-34) and the apply stand-in. */
+/* Review screen (cream, US-34). */
 
 .review {
   display: flex;
@@ -1159,15 +1159,265 @@ kbd {
   margin-top: var(--space-4);
 }
 
+/* Apply screen (cream, US-36, canvas Apply board) and its report. */
+
+.apply {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  max-width: 1040px;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 36px var(--space-16) var(--space-12);
+  overflow-wrap: anywhere;
+}
+
+.apply-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-4);
+}
+
+.apply .review-intro .title {
+  font-size: 52px;
+}
+
+.apply-notice,
+.apply-alert,
+.apply-halt {
+  margin: 0;
+  font-size: 17px;
+}
+
+.apply-alert {
+  padding: var(--space-4);
+  border: 2px solid var(--ink);
+  border-radius: var(--radius-card);
+  font-weight: 600;
+}
+
+.apply-halt {
+  font-weight: 600;
+}
+
+.apply-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.apply-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* The progress line on cream is orange-ink, never orange (NFR-A11Y-07). */
+.apply-bar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--rule);
+}
+
+.apply-bar-fill {
+  height: 100%;
+  background: var(--orange-ink);
+  transition: width 200ms linear;
+}
+
+.apply-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--ink-muted);
+  font-size: 15px;
+}
+
+.apply-now {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 28px var(--space-8);
+  border-radius: var(--radius-panel);
+  background: var(--paper-raised);
+}
+
+.apply-now-label {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.apply-now-photo {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.steps {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0 0 0 6px;
+  list-style: none;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 36px;
+  font-size: 16px;
+}
+
+/* Shape as well as colour: filled when done, ringed when now, an outline when next. */
+.step-mark {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.step-done .step-mark {
+  background: var(--ink);
+}
+
+.step-current {
+  font-weight: 600;
+}
+
+.step-current .step-mark {
+  background: var(--orange);
+  outline: 2px solid var(--orange-ink);
+  outline-offset: 2px;
+}
+
+.step-next {
+  color: var(--ink-muted);
+}
+
+.step-next .step-mark {
+  border: 2px solid var(--ink-muted);
+}
+
+.apply-controls,
+.report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.button[aria-disabled="true"] {
+  border-color: var(--ink-muted);
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: not-allowed;
+}
+
+.report {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.report-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.report-summary li {
+  padding: 2px var(--space-3);
+  border: var(--line-hair) solid var(--ink-muted);
+  border-radius: var(--radius-pill);
+  font-size: 15px;
+}
+
+.report-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.report-alarm {
+  padding: var(--space-4);
+  border: 2px solid var(--ink);
+  border-radius: var(--radius-card);
+}
+
+.report-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  font-size: 15px;
+  list-style: none;
+}
+
+.report-files {
+  margin: 2px 0 0;
+  padding-left: var(--space-6);
+  color: var(--ink-muted);
+  font-size: 14px;
+}
+
+.apply-route {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.log-dialog {
+  max-width: min(960px, calc(100vw - 32px));
+}
+
+.log-text {
+  max-height: 60vh;
+  margin: var(--space-4) 0 0;
+  padding: var(--space-4);
+  overflow: auto;
+  border-radius: 12px;
+  background: var(--paper-raised);
+}
+
+.log-text pre {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.log-text:focus-visible {
+  outline-offset: -2px;
+}
+
 @media (max-width: 640px) {
   .start,
-  .review {
+  .review,
+  .apply {
     padding: var(--space-6) var(--space-4);
   }
 
   .review-route,
   .review-side {
     flex-basis: 100%;
+  }
+
+  .apply .review-intro .title {
+    font-size: 36px;
+  }
+
+  .apply-now {
+    padding: var(--space-6) 20px;
   }
 
   .panel {
@@ -1265,5 +1515,9 @@ kbd {
   .toast,
   .dots span {
     animation: none;
+  }
+
+  .apply-bar-fill {
+    transition: none;
   }
 }

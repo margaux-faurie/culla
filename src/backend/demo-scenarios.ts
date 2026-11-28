@@ -1,13 +1,17 @@
 /**
  * Named demo scenarios for the states a demo folder cannot reach on its own (stories.md, M4 tests,
  * proposed): a write-protected card, held groups, no space, warnings, two volumes with one serial,
- * previews still running, an unplugged drive, and the two things preflight at confirm can find.
+ * previews still running, an unplugged drive, the two things preflight at confirm can find, and
+ * for the apply (US-36, US-38): a slow reader, a card pulled mid-apply (cleanly, or leaving a lost
+ * file), a full destination, a verify mismatch, a file another app holds, and an apply found
+ * interrupted at launch, with its card in or out.
  *
  * Chosen by a query parameter, `?scenario=<name>`, read by the demo backend only (`demo.ts`): the
  * desktop backend never looks at it, and the demo bundle is the only one with this module (ADR
  * 0014). Proposed by the agent, awaiting Margaux (SPEC §10): a query parameter rather than a
  * demo-only build flag or another route. An unknown name is ignored.
  */
+import type { ApplyScenario } from "./demo-apply";
 import { type DemoFacts, NORMAL_FACTS } from "./demo-plan";
 
 export const SCENARIOS = [
@@ -20,6 +24,14 @@ export const SCENARIOS = [
   "drive-unplugged",
   "taken-at-confirm",
   "locked-at-confirm",
+  "slow",
+  "card-pulled",
+  "lost",
+  "disk-full",
+  "verify-mismatch",
+  "locked-file",
+  "interrupted",
+  "interrupted-card-out",
 ] as const;
 
 export type ScenarioName = (typeof SCENARIOS)[number];
@@ -36,6 +48,13 @@ export interface Scenario {
   readonly takenAtConfirm?: readonly string[];
   /** Facts that clear once the user checks again (the previews finish). */
   readonly clearsOnRecheck?: Partial<DemoFacts>;
+  /** What goes wrong during the apply. */
+  readonly apply?: ApplyScenario;
+  /**
+   * At launch, an apply cut by a crash waits to be finished (US-38); `cardOut` leaves its source
+   * unplugged for a moment first.
+   */
+  readonly interrupted?: { readonly cardOut: boolean };
 }
 
 const names = (...list: string[]): ReadonlySet<string> => new Set(list);
@@ -75,6 +94,14 @@ const TABLE: Readonly<Record<ScenarioName, Scenario>> = {
   "drive-unplugged": { facts: { ...NORMAL_FACTS, destinationMounted: false } },
   "taken-at-confirm": { facts: NORMAL_FACTS, takenAtConfirm: ["MGF_7001.JPG"] },
   "locked-at-confirm": { facts: NORMAL_FACTS, atConfirm: { sourceReadOnly: true } },
+  slow: { facts: NORMAL_FACTS, apply: { speed: 0.2 } },
+  "card-pulled": { facts: NORMAL_FACTS, apply: { pull: "clean" } },
+  lost: { facts: NORMAL_FACTS, apply: { pull: "lost" } },
+  "disk-full": { facts: NORMAL_FACTS, apply: { diskFull: true } },
+  "verify-mismatch": { facts: NORMAL_FACTS, apply: { verifyMismatch: true } },
+  "locked-file": { facts: { ...NORMAL_FACTS, locked: names("MGF_7001") } },
+  interrupted: { facts: NORMAL_FACTS, interrupted: { cardOut: false } },
+  "interrupted-card-out": { facts: NORMAL_FACTS, interrupted: { cardOut: true } },
 };
 
 const NORMAL: Scenario = { facts: NORMAL_FACTS };
