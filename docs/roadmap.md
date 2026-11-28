@@ -169,6 +169,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
   - Installer test ([testing.md](testing.md) section 5.3) green: data kept or removed as chosen, photos never touched (US-43).
   - OpenSSF Scorecard checks targeted in [research/practices.md](research/practices.md) section 2 are green or explained.
   - Install guide matches the published release; install video published.
+  - Demo video current (proposed, awaiting Margaux, SPEC §10): `docs/assets/video/pending.md` is empty and the video was re-rendered from the release commit (`node docs/assets/video/hash.mjs --check` says "The video was rendered from these screens."; [videos.md](videos.md#keeping-the-video-current)).
   - v1.0 published.
 - **Author:** generate and store the updater signing key; approve and publish the release; submit the SignPath application; write the blog post; add the checksum and attestation steps to the release workflow (protected path); approve the install video, record its voice-over or approve a text-to-speech voice (or choose captions only), and publish it.
 

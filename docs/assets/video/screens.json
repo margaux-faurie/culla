@@ -1,0 +1,16 @@
+{
+  "paths": [
+    "src/App.tsx",
+    "src/session/**",
+    "src/start/**",
+    "src/swipe/**",
+    "src/review/**",
+    "src/apply/**",
+    "src/route/**",
+    "src/styles/**",
+    "src/backend/demo*.ts"
+  ],
+  "exclude": ["**/*.test.ts", "**/*.test.tsx"],
+  "renderedFrom": "e44c4de8588d0ed349741f3743cfdebd4845cefb01a843e578547d9f577417f0",
+  "renderedAt": "2026-11-28"
+}

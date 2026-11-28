@@ -35,6 +35,7 @@ flowchart TB
 | Golden | JSONL fixtures in `testdata/event-log/`, written by `cargo xtask golden` | Linux (Rust and Node) | Rust and TS reducers give the same state for the same log (`crates/core/tests/golden.rs`; Vitest from M3) | every PR |
 | Golden apply log | `testdata/apply-log/mixed.txt`, written by hand | Linux (Node; Rust to follow) | the demo's port of `culla_core::applylog::render` renders the core's mixed plan byte for byte (`tests/apply-log.test.ts`); the core's `whole_log_for_a_mixed_plan` still holds the same text inline, and should read this file from an integration test under `crates/core/tests/` (`include_str!` is allowed only there) | every PR |
 | Unit (TS) | Vitest, against `DemoBackend` | Linux | reducer, keyboard map, key-repeat filter, swipe threshold logic, filters, end-of-list | every PR |
+| Video freshness (proposed, SPEC §10) | Vitest, `tests/video-freshness.test.ts` over `docs/assets/video/hash.mjs` | Linux | the screens the demo video films (`docs/assets/video/screens.json`) hash as at the last render, or `docs/assets/video/pending.md` lists a change since it; every pattern still matches a file ([videos.md](videos.md#keeping-the-video-current)) | every PR |
 | Integration (Windows) | `cargo test -p culla-adapters --features windows-it` on `windows-latest` | Windows | nothing-before-Apply checks (section 4), real file ops (section 5), crash and resume (section 6) | every PR touching `crates/core`, `crates/adapters`, `crates/cli` or `src-tauri`, and nightly |
 | End to end | Playwright + `@axe-core/playwright` on the demo build | Linux (Chromium, plus Firefox and WebKit for the demo) | swipe loop, keyboard-only flows, click-only flow with the Keep and Reject buttons, review screen, a11y | every PR touching `src/` |
 | Installer | NSIS silent install and uninstall on `windows-latest` | Windows | per-user install, "remove my Culla data" option (section 5.3) | from M6, on release PRs |
@@ -252,6 +253,7 @@ Run on the ROG Zephyrus G14 2024 before each release, and once at the end of M1,
 - [ ] Flip the SD write-protect switch: preflight blocks apply with a clear message.
 - [ ] Open the same card in Lightroom or Explorer during apply: sharing violations are retried, and failures are reported.
 - [ ] Installer: per-user install without admin, SmartScreen warning matches the README text, updater finds a test release.
+- [ ] Demo video current (proposed, SPEC §10): `docs/assets/video/pending.md` is empty and the video was re-rendered from the release commit ([videos.md](videos.md#keeping-the-video-current)).
 - [ ] Uninstall without ticking "remove my Culla data": `%LOCALAPPDATA%\Culla` is kept. Reinstall, uninstall with the box ticked: it is removed. Photos, `_rejected/` and destinations are untouched in both cases.
 
 ## 9. Test data

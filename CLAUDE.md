@@ -13,6 +13,7 @@ Work now:
 - `pnpm install` · `pnpm check` (Biome + tsc) · `pnpm test` · `pnpm test <file>`
 - `pnpm dev:demo` · `pnpm build:demo` (web demo, `dist-demo/`) · `pnpm tauri dev` · `pnpm tauri build` (Windows, NSIS)
 - `pnpm build:demo && pnpm e2e` (Playwright + axe on `dist-demo/`; first time `pnpm exec playwright install chromium`)
+- `node docs/assets/video/hash.mjs [--check | --write]`: the demo video films the screens in `docs/assets/video/screens.json`; a PR that changes one adds a line to `docs/assets/video/pending.md` (`tests/video-freshness.test.ts` fails otherwise), a render runs `--write` (docs/videos.md)
 - `pnpm gen:bindings` (placeholder until the first tauri-specta command in M3)
 - `cargo xtask fixtures [--check]` · `cargo xtask golden [--check]` (writes missing decision-log cases, never overwrites; a new case must also be listed in `crates/core/tests/golden.rs`) · `cargo xtask crash-loop --iterations N` (M2)
 - Dependencies changed: run the `Refresh lockfiles` workflow on the PR branch (`gh api -X POST repos/margaux-faurie/culla/actions/workflows/lockfile-refresh.yml/dispatches -f ref=main -f inputs[branch]=<branch>`), then push any commit to rerun CI

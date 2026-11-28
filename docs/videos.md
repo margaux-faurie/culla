@@ -55,6 +55,15 @@ On-screen text is in English in the master. A French master with the on-screen t
 
 M5, once the web demo has its photos, the route view, swipe, undo, review and simulated apply, and the design review against the Portfolio Design System is done. Filmed again if a later milestone changes one of these screens.
 
+### Keeping the video current
+
+Margaux asked on 28 Nov 2026 that every change to the app is later reflected in the video. The process below is proposed by the agent and awaiting her (SPEC §10, "Video freshness"). It keeps a pull request that changes a screen cheap (one line), and stops a release from shipping with a stale video.
+
+- **What the video films.** `docs/assets/video/screens.json` lists the source paths the video shows (`paths`, with `*` within a name and `**` at any depth; tests left out by `exclude`), and `renderedFrom`, a SHA-256 over those files (each path and its contents, sorted by path, line endings read as LF) as they were at the last render, with its date in `renderedAt`. `node docs/assets/video/hash.mjs` prints the hash of the screens now (Node, no dependencies).
+- **Every pull request.** `tests/video-freshness.test.ts` (Vitest, so `pnpm test` and CI) recomputes the hash. If it differs from `renderedFrom`, it fails unless `docs/assets/video/pending.md` lists at least one entry dated on or after the render, in the form `- <date> #<PR or branch>: <screen> changed — re-render before release`. Its message says what to do: render again, or add the line. It also fails when a pattern of `screens.json` no longer matches any file, so a renamed folder cannot drop out of the list unnoticed.
+- **Render-all.** Build the demo at the commit, film and edit as in How to capture, then run `node docs/assets/video/hash.mjs --write [--date YYYY-MM-DD]`: it records the new hash and date in `screens.json` and empties the entries of `pending.md`. Commit both with the render's commit noted in the video's description.
+- **Before a release.** `pending.md` is empty and the video was rendered from the release commit (roadmap M6 exit criteria, testing.md §8). The `release` skill does not check this yet: adding it there is a protected-path change for Margaux.
+
 ## (b) Install video
 
 About 45 s. Story: download, check, the SmartScreen screen, install, first launch. It follows [install.md](install.md) step by step, with the same words.
