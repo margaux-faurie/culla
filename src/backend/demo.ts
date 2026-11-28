@@ -3,6 +3,7 @@ import { fold, stateOf } from "../decisions/log";
 import {
   advance,
   appliedNames,
+  stateOf as applyStateOf,
   closeSim,
   crash,
   createSim,
@@ -16,7 +17,6 @@ import {
   retryFailed,
   runIdOf,
   type Sim,
-  stateOf as applyStateOf,
 } from "./demo-apply";
 import {
   type DemoPhotoSpec,

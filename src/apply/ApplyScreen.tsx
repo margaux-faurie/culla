@@ -349,7 +349,8 @@ function heading(status: ApplyStatus | null, recovery: boolean): string {
     case "paused":
       return "Paused";
     default:
-      return runningTitle(status.progress);
+      // The launch notice keeps its heading while it finishes the apply (US-38).
+      return recovery ? "An apply was interrupted" : runningTitle(status.progress);
   }
 }
 
@@ -378,7 +379,6 @@ function Progress({ status, asked, onPause, onStop, onContinue }: ProgressProps)
     <div className="apply-progress">
       {!waiting && (
         <div className="apply-meter">
-          {/* biome-ignore lint/a11y/useSemanticElements: the canvas's bar: a div whose fill can ease, and skip easing with reduced motion; a native progress element cannot. */}
           <div
             className="apply-bar"
             role="progressbar"
