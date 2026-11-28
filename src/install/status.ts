@@ -40,7 +40,7 @@ export interface InstallStatus {
 
 export const STATUS: InstallStatus = {
   release: null,
-  // Published by Margaux's decision of 28 Nov 2026 (v3 of the 30 s cut, no sound yet). The video
+  // Published by Margaux's decision of 28 Nov 2026 (the 30 s cut, v4 since the lean review; no sound yet). The video
   // and its poster hold her photographs: all rights reserved, not GPL (public-demo/videos/LICENSE.txt).
   demoVideo: {
     title: "Culla in 30 seconds",

@@ -9,12 +9,12 @@
  *   (or both steps at once: node docs/assets/video/render-all.mjs, see there)
  *
  * Real photos (Margaux's choice, 28 Nov 2026) without committing them: with CULLA_VIDEO_PHOTOS set
- * to a folder of JPEGs (already oriented, sized and stripped of all metadata), the page's drawn
- * demo photos are swapped for those files as the page sets them, and Playwright serves them from
- * that folder. The order follows CULLA_VIDEO_PHOTO_ORDER (file names, comma separated; the demo's
- * session order) or else the folder's sorted names. Neither the photos nor anything filmed with
- * them goes into the repository: the capture folder (CULLA_VIDEO_CAPTURE) must be outside it.
- * Without CULLA_VIDEO_PHOTOS the demo's own drawn photos are filmed.
+ * to a folder of JPEGs (already oriented, sized and stripped of all metadata), Playwright answers
+ * the demo's own scene files (/assets/scene-NN…svg and full-NN…svg, photo NN of the session) with
+ * those files instead. The order follows CULLA_VIDEO_PHOTO_ORDER (file names, comma separated; the
+ * demo's session order) or else the folder's sorted names. Neither the photos nor anything filmed
+ * with them goes into the repository: the capture folder (CULLA_VIDEO_CAPTURE) must be outside it.
+ * Without CULLA_VIDEO_PHOTOS the demo's own drawn scenes are filmed.
  *
  * Each shot is filmed frame by frame on a stopped clock (Playwright's `page.clock` plus every CSS
  * animation paused and stepped), one JPEG screenshot (quality 92) per 1/30 s, into
@@ -52,12 +52,8 @@ function photoFiles(): string[] {
   return [...order, ...all.filter((f) => !order.includes(f))];
 }
 
-/**
- * Page helpers, as a string so this file needs no DOM types. The photo swap finds which demo photo
- * a drawn preview is from its sun and horizon, as `svg()` in src/backend/demo-photos.ts draws them
- * (keep the two in step), and points the image at /__video-photos/<n>.
- */
-const pageHelpers = (swap: boolean) => `
+/** Page helpers, as a string so this file needs no DOM types. */
+const PAGE_HELPERS = `
 localStorage.setItem("culla-demo:destinations", ${JSON.stringify(MEMORY)});
 // The swipe screen's focus outline runs round the whole frame once the video is full-bleed; the
 // video hides it (and only it).
@@ -66,35 +62,6 @@ window.addEventListener("DOMContentLoaded", () => {
   style.textContent = "main.swipe:focus, main.swipe:focus-visible { outline: none !important; }";
   document.head.appendChild(style);
 });
-if (${swap}) {
-  const indexOf = (url) => {
-    const svg = decodeURIComponent(url.slice(url.indexOf(",") + 1));
-    const num = (re) => Number((svg.match(re) || [])[1]);
-    const w = num(/width="(\\d+)"/), h = num(/height="(\\d+)"/);
-    const cx = num(/cx="(\\d+)"/), y = num(/rect y="(\\d+)"/);
-    for (let n = 0; n < 256; n += 1) {
-      const sunX = 200 + ((n * 173) % (w - 400));
-      const horizon = Math.round(h * (0.55 + ((n * 37) % 20) / 100));
-      if (sunX === cx && horizon === y) return n;
-    }
-    return -1;
-  };
-  const swapUrl = (v) => {
-    if (typeof v !== "string" || !v.startsWith("data:image/svg+xml")) return v;
-    const n = indexOf(v);
-    return n < 0 ? v : "/__video-photos/" + n;
-  };
-  const src = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src");
-  Object.defineProperty(HTMLImageElement.prototype, "src", {
-    configurable: true,
-    get() { return src.get.call(this); },
-    set(v) { src.set.call(this, swapUrl(v)); },
-  });
-  const setAttribute = Element.prototype.setAttribute;
-  Element.prototype.setAttribute = function (name, value) {
-    return setAttribute.call(this, name, this instanceof HTMLImageElement && name === "src" ? swapUrl(value) : value);
-  };
-}
 window.__cullaZoomPlan = (selectors, maxScale, anchorY) => {
   const root = document.getElementById("root");
   const from = root.__zoom || { s: 1, x: 0, y: 0 };
@@ -272,7 +239,10 @@ class Shot {
 
 
 const KEEP_ROUTE = [".card-current .pill-photo", ".action-row"];
-const REVIEW_KEEP_ROUTE = [".route-label-keep", ".keep-controls .destination"];
+/** The lean review's three rows (kept, rejected, left in place) and its Apply button. */
+const REVIEW_PLAN = [".review-plan .branches", ".apply-box"];
+/** The apply report: its title, "… Nothing was deleted." and the short route. */
+const APPLY_REPORT = ["#apply-title", "main.apply .lead", "main.apply .branches"];
 
 test.use({ viewport: VIEW, deviceScaleFactor: 1, reducedMotion: "no-preference" });
 
@@ -281,15 +251,17 @@ test("film the 30 s demo video (docs/videos.md (a))", async ({ page }) => {
   const files = photoFiles();
   if (PHOTOS !== null) {
     const dir = PHOTOS;
-    await page.route("**/__video-photos/*", (route) => {
-      const n = Number(route.request().url().split("/").pop());
-      const file = files[n % files.length];
+    // The demo's scene files, preview and full size (src/backend/demo-photos.ts): number NN is
+    // photo NN of the session.
+    await page.route(/\/assets\/(scene|full)-(\d+)[^/]*\.svg$/, (route) => {
+      const match = /\/(?:scene|full)-(\d+)[^/]*\.svg$/.exec(route.request().url());
+      const file = files[(Number(match?.[1] ?? "1") - 1) % files.length];
       return file === undefined
         ? route.abort()
         : route.fulfill({ contentType: "image/jpeg", body: readFileSync(join(dir, file)) });
     });
   }
-  await page.addInitScript(pageHelpers(files.length > 0));
+  await page.addInitScript(PAGE_HELPERS);
   await page.clock.install();
   await page.goto("/");
   await page.getByRole("button", { name: "Choose a folder" }).click();
@@ -324,7 +296,7 @@ test("film the 30 s demo video (docs/videos.md (a))", async ({ page }) => {
     await expect(page.locator(".apply-box .button-primary")).toHaveText(/^Move \d+ photos?$/);
     await page.mouse.move(-10, -10);
     const s = await Shot.begin(page, "review");
-    await s.zoom(REVIEW_KEEP_ROUTE, 2.0, 1 * BEAT, 0.16);
+    await s.zoom(REVIEW_PLAN, 1.6, 1 * BEAT, 0.36);
     await s.untilBeat(8);
     s.end();
   });
@@ -346,7 +318,7 @@ test("film the 30 s demo video (docs/videos.md (a))", async ({ page }) => {
       8,
       3,
     );
-    await s.zoom(["#apply-title", "main.apply .lead"], 2.2, 0.75 * BEAT, 0.35);
+    await s.zoom(APPLY_REPORT, 1.05, 0.75 * BEAT, 0.38);
     await s.untilBeat(Math.max(8, Math.ceil(s.now() / BEAT)));
     s.end();
   });

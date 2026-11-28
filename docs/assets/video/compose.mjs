@@ -1,6 +1,6 @@
 // Edits the 30 s demo video (docs/videos.md (a)) from the shots capture.spec.ts filmed.
 //
-//   node docs/assets/video/compose.mjs --capture <dir> --wall <dir> --fonts <dir> --out <dir>
+//   node docs/assets/video/compose.mjs --capture <dir> --wall <dir> --out <dir> [--fonts <dir>]
 //        [--bpm 120] [--offset 0] [--name culla-demo-30s] [--check] [--still <scene>:<seconds>]...
 //        [--audio <file>]
 //   node docs/assets/video/compose.mjs --master <mp4> --audio <file> --out <dir>
@@ -10,7 +10,8 @@
 //            opening wall; repeated and shuffled to fill it, near-identical shots never side by
 //            side. Kept outside the repository. --wall-keep-out <file,...> keeps some out of the
 //            tight opening frame; --wall-centre <file,...> puts some there first.
-// --fonts    a folder holding Bricolage Grotesque (OFL) as .ttf or .woff2. Not in the repository.
+// --fonts    a folder holding Bricolage Grotesque (OFL) as .ttf, .woff or .woff2; by default the
+//            app's own, src/assets/fonts.
 // --bpm, --offset  the music's tempo and its first downbeat in seconds: every cut and every word
 //            lands on a beat. Film again with the same CULLA_VIDEO_BPM so the decisions do too.
 // --check    only draws the check frames
@@ -29,7 +30,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "@playwright/test";
 
 const args = process.argv.slice(2);
@@ -40,7 +41,8 @@ const arg = (name) => {
 const path = (name) => (arg(name) ? resolve(arg(name)) : null);
 const CAPTURE = path("capture");
 const WALL = path("wall");
-const FONTS = path("fonts");
+// The app's own Bricolage Grotesque (src/assets/fonts) unless --fonts names another folder.
+const FONTS = path("fonts") ?? fileURLToPath(new URL("../../../src/assets/fonts/", import.meta.url));
 const OUT = path("out");
 const MASTER = path("master");
 const AUDIO = path("audio");
@@ -275,9 +277,9 @@ function stateAt(scene, t) {
 }
 
 function fontFaces() {
-  const files = readdirSync(FONTS).filter((f) => /bricolage.*\.(ttf|woff2)$/i.test(f));
+  const files = readdirSync(FONTS).filter((f) => /bricolage.*\.(ttf|woff2?)$/i.test(f));
   if (files.length === 0) {
-    throw new Error(`no Bricolage Grotesque .ttf or .woff2 in ${FONTS}`);
+    throw new Error(`no Bricolage Grotesque .ttf, .woff or .woff2 in ${FONTS}`);
   }
   return files
     .map((f) => {
@@ -544,8 +546,8 @@ if (MASTER !== null) {
   const [, h, mi, se] = info.match(/Duration: (\d+):(\d+):([\d.]+)/);
   mkdirSync(OUT, { recursive: true });
   await addMusic(MASTER, Number(h) * 3600 + Number(mi) * 60 + Number(se), join(OUT, `${NAME}.music.mp4`));
-} else if ([CAPTURE, WALL, FONTS, OUT].includes(null)) {
-  console.error("usage: node compose.mjs --capture <dir> --wall <dir> --fonts <dir> --out <dir> [--bpm 120] [--offset 0]");
+} else if ([CAPTURE, WALL, OUT].includes(null)) {
+  console.error("usage: node compose.mjs --capture <dir> --wall <dir> --out <dir> [--fonts <dir>] [--bpm 120] [--offset 0]");
   process.exit(2);
 } else if (!existsSync(join(CAPTURE, "swipe", "timeline.json"))) {
   console.error(`no capture at ${CAPTURE}`);
