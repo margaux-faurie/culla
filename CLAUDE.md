@@ -40,7 +40,7 @@ Slice along the hexagon, one slice per PR, test first: core function + tests →
 
 ## Conventions
 - Errors: `thiserror` in core; commands return typed `IpcError` (serde tagged). No `anyhow` in library code.
-- Licence GPL-3.0-only; the name and logo are reserved; outside PRs are not merged (ADR 0026, CONTRIBUTING.md). Conventional Commits. A changed decision needs a new or superseding ADR (`docs/adr/`, MADR minimal).
+- Licence GPL-3.0-only, except `public-demo/videos/` (demo video and poster: the author's photographs, all rights reserved, its `LICENSE.txt`); the name and logo are reserved; outside PRs are not merged (ADR 0026, CONTRIBUTING.md). Conventional Commits. A changed decision needs a new or superseding ADR (`docs/adr/`, MADR minimal).
 - Docs and UI copy: plain, sentence case, no exclamation marks.
 
 ## Gotchas

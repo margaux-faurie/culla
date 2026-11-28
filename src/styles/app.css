@@ -1733,7 +1733,7 @@ kbd {
 }
 
 .doc-video {
-  margin: 0 0 var(--space-6);
+  margin: 0 0 var(--space-2);
 }
 
 .doc-video video {
@@ -1748,6 +1748,14 @@ kbd {
   margin-top: var(--space-2);
   color: var(--ink-muted);
   font-size: 15px;
+}
+
+.doc-video-transcript {
+  margin: 0 0 var(--space-6);
+}
+
+.doc-video-transcript summary {
+  cursor: pointer;
 }
 
 @media (max-width: 640px) {
