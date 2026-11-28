@@ -127,8 +127,9 @@ export function SwipeScreen(props: SwipeScreenProps) {
     switch (command) {
       case "keep":
       case "reject":
-        // From the buttons while zoomed: decide, leave zoom and show the next photo (proposed).
-        endZoom();
+        // From the buttons while zoomed: decide, leave zoom and show the next photo (proposed). On
+        // a decided photo the click is refused (ADR 0006), so zoom stays with the refusal.
+        if (photo !== undefined && decision === "undecided") endZoom();
         dispatch({ type: "decide", verdict: command, now });
         return;
       case "clear":
@@ -149,6 +150,8 @@ export function SwipeScreen(props: SwipeScreenProps) {
         dispatch({ type: "cycleFilter" });
         return;
       case "help":
+        // Space up would land in the key list, so a zoom held by Space ends here.
+        if (zoomRef.current?.held === true) endZoom();
         setHelpOpen(true);
         return;
       case "review":
@@ -210,7 +213,8 @@ export function SwipeScreen(props: SwipeScreenProps) {
       if (space && event.target !== root) {
         return;
       }
-      if (space) {
+      // With Alt, Ctrl or the Windows key, Space belongs to the system or the browser.
+      if (space && !event.altKey && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
       }
       const command = commandFor(event, zoomRef.current !== null);
@@ -224,20 +228,26 @@ export function SwipeScreen(props: SwipeScreenProps) {
       event.preventDefault();
       runRef.current(command);
     };
-    // A zoom held by Space ends when Space is let go, or when the window loses focus meanwhile.
+    // A zoom held by Space ends when Space is let go wherever focus is, or when the window loses
+    // focus meanwhile.
     const endHeld = () => {
       if (zoomRef.current?.held === true) endZoomRef.current();
     };
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.code === "Space") endHeld();
     };
+    // The view's size and the fitted photo change with the window: zoom ends rather than show a
+    // stale geometry.
+    const onResize = () => endZoomRef.current();
     root.addEventListener("keydown", onKeyDown);
-    root.addEventListener("keyup", onKeyUp);
+    window.addEventListener("keyup", onKeyUp);
     window.addEventListener("blur", endHeld);
+    window.addEventListener("resize", onResize);
     return () => {
       root.removeEventListener("keydown", onKeyDown);
-      root.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", endHeld);
+      window.removeEventListener("resize", onResize);
     };
   }, []);
 
@@ -245,13 +255,16 @@ export function SwipeScreen(props: SwipeScreenProps) {
   const endZoomRef = useRef(endZoom);
   endZoomRef.current = endZoom;
   const shownId = photo?.id;
+  // The note on a full image that could not be read belongs to its photo too.
   useEffect(() => {
     if (zoomRef.current !== null && zoomRef.current.photoId !== shownId) {
       endZoomRef.current();
     }
+    setZoomNote(null);
   }, [shownId]);
 
-  // The note on a full image that could not be read hides itself like a toast.
+  // The note on a full image that could not be read hides itself like a toast, its time counted
+  // from when it shows.
   useEffect(() => {
     if (zoomNote === null) return;
     const timer = window.setTimeout(() => setZoomNote(null), TOAST_MS);
@@ -345,16 +358,10 @@ export function SwipeScreen(props: SwipeScreenProps) {
           </p>
         )}
         <div className="toast-slot">
-          {feedback !== null ? (
+          {feedback !== null && (
             <p className="toast" key={nonce}>
               {toastText(feedback, byId)}
             </p>
-          ) : (
-            zoomNote !== null && (
-              <p className="toast" role="alert">
-                {zoomNote}
-              </p>
-            )
           )}
         </div>
 
@@ -398,6 +405,11 @@ export function SwipeScreen(props: SwipeScreenProps) {
               hidden
             />
           )}
+          {/* Its own slot over the photo, so a toast never hides it. Mounted empty, so the alert
+              is announced when it fills. */}
+          <div className="zoom-note-slot" role="alert">
+            {zoomNote !== null && <p className="toast">{zoomNote}</p>}
+          </div>
           {zoom !== null && photo !== undefined && zoom.photoId === photo.id && (
             <ZoomLayer
               zoom={zoom}

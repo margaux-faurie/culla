@@ -676,6 +676,17 @@ kbd {
   margin: 0;
 }
 
+.zoom-note-slot {
+  position: absolute;
+  top: var(--space-4);
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
 .zoom-loading {
   display: flex;
   justify-content: center;

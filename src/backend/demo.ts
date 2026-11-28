@@ -631,6 +631,9 @@ export function createBackend(options: DemoOptions = {}): Backend {
       if (scenario.fullImageUnreadable === true) {
         throw new Error("full image unreadable");
       }
+      if (scenario.fullImageDelayMs !== undefined) {
+        await new Promise((resolve) => setTimeout(resolve, scenario.fullImageDelayMs));
+      }
       for (const session of sessions.values()) {
         const entry = session.entries.find((e) => e.photo.id === photoId);
         if (entry !== undefined) return entry.full();

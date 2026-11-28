@@ -146,15 +146,103 @@ test.describe("zoom to 100 % (US-39)", () => {
     await expect(tally(page, "kept")).toHaveText("1 kept");
   });
 
-  test("with reduced motion zoom is an instant swap", async ({ page }) => {
+  test("with reduced motion nothing moves: no loading animation, an instant swap", async ({
+    page,
+  }) => {
+    const animated = (selector: string) =>
+      page.evaluate(
+        `[...document.querySelectorAll(${JSON.stringify(selector)})].some((el) => { const s = getComputedStyle(el); return s.animationName !== "none" || parseFloat(s.transitionDuration) > 0; })`,
+      );
+    // Control: without reduced motion the loading dots do animate.
+    await startSorting(page, { scenario: "full-image-slow" });
+    await page.keyboard.press("z");
+    await expect(page.getByText("Loading the full image")).toBeVisible();
+    expect(await animated(".zoom-loading .dots span")).toBe(true);
+    await page.keyboard.press("Escape");
+
     await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.keyboard.press("z");
+    await expect(page.getByText("Loading the full image")).toBeVisible();
+    expect(await animated(".zoom-loading .dots span")).toBe(false);
+    await expect(full(page)).toBeVisible();
+    expect(await animated(".zoom, .zoom-image")).toBe(false);
+  });
+
+  test("while the full image loads the arrows decide nothing, and Esc cancels it", async ({
+    page,
+  }) => {
+    await startSorting(page, { scenario: "full-image-slow" });
+    await page.keyboard.press("z");
+    await expect(page.getByText("Loading the full image")).toBeVisible();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowLeft");
+    await expect(tally(page, "undecided")).toHaveText("24 undecided");
+    await expect(position(page)).toHaveText("1 / 24");
+    await page.keyboard.press("Escape");
+    await expect(page.getByText("Loading the full image")).toHaveCount(0);
+    // The image that comes in afterwards is not shown.
+    await page.waitForTimeout(1700);
+    await expect(full(page)).toHaveCount(0);
+  });
+
+  test("U, F and Enter still work while zoomed; U keeps zoom on", async ({ page }) => {
+    await startSorting(page);
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Shift+ArrowLeft");
+    await page.keyboard.press("z");
+    await expect(full(page)).toBeVisible();
+    await page.keyboard.press("u");
+    await expect(tally(page, "kept")).toHaveText("0 kept");
+    await expect(full(page)).toBeVisible();
+    await page.keyboard.press("f");
+    await expect(page.getByRole("button", { name: "Showing undecided" })).toBeVisible();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Check where your photos will go" }),
+    ).toBeVisible();
+  });
+
+  test("Keep on a decided photo while zoomed is refused and zoom stays", async ({ page }) => {
+    await startSorting(page);
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Shift+ArrowLeft");
+    await page.keyboard.press("z");
+    await expect(full(page)).toBeVisible();
+    await page.getByRole("button", { name: "Keep" }).click();
+    await expect(page.locator(".toast")).toContainText("Press U to undo");
+    await expect(full(page)).toBeVisible();
+    await expect(position(page)).toHaveText("1 / 24");
+  });
+
+  test("a held zoom ends when the key list opens; zoom ends when the window is resized", async ({
+    page,
+  }) => {
+    await startSorting(page);
+    await page.keyboard.down("Space");
+    await expect(full(page)).toBeVisible();
+    await page.keyboard.press("?");
+    await expect(page.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeVisible();
+    await expect(full(page)).toHaveCount(0);
+    await page.keyboard.up("Space");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("z");
+    await expect(full(page)).toBeVisible();
+    await page.setViewportSize({ width: 1000, height: 700 });
+    await expect(full(page)).toHaveCount(0);
+  });
+
+  test("only the main button drags", async ({ page }) => {
     await startSorting(page);
     await page.keyboard.press("z");
     await expect(full(page)).toBeVisible();
-    const running = await page.evaluate(
-      "document.getAnimations().filter((a) => a.effect && a.effect.target && a.effect.target.closest('.zoom')).length",
-    );
-    expect(running).toBe(0);
+    const start = await offset(page);
+    const box = await page.locator(".zoom").boundingBox();
+    if (box === null) throw new Error("no zoom layer");
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down({ button: "right" });
+    await page.mouse.move(box.x + box.width / 2 + 120, box.y + box.height / 2 + 60);
+    await page.mouse.up({ button: "right" });
+    expect(await offset(page)).toBe(start);
   });
 
   test("the shortcut list names Z, Space and the arrows' pan", async ({ page }) => {

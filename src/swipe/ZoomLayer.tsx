@@ -63,6 +63,8 @@ export function ZoomLayer({ zoom, photo, onDrag }: ZoomLayerProps) {
     <div
       className="zoom"
       onPointerDown={(event) => {
+        // The main button only (a pen or a touch reports 0 too).
+        if (event.button !== 0) return;
         event.currentTarget.setPointerCapture(event.pointerId);
         last.current = { x: event.clientX, y: event.clientY };
       }}
@@ -76,6 +78,9 @@ export function ZoomLayer({ zoom, photo, onDrag }: ZoomLayerProps) {
         last.current = null;
       }}
       onPointerCancel={() => {
+        last.current = null;
+      }}
+      onLostPointerCapture={() => {
         last.current = null;
       }}
     >
