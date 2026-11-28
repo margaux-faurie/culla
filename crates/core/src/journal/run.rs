@@ -187,6 +187,16 @@ pub trait Store {
     ///
     /// [`StoreError`]; then none of them is committed.
     fn append(&mut self, entries: &[Entry]) -> Result<(), StoreError>;
+
+    /// Records that the user stopped the plan (`plan.status = stopping`, §9.1, proposed),
+    /// durably, before returning. [`run`] calls it once, before the first step of a cancel, so
+    /// a crash during the cancel is followed at launch by a run that keeps cancelling
+    /// ([`Journal::stopping`]) rather than one that applies the groups the user stopped.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`]; then nothing is recorded.
+    fn stop(&mut self) -> Result<(), StoreError>;
 }
 
 /// A request from the user, checked between steps (§9.5).
@@ -195,7 +205,8 @@ pub enum Halt {
     /// Pause after the current step.
     Pause,
     /// Stop starting new operations; a cross-volume group cut short is treated as failed, as
-    /// is one an earlier run left mid-way (§9.5).
+    /// is one an earlier run left mid-way (§9.5). Recorded first ([`Store::stop`]): from then
+    /// on every run of the plan cancels, whatever `halt` says.
     Cancel,
 }
 
@@ -264,7 +275,11 @@ type Step = Result<(), Brk>;
 /// group whose look found a failure, then the operations sent back to the start run in order,
 /// and a cross-volume group removes its sources once every member is committed. `halt` is asked
 /// between groups and between operations; a cancel settles every group left mid-way first
-/// (§9.5), so [`End::Cancelled`] leaves a plan [`close`] accepts.
+/// (§9.5), so [`End::Cancelled`] leaves a plan [`close`] accepts. A cancel is recorded
+/// ([`Store::stop`]) before its first step, and a plan the user stopped
+/// ([`Journal::stopping`]) cancels at its first ask: a resume after a crash during a cancel, or
+/// after a cancel that paused (a volume missing, write-protected), settles the groups and
+/// starts nothing new.
 ///
 /// # Errors
 ///
@@ -485,11 +500,22 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
 
     /// Asks `halt`, between groups (`current` is `None`) or between the operations of
     /// `current` once it has been looked at.
+    /// A plan the user stopped ([`Journal::stopping`]) cancels at the first ask, without
+    /// asking `halt`.
     fn halted(&mut self, current: Option<&Range<usize>>) -> Step {
-        match (self.halt)() {
+        let h = if self.j.stopping() {
+            Some(Halt::Cancel)
+        } else {
+            (self.halt)()
+        };
+        match h {
             None => Ok(()),
             Some(Halt::Pause) => Err(Brk::Stop(End::Paused(PauseReason::User))),
             Some(Halt::Cancel) => {
+                if !self.j.stopping() {
+                    self.store.stop().map_err(RunError::Store)?;
+                    self.j.set_stopping();
+                }
                 self.cancel(current)?;
                 Err(Brk::Stop(End::Cancelled))
             }
@@ -557,11 +583,15 @@ impl<D: Disk + ?Sized, S: Store + ?Sized> Runner<'_, D, S> {
                 }
                 continue;
             }
+            self.look(&g)?;
+            // After the look: a crash inside `remove_source`, before `source_removed` was
+            // journaled, leaves a member `committed` with its source gone, which the look
+            // carries to `done`. Its removal had begun, so the others finish theirs too
+            // rather than splitting the group.
             let removing = g.clone().any(|i| {
                 self.j.ops()[i].kind.removes_source()
                     && matches!(self.state(i), OpState::SourceRemoved | OpState::Done)
             });
-            self.look(&g)?;
             if removing && !self.group_failed(&g) {
                 self.remove_sources(&g)?;
             }

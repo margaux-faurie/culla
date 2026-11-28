@@ -478,6 +478,9 @@ pub struct Journal {
     ops: Vec<Op>,
     progress: Vec<Progress>,
     index: BTreeMap<OpId, usize>,
+    /// The user stopped the plan (`plan.status = stopping`, §9.1, proposed): every run of it
+    /// cancels.
+    stopping: bool,
 }
 
 impl Journal {
@@ -543,6 +546,7 @@ impl Journal {
             ops,
             progress,
             index,
+            stopping: false,
         })
     }
 
@@ -621,6 +625,20 @@ impl Journal {
         }
         p.state = Some(e.to);
         Ok(())
+    }
+
+    /// The user stopped this plan ([`Store::stop`] recorded it): every run of it cancels, so a
+    /// resume at launch settles the groups left mid-way and starts nothing new (proposed, SPEC
+    /// §10).
+    pub fn stopping(&self) -> bool {
+        self.stopping
+    }
+
+    /// Marks the plan stopped, as its stored status says (`stopping`): the caller sets this
+    /// when it loads a plan whose status is `stopping`, after [`Journal::replay`]; [`run`] sets
+    /// it once [`Store::stop`] has returned. It is never cleared.
+    pub fn set_stopping(&mut self) {
+        self.stopping = true;
     }
 
     /// The operations in plan order.

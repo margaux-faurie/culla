@@ -1101,6 +1101,7 @@ fn crash_loop(case: u64, seen: &mut BTreeMap<String, u64>) {
             _ => None,
         };
         let mid = left_mid_way(&j);
+        let was_stopping = j.stopping();
         let res = match stop {
             Some((k, h)) => go_halting(&w, &mut j, k, h),
             None => go(&w, &mut j),
@@ -1110,7 +1111,18 @@ fn crash_loop(case: u64, seen: &mut BTreeMap<String, u64>) {
             crashes -= 1;
             // A new process: the journal as stored.
             j = w.borrow().reload();
+            if j.stopping() && !was_stopping {
+                *seen.entry("crash during a cancel".to_owned()).or_default() += 1;
+            }
             continue;
+        }
+        // A plan the user stopped only cancels, whatever `halt` says.
+        if was_stopping {
+            assert_eq!(
+                res,
+                Ok(End::Cancelled),
+                "case {case}: a stopped plan went on"
+            );
         }
         match res {
             Ok(End::Finished) => break false,
@@ -1265,6 +1277,34 @@ fn check_end_state(
             }
         }
     }
+    // From the files, not the states: no cross-volume group is split, one member moved (its
+    // source gone) while another kept its source with its copy in place; a source the file
+    // system brought back after `done` (above) does not count as kept.
+    for g in j.groups() {
+        let at = |k: &str| wb.files.get(k).map(|r| r.content);
+        let (mut moved, mut kept) = (Vec::new(), Vec::new());
+        for i in g {
+            let op = &all[i];
+            if !op.kind.removes_source() {
+                continue;
+            }
+            let c = wb.content[&op.id];
+            match (at(&src_key(op)), at(&dst_key(op))) {
+                (None, Some(f)) if f == c => moved.push(op.id),
+                (Some(s), Some(f))
+                    if s == c && f == c && j.progress(i).state() != OpState::Done =>
+                {
+                    kept.push(op.id);
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            moved.is_empty() || kept.is_empty(),
+            "{case}: group split on disk, moved {moved:?}, kept {kept:?}\nLOG {:?}",
+            wb.log
+        );
+    }
     // No stray files: only sources, targets, foreign files, and partials of ops whose source is
     // gone (kept and reported).
     for k in wb.files.keys() {
@@ -1326,6 +1366,7 @@ fn prop_crash_loop_reaches_the_end_state() {
             "XMove failed Some(VerifyMismatch)",
             "cancelled",
             "cancelled after a run ended mid-group",
+            "crash during a cancel",
             "paused",
             "XMove pending None",
         ] {
@@ -1776,6 +1817,10 @@ fn cancel_settles(w: &Shared, mut j: Journal, k: u64, what: &str) {
             s => panic!("{what}: op {id} {s}"),
         }
     }
+    // Never split: once one source is gone, the other goes too (a crash inside
+    // `remove_source`, before `source_removed` was journaled, included).
+    let done = [2, 3].map(|id| state(&j, id) == OpState::Done);
+    assert!(done[0] == done[1], "{what}: group split {done:?}");
     assert_eq!(state(&j, 1), OpState::Done, "{what}");
     assert_eq!(state(&j, 4), OpState::Pending, "{what}");
     assert!(
@@ -1940,8 +1985,95 @@ fn a_cancel_with_a_volume_still_missing_pauses() {
         Ok(End::Paused(PauseReason::VolumeLost))
     );
     assert!(left_mid_way(&j));
+    // The stop is recorded: the next run cancels whatever `halt` says.
+    assert!(j.stopping() && w.borrow().reload().stopping());
     // Back: the cancel settles it.
     cancel_settles(&w, j, 1, "volume back");
+}
+
+#[test]
+fn a_run_after_a_cancel_that_paused_keeps_cancelling() {
+    let w = world(mid_group_plan());
+    w.borrow_mut().pull.insert((3, "copy"));
+    let mut j = w.borrow().reload();
+    assert_eq!(go(&w, &mut j), Ok(End::Paused(PauseReason::VolumeLost)));
+    w.borrow_mut().pull.insert((2, "probe"));
+    assert_eq!(
+        go_halting(&w, &mut j, 1, Halt::Cancel),
+        Ok(End::Paused(PauseReason::VolumeLost))
+    );
+    // A plain run (Continue, or the launch's roll forward) after the volume is back: a cancel.
+    let mut j = w.borrow().reload();
+    assert_eq!(go(&w, &mut j), Ok(End::Cancelled));
+    assert!(!left_mid_way(&j));
+    assert_eq!(state(&j, 2), OpState::CopiedSourceKept);
+    assert_eq!(state(&j, 4), OpState::Pending);
+    assert!(!w.borrow().log.iter().any(|l| l == "copy 4"));
+    assert!(partial_files(&w).is_empty());
+    close(&mut j, &mut FakeStore(w.clone())).unwrap();
+}
+
+#[test]
+fn a_launch_after_a_crash_during_a_cancel_keeps_cancelling() {
+    // A pause inside the cross-volume group, then a cancel that crashes at every call in turn;
+    // the process starts again and rolls the plan forward on its own (no `halt`).
+    let mut resumed = 0;
+    for at in 1.. {
+        let w = world(mid_group_plan());
+        let mut j = w.borrow().reload();
+        // Asks: before group 1, before op 1, before group 2, before op 2, before op 3.
+        assert_eq!(
+            go_halting(&w, &mut j, 5, Halt::Pause),
+            Ok(End::Paused(PauseReason::User))
+        );
+        let calls = w.borrow().calls;
+        w.borrow_mut().crash_at = Some(calls + at);
+        let _ = go_halting(&w, &mut j, 1, Halt::Cancel);
+        if !w.borrow().crashed {
+            break;
+        }
+        w.borrow_mut().crashed = false;
+        let mut j = w.borrow().reload();
+        if !j.stopping() {
+            // The crash came before the stop was recorded: nothing of the cancel happened.
+            assert_eq!(w.borrow().entries, world_entries_before_cancel(), "at {at}");
+            continue;
+        }
+        resumed += 1;
+        assert_eq!(go(&w, &mut j), Ok(End::Cancelled), "at {at}");
+        assert_eq!(j, w.borrow().reload(), "at {at}");
+        assert!(!left_mid_way(&j), "at {at}: {:?}", w.borrow().entries);
+        assert_eq!(state(&j, 1), OpState::Done, "at {at}");
+        assert_eq!(state(&j, 2), OpState::CopiedSourceKept, "at {at}");
+        assert_eq!(
+            (state(&j, 3), err(&j, 3)),
+            (OpState::Failed, Some(FailReason::GroupFailed)),
+            "at {at}"
+        );
+        assert_eq!(state(&j, 4), OpState::Pending, "at {at}");
+        assert!(
+            !w.borrow()
+                .log
+                .iter()
+                .any(|l| l == "copy 3" || l == "copy 4"),
+            "at {at}: {:?}",
+            w.borrow().log
+        );
+        assert!(partial_files(&w).is_empty(), "at {at}");
+        close(&mut j, &mut FakeStore(w.clone())).unwrap();
+    }
+    assert!(resumed > 0);
+}
+
+/// The entries a pause at ask 5 of [`mid_group_plan`] leaves.
+fn world_entries_before_cancel() -> Vec<Entry> {
+    let w = world(mid_group_plan());
+    let mut j = w.borrow().reload();
+    assert_eq!(
+        go_halting(&w, &mut j, 5, Halt::Pause),
+        Ok(End::Paused(PauseReason::User))
+    );
+    w.borrow().entries.clone()
 }
 
 #[test]
@@ -2001,7 +2133,9 @@ fn a_resume_after_a_crash_while_failing_a_group_finishes_failing_it() {
             continue;
         }
         found = true;
-        assert_eq!(go(&w, &mut j), Ok(End::Finished));
+        // The cancel was recorded before it began: the resume goes on cancelling.
+        assert!(j.stopping());
+        assert_eq!(go(&w, &mut j), Ok(End::Cancelled));
         assert_eq!(
             (state(&j, 2), err(&j, 2)),
             (OpState::Failed, Some(FailReason::GroupFailed))
