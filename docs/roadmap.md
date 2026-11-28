@@ -84,7 +84,7 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
   - Sidecars follow the file they describe (`X.NEF.xmp`, and bare `X.xmp` and `X.pp3`, follow the NEF, ADR 0023), with the collision suffix inside sidecar names.
   - "Nothing touches the disk before Apply" tests ([testing.md](testing.md) section 4).
   - Resume (roll forward) after crash or card pull. Plain-text log file of operations. Resume logic in (slice D, with apply); the log file comes with the adapters.
-  - CLI: `culla plan`, `culla apply`, `culla resume` (used by the crash tests).
+  - CLI: `culla plan`, `culla apply`, `culla resume` (used by the crash tests). `culla plan` is in (slice E): a read-only dry run that scans, folds a decision log from a file, builds the plan and runs preflight on facts gathered read-only (`culla_adapters::facts`), leaving the facts it cannot look up yet unknown so preflight fails closed on them (free space, the sync root, off Windows the volumes), and listing apart what it does not check at all (locks, so P12 never warns; on Windows a second mounted volume with the source's or destination's serial); a destination inside the source is scanned and numbered as `culla scan` does, and its groups are left out of the plan; text or `--json` (`"schema": "unstable"`); flags, group ids and exit codes provisional (SPEC §10). `apply` and `resume` come with the `winfs` steps and the SQLite journal.
   - Apply benchmark campaign (B-12 to B-14, B-15 during apply) per [benchmarks.md](benchmarks.md).
 - **Exit criteria:**
   - Stories US-10 (Rust side), US-11 to US-20 and US-41 pass.

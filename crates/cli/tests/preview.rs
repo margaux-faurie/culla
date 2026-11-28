@@ -225,7 +225,12 @@ fn help_describes_preview() {
     let o = culla(&[OsStr::new("help")]);
     let out = stdout(&o);
     assert!(out.contains("culla preview <folder> [--no-subfolders]\n"));
-    assert!(!out.contains("--out") && !out.contains("  4  "), "{out}");
+    assert!(!out.contains("--out"), "{out}");
+    // Exit codes 4 and 5 belong to `culla plan` only.
+    assert!(
+        out.contains("  4  the decision log is not valid (plan)"),
+        "{out}"
+    );
 }
 
 #[test]
