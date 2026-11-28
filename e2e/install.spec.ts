@@ -21,6 +21,13 @@ test.describe("download and install page (SPEC §2, docs/install.md)", () => {
     await expect(video.locator("source")).toHaveAttribute("src", "/videos/culla-demo.mp4");
     await expect(video.locator("track")).toHaveCount(2);
     await expect(page.locator("iframe")).toHaveCount(0);
+    // The video has no sound: a transcript of its on-screen text sits under it, closed.
+    const transcript = page.locator("details", { has: page.getByText("Transcript") });
+    await expect(transcript).toHaveCount(1);
+    await expect(transcript).not.toHaveAttribute("open", /.*/);
+    await transcript.getByText("Transcript").click();
+    await expect(transcript.getByRole("listitem").first()).toHaveText("600 photos. One evening.");
+    await expect(transcript.getByRole("listitem")).toHaveCount(9);
     await expect(page.locator('a[href$=".exe"], a[href$=".msi"]')).toHaveCount(0);
   });
 

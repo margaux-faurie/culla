@@ -45,7 +45,7 @@ These are design rules. Lints enforce them now; tests enforce more of them as th
 
 ## Install
 
-There is no download yet. From the first release, Culla is installed from [GitHub Releases](https://github.com/margaux-faurie/culla/releases) with a per-user installer that needs no administrator rights. Because the first versions are not code-signed, Windows shows a SmartScreen warning; [the install guide](docs/install.md) explains how to check the download, why the warning appears and how to judge it, where Culla keeps its data, updates and uninstalling; the same guide, with the demo and install videos once they are recorded, is the download page of the demo site (`culla.margauxfaurie.com/install`, not public yet). To build Culla yourself, see [Building from source](#building-from-source).
+There is no download yet. From the first release, Culla is installed from [GitHub Releases](https://github.com/margaux-faurie/culla/releases) with a per-user installer that needs no administrator rights. Because the first versions are not code-signed, Windows shows a SmartScreen warning; [the install guide](docs/install.md) explains how to check the download, why the warning appears and how to judge it, where Culla keeps its data, updates and uninstalling; the same guide, with a 30 s demo video (the install video comes with the first release), is the download page of the demo site (`culla.margauxfaurie.com/install`, not public yet). To build Culla yourself, see [Building from source](#building-from-source).
 
 ## How the repo works
 

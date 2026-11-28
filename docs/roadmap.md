@@ -139,13 +139,13 @@ Key numbers used in exit criteria below are repeated from [nfr.md](nfr.md) and [
   - While the demo is gated, Playwright against the deployed URL authenticates with a Cloudflare Access service token stored as a CI secret (added in M5, with a security review of that change).
   - Tokens copied into `src/styles/tokens.css` with the source version; `keep` colour contrast checked on Night and cream; additions (`keep`, Night for photo screens) proposed back to the design system.
   - Loading dots, copy pass in the system voice, motion review.
-  - Download and install page at `/install` in the demo build, rendering [install.md](install.md) (in since 28 Nov 2026; it says plainly that there is no release or video yet).
-  - Demo video (75–85 s, captions in English and French) filmed from the demo build with a Playwright script, per [videos.md](videos.md), published on the install page; a short GIF cut for the README.
+  - Download and install page at `/install` in the demo build, rendering [install.md](install.md) (in since 28 Nov 2026; it says plainly that there is no release yet, and shows the 30 s demo video with its transcript).
+  - Demo video (75–85 s, captions in English and French) filmed from the demo build with a Playwright script, per [videos.md](videos.md), published on the install page; a short GIF cut for the README. A 30 s cut is already published there (Margaux, 28 Nov 2026, [videos.md](videos.md#demo-video-published)).
 - **Exit criteria:**
   - Demo deployed; Playwright and axe green against the deployed URL in Chromium, Firefox and WebKit, gated or public.
   - No network request from the demo other than its own assets (checked in Playwright).
   - Design review against the Portfolio Design System done.
-  - Demo video and its caption files ready, showing only the demo's own photos.
+  - Demo video and its caption files ready. The published demo video uses the author's own photographs, chosen by her (28 Nov 2026), re-encoded so no EXIF survives, with no identifiable people; the demo app itself still uses placeholders until its photos are chosen.
 - **Author:** choose and provide the demo photos (GPS and serial stripped); create the Cloudflare Access service token for CI and add it as a repository secret; approve the design system additions; approve the demo video script, record the voice-over or approve a text-to-speech voice (or choose captions only), and publish the video; open the demo to the public when the portfolio goes public.
 
 ### M6 — Release v1.0

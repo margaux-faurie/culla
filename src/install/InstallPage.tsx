@@ -77,24 +77,35 @@ function VideoBlock({
     return <p>{missing}</p>;
   }
   return (
-    <figure className="doc-video">
-      {/* No autoplay. Captions as WebVTT tracks, off by default: the video has no voice and its
-          text is on screen, so default captions would only repeat it (proposal, SPEC §10). */}
-      <video controls preload="none" poster={video.poster} width={1920} height={1080}>
-        <source src={video.src} type={video.type} />
-        <track kind="captions" srcLang={first.lang} label={first.label} src={first.src} />
-        {others.map((track) => (
-          <track
-            key={track.lang}
-            kind="captions"
-            srcLang={track.lang}
-            label={track.label}
-            src={track.src}
-          />
-        ))}
-        <a href={video.src}>Download the video</a>
-      </video>
-      <figcaption>{video.title}</figcaption>
-    </figure>
+    <>
+      <figure className="doc-video">
+        {/* No autoplay. Captions as WebVTT tracks, off by default: the video has no voice and its
+            text is on screen, so default captions would only repeat it (proposal, SPEC §10). */}
+        <video controls preload="none" poster={video.poster} width={1920} height={1080}>
+          <source src={video.src} type={video.type} />
+          <track kind="captions" srcLang={first.lang} label={first.label} src={first.src} />
+          {others.map((track) => (
+            <track
+              key={track.lang}
+              kind="captions"
+              srcLang={track.lang}
+              label={track.label}
+              src={track.src}
+            />
+          ))}
+          <a href={video.src}>Download the video</a>
+        </video>
+        <figcaption>{video.title}</figcaption>
+      </figure>
+      {/* The video has no sound: its on-screen text, in order, is its text alternative. */}
+      <details className="doc-video-transcript">
+        <summary>Transcript</summary>
+        <ul>
+          {video.transcript.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      </details>
+    </>
   );
 }

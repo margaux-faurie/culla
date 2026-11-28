@@ -13,7 +13,8 @@ const backendFor = (mode: string): string => {
 export default defineConfig(({ mode }) => ({
   plugins: [react()],
   // Only the demo has static files to copy as is: public-demo/_headers, the security headers
-  // Cloudflare applies to the demo (docs/deploy-demo.md). The desktop build copies nothing.
+  // Cloudflare applies to the demo (docs/deploy-demo.md), and public-demo/videos/, the demo video
+  // on the install page (all rights reserved, its LICENSE.txt). The desktop build copies nothing.
   publicDir: mode === "demo" ? "public-demo" : false,
   resolve: {
     alias: {
