@@ -6,7 +6,7 @@ Status: draft, 28 Nov 2026. There is no release yet: everything marked "(from th
 
 Culla runs on Windows 11 only. You don't need administrator rights, an account or an internet connection to use it. Culla itself sends nothing over the internet except a daily update check, which you can turn off. To build Culla yourself instead, see [Building from source](../README.md#building-from-source).
 
-If you would rather try Culla without installing anything, see [Try it in your browser](#try-it-in-your-browser) at the end. This guide is also on the demo site at https://culla.margauxfaurie.com/install, with the demo and install videos once they are recorded (the site is not public yet).
+If you would rather try Culla without installing anything, see [Try it in your browser](#try-it-in-your-browser) at the end. This guide is also on the demo site at https://culla.margauxfaurie.com/install, with a 30 s demo video; the install video comes with the first release (the site is not public yet).
 
 ## 1. Download the installer (from the first release)
 

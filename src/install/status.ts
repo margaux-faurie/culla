@@ -1,6 +1,6 @@
 // What the install page can offer today. Edit this file when the first release is published
 // and when each video is recorded (docs/videos.md); until then the page says so plainly and
-// shows no download link or video player.
+// shows no download link, and no player for a video that is not recorded.
 
 export interface Release {
   /** For example "1.0.0". */
@@ -25,6 +25,11 @@ export interface Video {
   /** A poster image served by the demo site itself. */
   readonly poster: string;
   readonly captions: readonly Captions[];
+  /**
+   * The video's on-screen text, line by line and in order, shown under the player: the video
+   * has no sound, so this is its text alternative. Same lines as its English caption track.
+   */
+  readonly transcript: readonly string[];
 }
 
 export interface InstallStatus {
@@ -35,7 +40,31 @@ export interface InstallStatus {
 
 export const STATUS: InstallStatus = {
   release: null,
-  demoVideo: null,
+  // Published by Margaux's decision of 28 Nov 2026 (v3 of the 30 s cut, no sound yet). The video
+  // and its poster hold her photographs: all rights reserved, not GPL (public-demo/videos/LICENSE.txt).
+  demoVideo: {
+    title: "Culla in 30 seconds",
+    src: "/videos/culla-demo.mp4",
+    type: "video/mp4",
+    poster: "/videos/culla-demo-poster.jpg",
+    captions: [
+      { lang: "en", label: "English", src: "/videos/culla-demo.en.vtt" },
+      { lang: "fr", label: "Français", src: "/videos/culla-demo.fr.vtt" },
+    ],
+    // Kept in step with public-demo/videos/culla-demo.en.vtt (src/install/markdown.test.ts).
+    // "Nothing deleted. Ever." is on screen in this cut; its wording is open (SPEC §10).
+    transcript: [
+      "600 photos. One evening.",
+      "Sorting them? Painful.",
+      "Keep. Reject. Keep.",
+      "The RAW follows.",
+      "Nothing moves until you say so.",
+      "Web demo: the apply is simulated.",
+      "Nothing deleted. Ever.",
+      "Culla. Free. Open source. Windows 11.",
+      "github.com/margaux-faurie/culla",
+    ],
+  },
   installVideo: null,
 };
 

@@ -45,7 +45,7 @@ These are design rules. Lints enforce them now; tests enforce more of them as th
 
 ## Install
 
-There is no download yet. From the first release, Culla is installed from [GitHub Releases](https://github.com/margaux-faurie/culla/releases) with a per-user installer that needs no administrator rights. Because the first versions are not code-signed, Windows shows a SmartScreen warning; [the install guide](docs/install.md) explains how to check the download, why the warning appears and how to judge it, where Culla keeps its data, updates and uninstalling; the same guide, with the demo and install videos once they are recorded, is the download page of the demo site (`culla.margauxfaurie.com/install`, not public yet). To build Culla yourself, see [Building from source](#building-from-source).
+There is no download yet. From the first release, Culla is installed from [GitHub Releases](https://github.com/margaux-faurie/culla/releases) with a per-user installer that needs no administrator rights. Because the first versions are not code-signed, Windows shows a SmartScreen warning; [the install guide](docs/install.md) explains how to check the download, why the warning appears and how to judge it, where Culla keeps its data, updates and uninstalling; the same guide, with a 30 s demo video (the install video comes with the first release), is the download page of the demo site (`culla.margauxfaurie.com/install`, not public yet). To build Culla yourself, see [Building from source](#building-from-source).
 
 ## How the repo works
 
@@ -206,6 +206,8 @@ Culla is licensed under the GNU General Public License v3.0 only (GPL-3.0-only);
 The name "Culla" and its logo are not covered by the licence; see [TRADEMARKS.md](TRADEMARKS.md). Forks are welcome under the licence but must use a different name.
 
 The Bricolage Grotesque typeface in `src/assets/fonts/` is © 2022 The Bricolage Grotesque Project Authors, licensed under the SIL Open Font License 1.1; see [its licence](src/assets/fonts/OFL.txt).
+
+The demo video and its poster in `public-demo/videos/` contain the author's photographs and are not covered by the GPL: © 2026 Margaux Faurie, all rights reserved; see [their notice](public-demo/videos/LICENSE.txt).
 
 ---
 
