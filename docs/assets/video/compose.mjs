@@ -6,8 +6,10 @@
 //   node docs/assets/video/compose.mjs --master <mp4> --audio <file> --out <dir>
 //
 // --capture  the folder capture.spec.ts wrote (CULLA_VIDEO_CAPTURE): swipe, review, apply
-// --wall     a folder of small landscape thumbnails (e.g. 180×120 JPEGs, no people, no metadata)
-//            for the opening wall; repeated and shuffled to fill it. Kept outside the repository.
+// --wall     a folder of small landscape thumbnails (180×120 .jpg, no people, no metadata) for the
+//            opening wall; repeated and shuffled to fill it, near-identical shots never side by
+//            side. Kept outside the repository. --wall-keep-out <file,...> keeps some out of the
+//            tight opening frame; --wall-centre <file,...> puts some there first.
 // --fonts    a folder holding Bricolage Grotesque (OFL) as .ttf or .woff2. Not in the repository.
 // --bpm, --offset  the music's tempo and its first downbeat in seconds: every cut and every word
 //            lands on a beat. Film again with the same CULLA_VIDEO_BPM so the decisions do too.
@@ -24,7 +26,7 @@
 // H.264 file per scene (30 fps, -preset veryfast, CRF 18, no audio), written to a .tmp.mp4 name
 // and renamed when ffmpeg exits 0, then joined with the concat demuxer and -c copy. Hard cuts on
 // beats; words come in with 150 ms eased scale or slide.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -64,29 +66,93 @@ const shot = (name) => {
   return { dir, ...timeline };
 };
 
-/** The wall: COLS × ROWS tiles of 180×120 with 8 px gaps, thumbnails shuffled (seeded). */
+/** The wall: COLS × ROWS tiles of 180×120 with 8 px gaps. */
 const COLS = 34;
 const ROWS = 24;
-function wallTiles() {
-  const files = readdirSync(WALL).filter((f) => /\.(jpe?g|png|webp)$/i.test(f)).sort();
-  if (files.length === 0) {
-    throw new Error(`no thumbnails in ${WALL}`);
+/** The cells around the middle that the tight opening frame shows (with a margin). */
+const inOpening = (col, row) => Math.abs(col - (COLS - 1) / 2) <= 6 && Math.abs(row - (ROWS - 1) / 2) <= 5;
+/** The cells the tight frame shows best, every other one, for --wall-centre. */
+const showcase = (col, row) =>
+  Math.abs(col - (COLS - 1) / 2) <= 4 && Math.abs(row - (ROWS - 1) / 2) <= 3 && (col + row) % 2 === 0;
+
+/** A 4×4 colour signature per thumbnail, from one ffmpeg pass over the folder (sorted names). */
+function signatures(files) {
+  const r = spawnSync(
+    FFMPEG,
+    [
+      ...["-v", "error", "-pattern_type", "glob", "-i", join(WALL, "*.jpg")],
+      ...["-vf", "scale=4:4:flags=area", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+    ],
+    { maxBuffer: 64 * 1024 * 1024 },
+  );
+  if (r.status !== 0 || r.stdout.length !== files.length * 48) {
+    throw new Error(`could not read the wall thumbnails (.jpg only): ${r.stderr}`);
   }
+  return files.map((_, i) => r.stdout.subarray(i * 48, (i + 1) * 48));
+}
+const distance = (a, b) => a.reduce((sum, v, i) => sum + Math.abs(v - b[i]), 0) / a.length;
+
+/**
+ * The wall's tiles, every thumbnail repeated about as often, in a seeded shuffle where no tile
+ * sits next to (or diagonally to) the same or a near-identical shot, and where --wall-keep-out
+ * files (e.g. one subject too many) stay out of the tight opening frame; --wall-centre files go
+ * there first.
+ */
+function wallTiles() {
+  const files = readdirSync(WALL).filter((f) => /\.jpg$/i.test(f)).sort();
+  if (files.length === 0) {
+    throw new Error(`no .jpg thumbnails in ${WALL}`);
+  }
+  const sig = signatures(files);
+  const keepOut = new Set((arg("wall-keep-out") ?? "").split(",").filter(Boolean));
+  const centre = (arg("wall-centre") ?? "").split(",").filter((f) => files.includes(f));
   let seed = 7;
   const rand = () => {
     seed = (seed * 1103515245 + 12345) % 2147483648;
     return seed / 2147483648;
   };
-  const tiles = [];
-  while (tiles.length < COLS * ROWS) {
-    const round = [...files];
-    for (let i = round.length - 1; i > 0; i -= 1) {
+  const shuffle = (list) => {
+    for (let i = list.length - 1; i > 0; i -= 1) {
       const j = Math.floor(rand() * (i + 1));
-      [round[i], round[j]] = [round[j], round[i]];
+      [list[i], list[j]] = [list[j], list[i]];
     }
-    tiles.push(...round);
+    return list;
+  };
+  const per = Math.ceil((COLS * ROWS) / files.length);
+  let pool = shuffle(files.flatMap((_, i) => Array(per).fill(i)));
+  const centreFirst = shuffle(centre.map((f) => files.indexOf(f)));
+  const grid = [];
+  let worst = Infinity;
+  for (let row = 0; row < ROWS; row += 1) {
+    for (let col = 0; col < COLS; col += 1) {
+      const near = [
+        col > 0 ? grid[row * COLS + col - 1] : undefined,
+        row > 0 ? grid[(row - 1) * COLS + col] : undefined,
+        row > 0 && col > 0 ? grid[(row - 1) * COLS + col - 1] : undefined,
+        row > 0 && col < COLS - 1 ? grid[(row - 1) * COLS + col + 1] : undefined,
+      ].filter((n) => n !== undefined);
+      const opening = inOpening(col, row);
+      const allowed = (i) => !(opening && keepOut.has(files[i]));
+      const gap = (i) => Math.min(Infinity, ...near.map((n) => (n === i ? -1 : distance(sig[i], sig[n]))));
+      const fromCentre = showcase(col, row) ? centreFirst.findIndex((i) => gap(i) >= 30) : -1;
+      let pick;
+      if (fromCentre >= 0) {
+        [pick] = centreFirst.splice(fromCentre, 1);
+      } else {
+        // The first candidate far enough from its neighbours, else the farthest of the first 80.
+        const candidates = pool.slice(0, 80).map((i, at) => ({ i, at, gap: allowed(i) ? gap(i) : -2 }));
+        const best =
+          candidates.find((c) => c.gap >= 30) ?? candidates.reduce((a, b) => (b.gap > a.gap ? b : a));
+        pick = best.i;
+        pool.splice(best.at, 1);
+        if (pool.length < 80) pool = pool.concat(shuffle(files.map((_, i) => i)));
+      }
+      worst = Math.min(worst, gap(pick));
+      grid.push(pick);
+    }
   }
-  return tiles.slice(0, COLS * ROWS).map((f) => pathToFileURL(join(WALL, f)).href);
+  console.log(`wall: ${files.length} thumbnails, closest neighbours ${worst.toFixed(1)} apart (of 255)`);
+  return grid.map((i) => pathToFileURL(join(WALL, files[i])).href);
 }
 
 /**

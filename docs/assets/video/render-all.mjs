@@ -3,7 +3,7 @@
 //
 //   node docs/assets/video/render-all.mjs --photos <dir> --wall <dir> --fonts <dir> --out <dir>
 //        [--order <file,file,...>] [--bpm 120] [--offset 0] [--name culla-demo-30s]
-//        [--audio <file>] [--check] [--build]
+//        [--audio <file>] [--wall-keep-out <files>] [--wall-centre <files>] [--check] [--build]
 //
 // --photos  the JPEGs shown in the app (CULLA_VIDEO_PHOTOS); --order their session order
 // --wall    the thumbnails of the opening wall
@@ -72,7 +72,7 @@ await run(pw, [...pwArgs, "test", "-c", "docs/assets/video/playwright.config.ts"
 const passOn = [];
 for (let i = 0; i < args.length; i += 1) {
   const a = args[i];
-  if (["--offset", "--name", "--audio", "--still"].includes(a)) {
+  if (["--offset", "--name", "--audio", "--still", "--wall-keep-out", "--wall-centre"].includes(a)) {
     passOn.push(a, a === "--audio" ? resolve(args[i + 1]) : args[i + 1]);
     i += 1;
   } else if (a === "--check") {
