@@ -106,6 +106,10 @@ describe("demo build stays inside its CSP", () => {
       expect(html, name).not.toMatch(/\sstyle\s*=/i);
       expect(html, name).not.toMatch(/\son[a-z]+\s*=/i);
       expect(html, name).not.toMatch(/data:/i);
+      // Stylesheets and module preloads come from the demo's own /assets/ only.
+      for (const [, attributes] of html.matchAll(/<link\b([^>]*)>/gi)) {
+        expect(attributes, name).toMatch(/\bhref="\/assets\/[^"]+"/);
+      }
     }
     for (const sheet of css) {
       expect(sheet).not.toMatch(/url\(\s*["']?data:/i);

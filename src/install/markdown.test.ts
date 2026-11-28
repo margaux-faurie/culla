@@ -13,7 +13,7 @@ import {
   resolveHref,
   slug,
 } from "./markdown";
-import { isSelfHosted, STATUS } from "./status";
+import { isReleaseUrl, isSelfHosted, STATUS } from "./status";
 
 /** Every piece of text in the blocks, to look for Markdown left unread. */
 function allText(blocks: readonly Block[]): string[] {
@@ -195,6 +195,27 @@ describe("the install guide on the web (docs/install.md)", () => {
   it("offers no installer download before the first release", () => {
     expect(STATUS.release).toBeNull();
     expect(linkHrefs(guide.body).some((href) => /\.(exe|msi)$/i.test(href))).toBe(false);
+  });
+});
+
+describe("isReleaseUrl", () => {
+  it("accepts only the project's GitHub Releases pages", () => {
+    expect(isReleaseUrl("https://github.com/margaux-faurie/culla/releases/tag/v1.0.0")).toBe(true);
+    expect(
+      isReleaseUrl("https://github.com/margaux-faurie/culla/releases/download/v1.0.0/x.exe"),
+    ).toBe(true);
+    expect(isReleaseUrl("http://github.com/margaux-faurie/culla/releases/tag/v1.0.0")).toBe(false);
+    expect(isReleaseUrl("https://github.com/someone/culla/releases/tag/v1.0.0")).toBe(false);
+    expect(isReleaseUrl("https://github.com.evil.org/margaux-faurie/culla/releases/")).toBe(false);
+    expect(isReleaseUrl("https://github.com/margaux-faurie/culla/releases/../../../x")).toBe(false);
+    expect(isReleaseUrl("https://github.com/margaux-faurie/culla/releases\\x")).toBe(false);
+    expect(isReleaseUrl("/releases/")).toBe(false);
+  });
+
+  it("holds for the release in STATUS, if any", () => {
+    if (STATUS.release !== null) {
+      expect(isReleaseUrl(STATUS.release.url)).toBe(true);
+    }
   });
 });
 

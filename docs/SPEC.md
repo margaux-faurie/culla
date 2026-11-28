@@ -59,11 +59,8 @@ A Windows desktop app that culls a folder of Nikon photos (JPEG + NEF) one photo
 | Where photos go | Shown as one route, the same on the start, swipe, review and apply screens: the origin, then a Kept branch (move or copy, destination, one real example path with its JPEG, NEF and edit files), a Rejected branch (`<source>\_rejected\…` written literally, marked as a new folder only while `_rejected\` doesn't exist yet, "nothing is deleted") and "undecided photos stay where they are". The example path follows the "RAW follows JPEG" toggle (when off, the NEF and its sidecars stay at the origin, ADR 0023) and shows copy for camera-protected files. The swipe screen shows where the current photo would go under each button; on an already decided photo it shows where the photo will go without implying the arrows act (ADR 0006). Full folder trees and the per-file list are one click away on review. Button placement is still open (NFR-A11Y-02) (decided 27 Nov 2026; design canvas linked in §5.6) |
 | Keyboard layouts | By the letter: letters and Ctrl shortcuts match the character on the key (`KeyboardEvent.key`, case-insensitive), so Z and Ctrl+Z stay on the Z key on AZERTY and QWERTZ; arrows, Space, Enter and Esc match by position (`KeyboardEvent.code`); `?` by character. Hints show the key as labelled (decided 27 Nov 2026, §4.1) |
 | Web demo hosting | `culla.margauxfaurie.com`, Cloudflare Workers static assets; same Cloudflare Access policy as the rest of the site until the portfolio goes public; the repository itself stays public (decided 27 Nov 2026) |
-<<<<<<< HEAD
 | Videos and install guide | The videos and the download and install guide go on the page at `culla.margauxfaurie.com` (decided 28 Nov 2026). How the page is built and what it shows meanwhile are proposals (§10, videos) |
-=======
 | Web demo deployment | Worker `culla`, built and deployed by Workers Builds from `main` on every push (config in `wrangler.jsonc`, headers in `public-demo/_headers`); custom domain `culla.margauxfaurie.com`; Cloudflare Access on; no preview URLs needed; Margaux sets the build command in the dashboard (decided by Margaux 27 Nov 2026). Proposed by the agent, to confirm (§10): workers.dev off, no builds for non-production branches, and `wrangler.jsonc` and `public-demo/_headers` treated as CI under the review and merge rule. Settings in [deploy-demo.md](deploy-demo.md) |
->>>>>>> origin/main
 | Subfolders | Included (recursive scan) |
 | Volume | Thousands of photos, often on SD card or external drive |
 | v1 extras | Zoom to 100%, EXIF overlay, resume a session later |
@@ -188,12 +185,8 @@ A Tauri async **custom URI scheme** (`culla://preview/<id>`, which appears as `h
 ### 5.5 Web demo
 - About 25 author photos at 1600 px long edge in AVIF/WebP (~5 MB in total), with EXIF pre-extracted to JSON. Apply is simulated, and the review screen shows the plan it would have run.
 - An optional "your folder" mode uses `<input webkitdirectory>`. It is read-only, works in every browser, and nothing is uploaded.
-<<<<<<< HEAD
-- Hosted on Cloudflare Workers static assets at `culla.margauxfaurie.com`, behind the site's Cloudflare Access policy until the portfolio is public (§2).
-- A download and install page at `/install` (`install.html`, demo build only) renders [install.md](install.md) through a small Markdown reader (`src/install/`), so the guide has one source, and holds the two videos once they exist (§2, decided 28 Nov 2026; [videos.md](videos.md)).
-=======
 - Hosted on Cloudflare Workers static assets at `culla.margauxfaurie.com` (Worker `culla`, Workers Builds), behind the site's Cloudflare Access policy until the portfolio is public (§2). Settings and headers: [deploy-demo.md](deploy-demo.md).
->>>>>>> origin/main
+- A download and install page at `/install` (`install.html`, demo build only) renders [install.md](install.md) through a small Markdown reader (`src/install/`), so the guide has one source, and holds the two videos once they exist (§2, decided 28 Nov 2026; [videos.md](videos.md)).
 
 ### 5.6 Visual design
 Screen designs (start, swipe, already decided, review, apply) live on the design canvas https://claude.ai/artifact/CfDZRFBUCphPgXVKmTxSWh, reworked on 27 Nov 2026 after research on import tools, culling apps and plan visualisation. Culla follows the **Portfolio Design System** (https://claude.ai/artifact/WvPpsmsFesTQ7nHuMbJLms), so the app, the demo and margauxfaurie.com look like one family. In practice:

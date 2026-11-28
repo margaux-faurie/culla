@@ -4,8 +4,8 @@
 # header set by two matching rules is joined with a comma, so each header is set by one rule.
 #
 # CSP: the demo loads only its own module script and stylesheet from /assets/ (no inline
-# script or style, no images, fonts or fetches yet). tests/demo-site.test.ts fails if the built
-# index.html gains an inline script or style. Widen a directive only when a feature needs it:
+# script or style, no images, fonts or fetches yet). tests/demo-site.test.ts fails if a built page
+# (index.html, install.html) gains an inline script or style. Widen a directive only when a feature needs it:
 # img-src gets blob: with the "your folder" mode, font-src stays 'self' (fonts are self-hosted).
 # Cloudflare features that inject scripts (Rocket Loader, email obfuscation, Web Analytics
 # auto-injection, Zaraz, Bot Fight Mode JS detections) stay off for this hostname: the CSP

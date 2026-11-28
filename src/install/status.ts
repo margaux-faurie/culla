@@ -47,6 +47,24 @@ const SELF = "https://self.invalid";
  * read a backslash as a slash (`/\evil.com` is `//evil.com`), so any backslash is refused, and
  * the path must still resolve to the page's own origin.
  */
+const RELEASES = "https://github.com/margaux-faurie/culla/releases/";
+
+/** True for a page under the project's GitHub Releases, the only place the page links a download to. */
+export function isReleaseUrl(url: string): boolean {
+  if (!url.startsWith(RELEASES) || url.includes("\\")) {
+    return false;
+  }
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.origin === "https://github.com" &&
+      parsed.pathname.startsWith("/margaux-faurie/culla/releases/")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function isSelfHosted(path: string): boolean {
   if (!path.startsWith("/") || path.includes("\\")) {
     return false;

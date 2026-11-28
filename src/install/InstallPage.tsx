@@ -1,7 +1,7 @@
 import installGuide from "../../docs/install.md?raw";
 import { guideForWeb } from "./guide";
 import { MarkdownBlocks } from "./MarkdownView";
-import { isSelfHosted, STATUS, type Video } from "./status";
+import { isReleaseUrl, isSelfHosted, STATUS, type Video } from "./status";
 
 const guide = guideForWeb(installGuide);
 
@@ -24,7 +24,7 @@ export function InstallPage() {
         {guide.title !== null && <MarkdownBlocks blocks={[guide.title]} />}
 
         <section className="doc-status" aria-label="Download">
-          {release === null ? (
+          {release === null || !isReleaseUrl(release.url) ? (
             <p className="doc-status-line">
               <strong>There is no release yet.</strong> Culla is still being built, so there is
               nothing to download. The guide below shows how installing will work once the first
