@@ -388,6 +388,44 @@ describe("demo backend", () => {
       expect(resumed.events).toHaveLength(3);
     });
 
+    it("a closed plan that applied nothing gives the folder no applied day", async () => {
+      const storage = memoryStorage();
+      const clock = { t: 0 };
+      // The destination fills up during the first copy: the run pauses with nothing applied.
+      const first = createBackend({ ...options(storage, clock), scenario: "disk-full" });
+      const sourceId = (await first.chooseSource())?.id ?? "";
+      const session = await first.startSession({ sourceId, includeSubfolders: true });
+      await first.recordEvent(session.id, keep(1, 1));
+      await first.updateSession(session.id, { keepMode: "move", destinationId: "dst-selects" });
+      const plan = await first.reviewPlan(session.id, 1);
+      const confirmed = await first.confirmPlan(plan.planId);
+      const planId = confirmed.kind === "confirmed" ? confirmed.planId : "";
+      await first.startApply(planId);
+      let status = await first.applyStatus(planId);
+      for (let i = 0; i < 100 && status.state.kind !== "paused"; i += 1) {
+        clock.t += 100;
+        status = await first.applyStatus(planId);
+      }
+      expect(status.state.kind === "paused" && status.state.reason).toBe("diskFull");
+      // From the pause, Stop ends the run at once.
+      status = await first.stopApply(planId);
+      for (let i = 0; i < 100 && status.state.kind !== "ended"; i += 1) {
+        clock.t += 100;
+        status = await first.applyStatus(planId);
+      }
+      const states = status.report?.groups.flatMap((g) => g.files.map((f) => f.state)) ?? [];
+      expect(states.length > 0 && states.every((st) => st === "failed" || st === "pending")).toBe(
+        true,
+      );
+      await first.closeApply(planId);
+
+      const again = createBackend({ storage });
+      const resumed = await again.startSession({ sourceId, includeSubfolders: true });
+      await again.startOver(resumed.id);
+      // Nothing was ever applied: the folder is new again, with no "Applied <day>".
+      expect((await again.chooseSource())?.status).toEqual({ kind: "new" });
+    });
+
     it("stores only what plans applied, never a scenario's seeded facts", async () => {
       const storage = memoryStorage();
       // `held` seeds MGF_7002 as applied by an earlier plan.

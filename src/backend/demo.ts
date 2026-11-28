@@ -875,7 +875,8 @@ export function createBackend(options: DemoOptions = {}): Backend {
       }
       // The plan's applied groups are locked for good (§5.4); a new plan holds them as applied
       // and sees the files where they now are.
-      for (const name of appliedNames(sim)) session.appliedByPlans.add(name);
+      const appliedNow = appliedNames(sim);
+      for (const name of appliedNow) session.appliedByPlans.add(name);
       const applied = new Set([...session.facts.applied, ...session.appliedByPlans]);
       session.facts = { ...session.facts, applied };
       for (const f of sim.files) {
@@ -884,7 +885,9 @@ export function createBackend(options: DemoOptions = {}): Backend {
       }
       session.confirmed = null;
       session.latest = null;
-      session.appliedOn = appliedDay(wall());
+      // Only a plan that applied something dates the folder: one stopped before its first file
+      // leaves the day as it was.
+      if (appliedNow.length > 0) session.appliedOn = appliedDay(wall());
       // A stopped apply, or a failed or held group, leaves decided photos unapplied: the folder
       // stays open to resume, so none of those decisions is dropped unasked (proposed, SPEC §10).
       session.open = openAfterApply(
