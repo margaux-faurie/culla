@@ -5,8 +5,10 @@
 //! lists folders (`scan`), reads files (`metadata`: EXIF and NEF previews), turns JPEG bytes
 //! into screen previews in memory (`preview`), runs them on reader threads and decode workers
 //! with prefetch and an in-memory cache (`pipeline`) and makes read-only Win32 lookups
-//! (`winfs`: a folder's volume identity, the PC's UTC offset).
+//! (`winfs`: a folder's volume identity, the PC's UTC offset), and makes the read-only lookups
+//! of a dry-run plan and preflight (`facts`).
 
+pub mod facts;
 pub mod metadata;
 pub mod pipeline;
 pub mod preview;

@@ -206,12 +206,17 @@ test.describe("swipe screen (US-22 to US-32, US-42)", () => {
     await expect(page.getByRole("main", { name: "Sort photos" })).toBeFocused();
   });
 
-  test("Enter opens the review stand-in and Esc comes back", async ({ page }) => {
+  test("Enter opens the review and Esc comes back", async ({ page }) => {
     await startSorting(page);
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("heading", { level: 1, name: "Review" })).toBeVisible();
-    await expect(page.getByText("1 kept, 0 rejected, 23 undecided")).toBeVisible();
+    const heading = page.getByRole("heading", {
+      level: 1,
+      name: "Check where your photos will go",
+    });
+    await expect(heading).toBeFocused();
+    await expect(page.getByText("1 kept · moved")).toBeVisible();
+    await expect(page.getByText("23 undecided · stay where they are")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("main", { name: "Sort photos" })).toBeFocused();
     await expect(tally(page, "kept")).toHaveText("1 kept");
@@ -235,7 +240,10 @@ test.describe("swipe screen (US-22 to US-32, US-42)", () => {
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("Shift+ArrowLeft");
     await page.keyboard.press("ArrowRight");
-    await expect(page.locator(".toast")).toBeVisible();
+    const toast = page.locator(".toast");
+    await expect(toast).toBeVisible();
+    // axe checks the toast at its final state, not mid fade-in (blockingViolations waits too).
+    await expect(toast).toHaveCSS("opacity", "1");
     expect(await blockingViolations(page)).toEqual([]);
   });
 });

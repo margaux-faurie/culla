@@ -17,6 +17,10 @@ export interface RouteViewProps {
   readonly originControls?: ReactNode;
   /** Controls placed in the Kept branch (moved or copied, destination). */
   readonly keepControls?: ReactNode;
+  /** The review's counts, folders and photos under each branch (US-34). */
+  readonly keptDetails?: ReactNode;
+  readonly rejectedDetails?: ReactNode;
+  readonly undecidedDetails?: ReactNode;
 }
 
 /**
@@ -58,6 +62,7 @@ export function RouteView(props: RouteViewProps) {
               mode={keepMode}
             />
           )}
+          {props.keptDetails}
         </div>
       </li>
 
@@ -82,6 +87,7 @@ export function RouteView(props: RouteViewProps) {
           {example !== null && (
             <Example example={example} to={example.route.rejectedTo} mode="move" />
           )}
+          {props.rejectedDetails}
         </div>
       </li>
 
@@ -90,6 +96,7 @@ export function RouteView(props: RouteViewProps) {
         <div className="route-body">
           <span className="route-label route-label-muted">Photos you don't decide</span>
           <span className="route-note">Stay exactly where they are.</span>
+          {props.undecidedDetails}
         </div>
       </li>
     </ol>

@@ -1,13 +1,15 @@
 //! `culla`: headless Culla (ADR 0020). Wiring only: every read goes through
 //! `culla-adapters`, every rule is in `culla-core`. Nothing is written anywhere but stdout and
-//! stderr; `plan`, `apply` and `resume` come with M2.
+//! stderr; `plan` is a dry run, `apply` and `resume` come later in M2.
 //!
 //! Exit codes (provisional, SPEC §10): 0 done, 1 usage error, 2 the folder is refused, 3 the
-//! folder cannot be read.
+//! folder (or the decision log) cannot be read, 4 the decision log is not valid, 5 no plan can
+//! be built.
 
 mod args;
 mod json;
 mod labels;
+mod plan;
 mod preview;
 mod scan;
 mod text;
@@ -25,8 +27,12 @@ const EXIT_USAGE: u8 = 1;
 /// Exit code: the folder is refused (link, placeholder, not a folder, too large, unsupported
 /// path or volume).
 const EXIT_REFUSED: u8 = 2;
-/// Exit code: the folder cannot be read.
+/// Exit code: the folder, or the decision log, cannot be read.
 const EXIT_IO: u8 = 3;
+/// Exit code: the decision log is not valid (`plan`).
+const EXIT_LOG_INVALID: u8 = 4;
+/// Exit code: no plan can be built, such as kept photos with no destination (`plan`).
+const EXIT_NO_PLAN: u8 = 5;
 
 fn main() -> ExitCode {
     ExitCode::from(run())
@@ -77,6 +83,32 @@ fn run() -> u8 {
                     let _ = writeln!(io::stderr(), "culla: {shown}: {why}");
                     EXIT_IO
                 }
+            }
+        }
+        Command::Plan(a) => {
+            let shown = text::shown(&a.folder.to_string_lossy()).into_owned();
+            let log = text::shown(&a.decisions.to_string_lossy()).into_owned();
+            let fail = |code: u8, what: &str, why: &str| {
+                let _ = writeln!(io::stderr(), "culla: {what}: {}", text::shown(why));
+                code
+            };
+            match plan::run(&a, &mut Progress::stderr()) {
+                Ok(report) => {
+                    if a.json {
+                        let mut s = plan::to_json(&report).to_pretty();
+                        s.push('\n');
+                        out(&s)
+                    } else {
+                        out(&plan::render(&report))
+                    }
+                }
+                Err(plan::PlanFailure::Scan(Failure::Refused(why))) => {
+                    fail(EXIT_REFUSED, &shown, &why)
+                }
+                Err(plan::PlanFailure::Scan(Failure::Io(why))) => fail(EXIT_IO, &shown, &why),
+                Err(plan::PlanFailure::LogUnreadable(why)) => fail(EXIT_IO, &log, &why),
+                Err(plan::PlanFailure::LogInvalid(why)) => fail(EXIT_LOG_INVALID, &log, &why),
+                Err(plan::PlanFailure::NoPlan(why)) => fail(EXIT_NO_PLAN, &shown, &why),
             }
         }
     }

@@ -1,8 +1,19 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page } from "@playwright/test";
 
-/** Serious and critical axe violations on the page as it is now (NFR-A11Y, testing.md §2). */
+/**
+ * Waits until every running CSS animation on the page has finished, so axe sees the final state
+ * and not a frame mid-fade (the toast fades in over 160 ms; at partial opacity its text fails
+ * color-contrast). An animation cancelled by an unmount counts as settled.
+ */
+export async function animationsSettled(page: Page) {
+  // A string, so the e2e tsconfig needs no DOM types; Playwright awaits the promise it gives.
+  await page.evaluate("Promise.allSettled(document.getAnimations().map((a) => a.finished))");
+}
+
+/** Serious and critical axe violations once animations have settled (NFR-A11Y, testing.md §2). */
 export async function blockingViolations(page: Page) {
+  await animationsSettled(page);
   const results = await new AxeBuilder({ page }).analyze();
   return results.violations
     .filter((v) => v.impact === "serious" || v.impact === "critical")
