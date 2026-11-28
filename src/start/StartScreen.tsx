@@ -27,6 +27,11 @@ type Details =
   | { readonly kind: "ready"; readonly value: SourceDetails }
   | { readonly kind: "failed" };
 
+type LastDetails = { readonly sourceId: string; readonly value: SourceDetails };
+
+/** The alert shown when describing the folder fails; cleared once a later describe succeeds. */
+const READ_FAILED = "Could not read this folder.";
+
 /**
  * Start (SPEC §4.2, US-21, US-44): pick the folder, the options and the destination on one screen,
  * with the route view showing where kept and rejected photos go as the options are set. Move or
@@ -39,6 +44,9 @@ export function StartScreen({ onStarted }: StartScreenProps) {
   const [recents, setRecents] = useState<Recents>({ kind: "loading" });
   const [source, setSource] = useState<SourceSummary | null>(null);
   const [details, setDetails] = useState<Details>({ kind: "none" });
+  // The last details read for a source, kept while they load again after a subfolder toggle, so
+  // the rejected folder and its "new folder" mark do not flash.
+  const [lastDetails, setLastDetails] = useState<LastDetails | null>(null);
   const [example, setExample] = useState<RouteExample | null>(null);
   const [includeSubfolders, setIncludeSubfolders] = useState(true);
   const [rawFollows, setRawFollows] = useState(true);
@@ -113,11 +121,18 @@ export function StartScreen({ onStarted }: StartScreenProps) {
     let active = true;
     setDetails({ kind: "loading" });
     backend.describeSource(sourceId, includeSubfolders).then(
-      (value) => active && setDetails({ kind: "ready", value }),
+      (value) => {
+        if (active) {
+          setDetails({ kind: "ready", value });
+          setLastDetails({ sourceId, value });
+          // A folder read that failed before (toggling subfolders, say) no longer applies.
+          setError((shown) => (shown === READ_FAILED ? null : shown));
+        }
+      },
       (cause: unknown) => {
         if (active) {
           setDetails({ kind: "failed" });
-          failRef.current(cause, "Could not read this folder.");
+          failRef.current(cause, READ_FAILED);
         }
       },
     );
@@ -200,7 +215,12 @@ export function StartScreen({ onStarted }: StartScreenProps) {
     }
   };
 
-  const ready = details.kind === "ready" ? details.value : null;
+  const ready =
+    details.kind === "ready"
+      ? details.value
+      : details.kind === "loading" && lastDetails?.sourceId === sourceId
+        ? lastDetails.value
+        : null;
 
   return (
     <div className="start">
@@ -208,12 +228,15 @@ export function StartScreen({ onStarted }: StartScreenProps) {
         <span className="brand">Culla</span>
       </header>
       <main className="start-main">
-        {notReady && (
-          <output className="notice">
-            Not ready yet. Sorting in the app arrives with its next versions; the web demo shows how
-            it will work.
-          </output>
-        )}
+        {/* Mounted from the start and filled later, so screen readers announce it. */}
+        <output className="notice">
+          {notReady && (
+            <span>
+              Not ready yet. Sorting in the app arrives with its next versions; the web demo shows
+              how it will work.
+            </span>
+          )}
+        </output>
         <section className="start-pick" aria-labelledby="start-title">
           <h1 id="start-title" className="title">
             What do you want to sort?
@@ -222,7 +245,14 @@ export function StartScreen({ onStarted }: StartScreenProps) {
             Choose a folder
           </button>
           <h2 className="subtitle">Recent folders</h2>
-          <RecentList recents={recents} selectedId={sourceId} onSelect={setSource} />
+          <RecentList
+            recents={recents}
+            selectedId={sourceId}
+            onSelect={(picked) => {
+              setError(null);
+              setSource(picked);
+            }}
+          />
         </section>
 
         <section className="panel" aria-labelledby="route-title">

@@ -209,6 +209,11 @@ kbd {
   font-weight: 600;
 }
 
+/* Empty, it stays mounted (so filling it is announced) but out of the flex layout and its gap. */
+.notice:empty {
+  position: absolute;
+}
+
 .start-pick {
   display: flex;
   flex: 1 1 320px;

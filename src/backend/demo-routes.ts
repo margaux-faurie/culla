@@ -25,7 +25,11 @@ export interface DemoGroup {
   /** Extension of the NEF beside a JPEG primary, or null. */
   readonly raw: string | null;
   readonly sidecars: readonly Sidecar[];
-  readonly cameraProtected: boolean;
+  /**
+   * Everything after the stem of each file the camera marked read-only ("protect"), as on disk:
+   * `.JPG`, `.NEF`. Empty for most groups.
+   */
+  readonly readOnly: readonly string[];
 }
 
 /** Joins a display folder (`E:\2026`) and relative segments with `\`, as Windows shows them. */
@@ -72,13 +76,24 @@ export const kindOf = (group: DemoGroup): string =>
 
 export const rejectedRoot = (sourcePath: string): string => joinPath(sourcePath, ["_rejected"]);
 
+/**
+ * Camera-protected under these options: a file that goes with the decision is read-only, as in the
+ * core's plan. A read-only NEF that stays because RAW does not follow protects nothing.
+ */
+export function isProtected(group: DemoGroup, rawFollows: boolean): boolean {
+  return filesOf(group, rawFollows).going.some((name) =>
+    group.readOnly.includes(name.slice(group.name.length)),
+  );
+}
+
 export type Verb = "moved" | "copied";
 
 /** A camera-protected group is copied, never moved, for a keep and a reject alike (SPEC §2). */
-export const keepVerb = (mode: KeepMode, group: DemoGroup): Verb =>
-  mode === "copy" || group.cameraProtected ? "copied" : "moved";
+export const keepVerb = (mode: KeepMode, cameraProtected: boolean): Verb =>
+  mode === "copy" || cameraProtected ? "copied" : "moved";
 
-export const rejectVerb = (group: DemoGroup): Verb => (group.cameraProtected ? "copied" : "moved");
+export const rejectVerb = (cameraProtected: boolean): Verb =>
+  cameraProtected ? "copied" : "moved";
 
 export interface RouteOptions {
   readonly sourcePath: string;
@@ -89,26 +104,30 @@ export interface RouteOptions {
 }
 
 /** Where a kept group goes; the folder alone (no verb) until moved or copied is chosen. */
-function keptTo(group: DemoGroup, options: RouteOptions): string | null {
+function keptTo(group: DemoGroup, options: RouteOptions, cameraProtected: boolean): string | null {
   if (options.destinationPath === null) {
     return null;
   }
   const folder = joinPath(options.destinationPath, group.folder);
-  if (group.cameraProtected) {
+  if (cameraProtected) {
     return `copied to ${folder}`;
   }
-  return options.keepMode === null ? folder : `${keepVerb(options.keepMode, group)} to ${folder}`;
+  return options.keepMode === null
+    ? folder
+    : `${keepVerb(options.keepMode, cameraProtected)} to ${folder}`;
 }
 
 /** The display strings of one group's route under these options. */
 export function routeOf(group: DemoGroup, options: RouteOptions): PhotoRoute {
   const files = filesOf(group, options.rawFollows);
+  const cameraProtected = isProtected(group, options.rawFollows);
   return {
     folder: joinPath(options.sourcePath, group.folder),
     origin: joinPath(options.sourcePath, [...group.folder, group.name]),
     going: label(group, files.going),
     staying: files.staying.length === 0 ? null : label(group, files.staying),
-    keptTo: keptTo(group, options),
-    rejectedTo: `${rejectVerb(group)} to ${joinPath(rejectedRoot(options.sourcePath), group.folder)}`,
+    keptTo: keptTo(group, options, cameraProtected),
+    cameraProtected,
+    rejectedTo: `${rejectVerb(cameraProtected)} to ${joinPath(rejectedRoot(options.sourcePath), group.folder)}`,
   };
 }

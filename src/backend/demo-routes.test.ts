@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   type DemoGroup,
   filesOf,
+  isProtected,
   joinPath,
   keepVerb,
   kindOf,
@@ -19,7 +20,7 @@ const group = (extra: Partial<DemoGroup> = {}): DemoGroup => ({
     { suffix: ".xmp", follows: "raw" },
     { suffix: ".JPG.xmp", follows: "primary" },
   ],
-  cameraProtected: false,
+  readOnly: [],
   ...extra,
 });
 
@@ -80,16 +81,36 @@ describe("demo routes", () => {
   });
 
   it("copies camera-protected photos, for keeps and rejects", () => {
-    expect(keepVerb("move", group())).toBe("moved");
-    expect(keepVerb("copy", group())).toBe("copied");
-    expect(keepVerb("move", group({ cameraProtected: true }))).toBe("copied");
-    expect(rejectVerb(group())).toBe("moved");
-    expect(rejectVerb(group({ cameraProtected: true }))).toBe("copied");
+    expect(keepVerb("move", false)).toBe("moved");
+    expect(keepVerb("copy", false)).toBe("copied");
+    expect(keepVerb("move", true)).toBe("copied");
+    expect(rejectVerb(false)).toBe("moved");
+    expect(rejectVerb(true)).toBe("copied");
+    const route = routeOf(group({ readOnly: [".JPG", ".NEF"] }), options);
+    expect(route.cameraProtected).toBe(true);
+    expect(route.keptTo).toBe("copied to D:\\Selects\\Barcelona");
+    expect(route.rejectedTo).toBe("copied to E:\\2026\\_rejected\\Barcelona");
+  });
+
+  it("is camera-protected only when a file that goes is read-only, as in the core's plan", () => {
+    const rawOnly = group({ readOnly: [".NEF"] });
+    // RAW follows: the read-only NEF goes, so the group is copied.
+    expect(isProtected(rawOnly, true)).toBe(true);
+    expect(routeOf(rawOnly, options).keptTo).toBe("copied to D:\\Selects\\Barcelona");
+    // RAW stays: only the JPEG and its own sidecar go, and they are not read-only.
+    expect(isProtected(rawOnly, false)).toBe(false);
+    const stays = routeOf(rawOnly, { ...options, rawFollows: false });
+    expect(stays.cameraProtected).toBe(false);
+    expect(stays.keptTo).toBe("moved to D:\\Selects\\Barcelona");
+    expect(stays.rejectedTo).toBe("moved to E:\\2026\\_rejected\\Barcelona");
+    // A read-only sidecar that goes counts like any other file.
+    expect(isProtected(group({ readOnly: [".JPG.xmp"] }), false)).toBe(true);
+    expect(isProtected(group(), true)).toBe(false);
   });
 
   it("names no verb before moved or copied is chosen, and no folder before a destination", () => {
     expect(routeOf(group(), { ...options, keepMode: null }).keptTo).toBe("D:\\Selects\\Barcelona");
-    const protectedGroup = group({ cameraProtected: true });
+    const protectedGroup = group({ readOnly: [".JPG", ".NEF"] });
     expect(routeOf(protectedGroup, { ...options, keepMode: null }).keptTo).toBe(
       "copied to D:\\Selects\\Barcelona",
     );

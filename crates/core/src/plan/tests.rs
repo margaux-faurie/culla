@@ -660,6 +660,9 @@ const FOLDERS: &[&str] = &[
     "100NIKON",
     "101NIKON",
     "100NIKON/sub",
+    // A folder named like a suffixed target of `X.JPG` in `100NIKON`: the reservation of
+    // planned folders (§7.3) has to skip that suffix.
+    "100NIKON/X_1.JPG",
     "Été/Ünï",
     "a/b/c/d",
 ];
@@ -676,6 +679,14 @@ fn long_stem() -> String {
 fn random_tree(rng: &mut Rng) -> Vec<String> {
     let mut paths = Vec::new();
     let mut used = BTreeSet::new();
+    // Now and then `100NIKON/X.JPG` next to a photo in the folder `100NIKON/X_1.JPG`: once
+    // `X.JPG` is taken, suffix 1 would take the name of a planned folder.
+    if rng.chance(20) {
+        for (folder, stem) in [("100NIKON", "X"), ("100NIKON/X_1.JPG", "DSC_0001")] {
+            used.insert(fold(&format!("{folder}/{stem}")));
+            paths.push(format!("{folder}/{stem}.JPG"));
+        }
+    }
     for _ in 0..1 + rng.below(6) {
         let folder = *rng.pick(FOLDERS);
         let stem = if rng.chance(4) {
@@ -820,6 +831,20 @@ fn random_case(rng: &mut Rng) -> Case {
             }
         }
     }
+    // With `100NIKON/X` in the tree, its suffix-0 targets usually taken under both roots, so
+    // the folder reservation has a suffix to skip.
+    if let Some(g) = groups
+        .iter()
+        .find(|g| g.folder == ["100NIKON"] && fold(&g.stem) == fold("X"))
+        && rng.chance(75)
+    {
+        for m in &g.members {
+            let mut path: Vec<&str> = m.folder.iter().map(String::as_str).collect();
+            path.push(&m.name);
+            existing.add_file(Root::Dest, &path);
+            existing.add_file(Root::Rejected, &path);
+        }
+    }
     // Now and then every suffix of one member taken under both roots (NoFreeSuffix).
     if !groups.is_empty() && rng.chance(5) {
         let g = rng.pick(&groups);
@@ -921,7 +946,10 @@ fn member(g: &PlanGroup, id: MemberId) -> &PlanMember {
     g.members.iter().find(|m| m.id == id).unwrap()
 }
 
-fn check_invariants(c: &Case, p: &Plan, case: u64) {
+/// Checks every invariant; returns true when a planned group skipped a suffix only because
+/// a target would take the name of a planned folder (the folder reservation).
+fn check_invariants(c: &Case, p: &Plan, case: u64) -> bool {
+    let mut reserved_skipped = false;
     let by_id: BTreeMap<GroupId, &PlanGroup> = c.groups.iter().map(|g| (g.id, g)).collect();
     // Ords in sequence; rejects before keeps.
     for (i, o) in p.ops.iter().enumerate() {
@@ -1170,6 +1198,18 @@ fn check_invariants(c: &Case, p: &Plan, case: u64) {
             let paths = paths_for(n).unwrap();
             assert!(!invalid(&paths), "case {case}: suffix {n} invalid");
             assert!(clash(&paths), "case {case}: suffix {n} was free");
+            // Skipped for the reservation alone: no existing entry, earlier claim or clash
+            // within the group, only a planned folder.
+            let mut keys = BTreeSet::new();
+            let other = paths.iter().any(|p| {
+                let k = key(p);
+                c.existing.is_taken(root, p)
+                    || earlier.contains(&(root, k.clone()))
+                    || !keys.insert(k)
+            });
+            if !other {
+                reserved_skipped = true;
+            }
         }
     }
     // Missing members that would have moved are listed, for groups past the held checks.
@@ -1200,6 +1240,7 @@ fn check_invariants(c: &Case, p: &Plan, case: u64) {
         .map(|o| o.expected_size)
         .sum();
     assert_eq!((p.bytes_copy, p.bytes_xmove), (copy, xmove));
+    reserved_skipped
 }
 
 /// Missing members that would have moved had they been present (only their own presence
@@ -1238,7 +1279,9 @@ fn run_invariants(n: u64) -> BTreeMap<&'static str, u64> {
             continue;
         }
         let p = result.unwrap_or_else(|e| panic!("case {case}: {e}"));
-        check_invariants(&c, &p, case);
+        if check_invariants(&c, &p, case) {
+            count("reserved folder skipped");
+        }
         if c.settings.keep.is_none() && !p.ops.is_empty() {
             count("rejects without destination");
         }
@@ -1288,6 +1331,7 @@ fn prop_plan_invariants() {
         "ops",
         "suffix",
         "suffix > 1",
+        "reserved folder skipped",
         "protected",
         "missing",
         "ambiguous",

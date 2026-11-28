@@ -163,7 +163,7 @@ test.describe("swipe screen (US-22 to US-32, US-42)", () => {
     await page.getByRole("radio", { name: "Moved" }).check();
     await page.getByRole("button", { name: "Start sorting" }).click();
     const note = page.getByText(
-      "RAW and edit files do not follow: MGF_7001 .NEF stay in E:\\2026.",
+      "RAW and edit files do not follow: MGF_7001 .NEF stays in E:\\2026.",
     );
     await expect(note).toBeVisible();
     await page.keyboard.press("ArrowRight");

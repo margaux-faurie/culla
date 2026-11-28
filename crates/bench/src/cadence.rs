@@ -223,6 +223,13 @@ impl RampTracker {
         &self.blocks
     }
 
+    /// Whether the last, unfinished block is so far within budget: every advance shown and the
+    /// p95 of those advances within budget. True when it holds no advance yet.
+    #[must_use]
+    pub(crate) fn unfinished_within_budget(&self) -> bool {
+        self.failed == 0 && quantile(&self.current, 95).is_none_or(|p95| p95 <= self.ramp.budget_ms)
+    }
+
     /// The highest rate whose block passed with every block before it passing (B-10), `None`
     /// when the first block failed or none finished.
     #[must_use]
@@ -360,5 +367,29 @@ mod tests {
         assert!((b.p95_ms - 1.0).abs() < 1e-12);
         assert_eq!(t.blocks()[0].failed, 0);
         assert_eq!(t.sustained(), Some(1.0));
+    }
+
+    #[test]
+    fn judges_the_unfinished_block_so_far() {
+        let mut t = RampTracker::new(Ramp {
+            every: 4,
+            ..Ramp::DEFAULT
+        });
+        assert!(t.unfinished_within_budget());
+        for l in [1.0, 1.0, 1.0, 1.0] {
+            t.push(Some(l));
+        }
+        // The block closed: nothing pending.
+        assert!(t.unfinished_within_budget());
+        t.push(Some(1.0));
+        assert!(t.unfinished_within_budget());
+        t.push(Some(Ramp::DEFAULT.budget_ms + 1.0));
+        assert!(!t.unfinished_within_budget());
+        let mut t = RampTracker::new(Ramp {
+            every: 4,
+            ..Ramp::DEFAULT
+        });
+        t.push(None);
+        assert!(!t.unfinished_within_budget());
     }
 }
