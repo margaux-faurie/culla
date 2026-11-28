@@ -7,6 +7,7 @@ pub mod decisions;
 pub mod exif;
 pub mod grouping;
 pub mod ifd;
+pub mod journal;
 pub mod names;
 pub mod plan;
 pub mod prefetch;
