@@ -207,6 +207,8 @@ The name "Culla" and its logo are not covered by the licence; see [TRADEMARKS.md
 
 The Bricolage Grotesque typeface in `src/assets/fonts/` is © 2022 The Bricolage Grotesque Project Authors, licensed under the SIL Open Font License 1.1; see [its licence](src/assets/fonts/OFL.txt).
 
+The demo video and its poster in `public-demo/videos/` contain the author's photographs and are not covered by the GPL: © 2026 Margaux Faurie, all rights reserved; see [their notice](public-demo/videos/LICENSE.txt).
+
 ---
 
 Built by [Margaux Faurie](https://github.com/margaux-faurie), with Claude Code as a pair; the design docs double as notes for a future guide on building with agents.

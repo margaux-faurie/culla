@@ -35,7 +35,18 @@ export interface InstallStatus {
 
 export const STATUS: InstallStatus = {
   release: null,
-  demoVideo: null,
+  // Published by Margaux's decision of 28 Nov 2026 (v3 of the 30 s cut, no sound yet). The video
+  // and its poster hold her photographs: all rights reserved, not GPL (public-demo/videos/LICENSE.txt).
+  demoVideo: {
+    title: "Culla in 30 seconds",
+    src: "/videos/culla-demo.mp4",
+    type: "video/mp4",
+    poster: "/videos/culla-demo-poster.jpg",
+    captions: [
+      { lang: "en", label: "English", src: "/videos/culla-demo.en.vtt" },
+      { lang: "fr", label: "Français", src: "/videos/culla-demo.fr.vtt" },
+    ],
+  },
   installVideo: null,
 };
 

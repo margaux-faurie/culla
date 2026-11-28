@@ -78,10 +78,11 @@ function VideoBlock({
   }
   return (
     <figure className="doc-video">
-      {/* No autoplay; captions as WebVTT tracks, the first shown by default. */}
+      {/* No autoplay. Captions as WebVTT tracks, off by default: the video has no voice and its
+          text is on screen, so default captions would only repeat it (proposal, SPEC §10). */}
       <video controls preload="none" poster={video.poster} width={1920} height={1080}>
         <source src={video.src} type={video.type} />
-        <track kind="captions" srcLang={first.lang} label={first.label} src={first.src} default />
+        <track kind="captions" srcLang={first.lang} label={first.label} src={first.src} />
         {others.map((track) => (
           <track
             key={track.lang}

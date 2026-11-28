@@ -10,13 +10,16 @@ test.describe("download and install page (SPEC §2, docs/install.md)", () => {
     ).toBeVisible();
   });
 
-  test("says plainly that there is no release and no video yet", async ({ page }) => {
+  test("says plainly that there is no release, and shows the demo video", async ({ page }) => {
     await page.goto("/install");
     await expect(page.getByText("There is no release yet.")).toBeVisible();
-    await expect(
-      page.getByText("The demo video and the install video are not recorded yet."),
-    ).toBeVisible();
-    await expect(page.locator("video")).toHaveCount(0);
+    await expect(page.getByText("The install video is not recorded yet.")).toBeVisible();
+    // One self-hosted player, no autoplay, with English and French caption tracks.
+    const video = page.locator("video");
+    await expect(video).toHaveCount(1);
+    await expect(video).not.toHaveAttribute("autoplay", /.*/);
+    await expect(video.locator("source")).toHaveAttribute("src", "/videos/culla-demo.mp4");
+    await expect(video.locator("track")).toHaveCount(2);
     await expect(page.locator("iframe")).toHaveCount(0);
     await expect(page.locator('a[href$=".exe"], a[href$=".msi"]')).toHaveCount(0);
   });

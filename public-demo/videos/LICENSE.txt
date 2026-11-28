@@ -1,0 +1,7 @@
+The files in this folder (culla-demo.mp4, culla-demo-poster.jpg) contain photographs by
+Margaux Faurie. © 2026 Margaux Faurie. All rights reserved.
+
+They are not covered by the GPL-3.0-only licence of the Culla source code. You may watch them
+on the Culla demo site; you may not copy, modify, redistribute or reuse them, or extract the
+photographs, without written permission. The caption files (*.vtt) are under the repository's
+licence.
