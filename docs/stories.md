@@ -414,7 +414,7 @@ Links: NFR-REL-02 to NFR-REL-07, NFR-REL-09, NFR-REL-11, NFR-REL-12, NFR-REL-14,
 As a photographer, I want to resume a session or start fresh when I reopen a folder, including on another drive letter, so that I can cull a card over several sittings.
 
 - Given a folder culled before, then the start screen lists it under recent folders with its status: in progress with the number decided, or applied (US-44, SPEC §4.2).
-- Given a source with an active session and no open plan, when I open it, then I can resume it or start fresh (FE §6.1 step 4). **(proposed wording)** "Resume sorting" and "Start fresh", with the count decided so far.
+- Given a source with an active session and no open plan, when I open it, then I can resume it or start fresh (FE §6.1 step 4). **(proposed, SPEC §10 "Resume")** Opening it resumes at once; "Start over" in the swipe screen's header, after a confirm, starts fresh. The recent entry reads "In progress · n decided".
 - Given I resume, then every decision is restored, the undo and redo stacks are the same as before, and the list keeps its stored order with no re-sort (FE §5.3, US-06, NFR-REL-15). **(proposed)** The swipe screen opens on the first undecided photo in that order.
 - Given I resume, then the destination is restored and labelled "same as last time" (US-21), and moved or copied starts as last chosen, as for a new session; both can be changed on review (decided by Margaux 28 Nov 2026, ADR 0029). **(proposed)** "RAW follows JPEG" is restored as the session had it, and can be changed on review; subfolders are always included.
 - Given I start fresh, then the old session is archived with its events and journal kept, and every photo starts undecided (FE §6.1 step 4).

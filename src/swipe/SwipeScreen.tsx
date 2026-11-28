@@ -7,6 +7,7 @@ import { stayVerb } from "../route/staying";
 import { HelpDialog } from "./HelpDialog";
 import { type Command, commandFor } from "./keys";
 import { alreadyDecidedToast, decidedNote, keepLine } from "./route-text";
+import { StartOverDialog } from "./StartOverDialog";
 import {
   counts,
   currentPhoto,
@@ -25,6 +26,11 @@ export interface SwipeScreenProps {
   readonly onReview: () => void;
   /** Shown when autosave failed; the decision stays in the reducer either way. */
   readonly saveError: boolean;
+  /**
+   * "Start over" on a resumed session (US-37, proposed in SPEC §10): asks first, then puts the
+   * decisions aside. Absent on a new session.
+   */
+  readonly onStartOver?: (() => Promise<void>) | undefined;
 }
 
 /** How long a toast stays, and how long the exit card stays mounted (CSS animates within it). */
@@ -55,6 +61,7 @@ export function SwipeScreen(props: SwipeScreenProps) {
   const [zoomStatus, setZoomStatus] = useState("");
   const [zoomNote, setZoomNote] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [startOverOpen, setStartOverOpen] = useState(false);
   const byId = useMemo(() => new Map(session.photos.map((p) => [p.id, p])), [session.photos]);
   const photo = byId.get(currentPhoto(state) ?? "");
   const next = byId.get(state.photos[state.index + 1] ?? "");
@@ -277,7 +284,7 @@ export function SwipeScreen(props: SwipeScreenProps) {
   // every render.
   useEffect(() => {
     const root = rootRef.current;
-    if (helpOpen || root === null) {
+    if (helpOpen || startOverOpen || root === null) {
       return;
     }
     if (!root.contains(document.activeElement)) {
@@ -318,6 +325,15 @@ export function SwipeScreen(props: SwipeScreenProps) {
             <span className="muted">{folderPath}</span>
             <span className="visually-hidden">. </span>
             <span className="pill pill-quiet">No files have moved yet</span>
+            {props.onStartOver !== undefined && (
+              <button
+                type="button"
+                className="button button-quiet button-small"
+                onClick={() => setStartOverOpen(true)}
+              >
+                Start over
+              </button>
+            )}
           </div>
           <div className="swipe-tally">
             <span className="strong">
@@ -451,6 +467,14 @@ export function SwipeScreen(props: SwipeScreenProps) {
         <output className="visually-hidden">{zoomStatus}</output>
       </main>
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
+      {props.onStartOver !== undefined && (
+        <StartOverDialog
+          open={startOverOpen}
+          decided={tally.kept + tally.rejected}
+          onCancel={() => setStartOverOpen(false)}
+          onConfirm={props.onStartOver}
+        />
+      )}
     </>
   );
 }
@@ -660,5 +684,7 @@ function toastText(feedback: Feedback, byId: ReadonlyMap<string, SessionPhoto>):
       return "Nothing to redo.";
     case "no-undecided":
       return "No undecided photos left.";
+    case "resumed":
+      return `Picked up where you left off: ${feedback.decided} of ${feedback.total} photos decided.`;
   }
 }

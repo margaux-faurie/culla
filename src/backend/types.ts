@@ -20,8 +20,16 @@ export interface Backend {
    * Starts sorting a folder at once (SPEC §4.2, decided by Margaux 28 Nov 2026). The backend fills
    * in the rest without asking: "RAW follows JPEG" on, move or copy as last chosen, the destination
    * remembered for this folder or else the last one used. Either may be null the first time.
+   * A folder with a session in progress resumes it (US-37, proposed in SPEC §10 "Resume"): its
+   * stored events come back in `SessionInfo.events`, with "RAW follows JPEG" as it had it.
    */
   startSession(options: StartOptions): Promise<SessionInfo>;
+  /**
+   * "Start over" on a resumed session (US-37, FE §6.1 step 4): the session is archived with its
+   * events, and a new one starts on the same folder with every photo undecided. Refused while the
+   * session has a confirmed plan. Nothing on any disk changes.
+   */
+  startOver(sessionId: string): Promise<SessionInfo>;
   /**
    * Changes how the session applies (review screen): move or copy, the destination, "RAW follows
    * JPEG". Remembers move or copy and the destination for next time. Answers the session with
@@ -252,6 +260,10 @@ export interface SessionInfo {
   readonly photos: readonly SessionPhoto[];
   /** The photo the review's route view shows as its example, or null when there is none. */
   readonly exampleId: string | null;
+  /** The session was resumed: it existed before this start (US-37). */
+  readonly resumed: boolean;
+  /** The stored decision log, in order; empty for a new session. The UI folds it to resume. */
+  readonly events: readonly DecisionEvent[];
 }
 
 /**

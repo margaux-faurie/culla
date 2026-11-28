@@ -7,6 +7,7 @@ import type { DecisionEvent, GroupId, GroupState, Verdict } from "../decisions/e
 import {
   EMPTY,
   type Folded,
+  fold,
   groupOf,
   type Intent,
   nextSeq,
@@ -24,7 +25,9 @@ export type Feedback =
   /** ←/→, the buttons or a drag on a decided photo: shake and "Press U to undo" (ADR 0006). */
   | { readonly kind: "already-decided"; readonly photoId: string; readonly state: GroupState }
   | { readonly kind: Exclude<Refusal, "already-decided"> }
-  | { readonly kind: "no-undecided" };
+  | { readonly kind: "no-undecided" }
+  /** A session resumed from its stored log (US-37): how far it had got. */
+  | { readonly kind: "resumed"; readonly decided: number; readonly total: number };
 
 export interface SwipeState {
   /**
@@ -76,6 +79,33 @@ export function initialState(photos: readonly string[]): SwipeState {
     nonce: 0,
     announcement: "",
   };
+}
+
+/**
+ * A session resumed from its stored log (US-37): every decision and both undo stacks as they were,
+ * the list in its stored order, on the first undecided photo (proposed, SPEC §10), or the end card
+ * when none is left. The events are already in the backend, so nothing is saved again. A log that
+ * does not fold keeps the decisions before the bad event (the backend refuses such a log first).
+ */
+export function resumedState(
+  photos: readonly string[],
+  events: readonly DecisionEvent[],
+): SwipeState {
+  const { folded, corrupt } = fold(events);
+  const log = corrupt === undefined ? events : events.filter((e) => e.seq < corrupt.seq);
+  const start: SwipeState = { ...initialState(photos), log, folded };
+  if (log.length === 0) {
+    return start;
+  }
+  const first = photos.findIndex((_, i) => stateAt(start, i) === "undecided");
+  const index = first < 0 ? photos.length : first;
+  const tally = counts(start);
+  const resumed: Feedback = {
+    kind: "resumed",
+    decided: tally.kept + tally.rejected,
+    total: tally.total,
+  };
+  return { ...start, index, feedback: resumed, nonce: 1, announcement: announce(resumed) };
 }
 
 export const currentPhoto = (s: SwipeState): string | undefined => s.photos[s.index];
@@ -302,5 +332,7 @@ function announce(value: Feedback): string {
       return "Nothing to redo";
     case "no-undecided":
       return "No undecided photos left";
+    case "resumed":
+      return `Sorting resumed: ${value.decided} of ${value.total} photos decided`;
   }
 }

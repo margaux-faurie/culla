@@ -261,4 +261,91 @@ describe("demo backend", () => {
     } as const;
     await expect(backend.recordEvent("nope", event)).rejects.toThrow();
   });
+
+  describe("resume (US-37)", () => {
+    const keep = (seq: number, group: number) =>
+      ({ seq, ts: seq, cause: "user", type: "decided", group_id: group, verdict: "keep" }) as const;
+
+    it("resumes a folder with a session in progress after a reload, RAW follows as it was", async () => {
+      const storage = memoryStorage();
+      const first = createBackend({ storage });
+      const sourceId = (await first.chooseSource())?.id ?? "";
+      const session = await first.startSession({ sourceId, includeSubfolders: true });
+      expect(session.resumed).toBe(false);
+      expect(session.events).toEqual([]);
+      await first.recordEvent(session.id, keep(1, 1));
+      await first.recordEvent(session.id, keep(2, 3));
+      await first.updateSession(session.id, { rawFollows: false });
+
+      const again = createBackend({ storage });
+      const recents = await again.recentSources();
+      expect(recents.map((s) => [s.name, s.status])).toEqual([
+        ["2026", { kind: "inProgress", decided: 2 }],
+        ["Alps", { kind: "applied", on: "12 Nov" }],
+        ["100NZ6_3", { kind: "inProgress", decided: 3 }],
+      ]);
+      expect((await again.chooseSource())?.status).toEqual({ kind: "inProgress", decided: 2 });
+      const resumed = await again.startSession({ sourceId, includeSubfolders: true });
+      expect(resumed.resumed).toBe(true);
+      expect(resumed.events).toEqual([keep(1, 1), keep(2, 3)]);
+      expect(resumed.options.rawFollows).toBe(false);
+      // Its decisions are the backend's too: a plan sees them.
+      const plan = await again
+        .updateSession(resumed.id, { keepMode: "move" })
+        .then(() => again.reviewPlan(resumed.id, 2));
+      expect(plan.counts.kept).toBe(2);
+    });
+
+    it("starts over: decisions put aside, a new session with every photo undecided", async () => {
+      const storage = memoryStorage();
+      const first = createBackend({ storage });
+      const sourceId = (await first.chooseSource())?.id ?? "";
+      const session = await first.startSession({ sourceId, includeSubfolders: true });
+      await first.recordEvent(session.id, keep(1, 1));
+      const again = createBackend({ storage });
+      const resumed = await again.startSession({ sourceId, includeSubfolders: true });
+      const fresh = await again.startOver(resumed.id);
+      expect(fresh.id === resumed.id).toBe(false);
+      expect(fresh.resumed).toBe(false);
+      expect(fresh.events).toEqual([]);
+      expect(fresh.options.rawFollows).toBe(true);
+      // The old session records nothing more, and a reload starts the folder new.
+      await expect(again.recordEvent(resumed.id, keep(2, 2))).rejects.toThrow();
+      const third = createBackend({ storage });
+      expect((await third.recentSources()).map((s) => s.name)).toEqual(["Alps", "100NZ6_3"]);
+      expect((await third.chooseSource())?.status).toEqual({ kind: "new" });
+      expect((await third.startSession({ sourceId, includeSubfolders: true })).resumed).toBe(false);
+    });
+
+    it("a folder applied since its last decision shows as applied and starts fresh", async () => {
+      const storage = memoryStorage();
+      const wall = () => new Date(2026, 10, 28, 15);
+      const first = createBackend({ storage, wall, seed: { ...EMPTY_MEMORY, keepMode: "move" } });
+      const sourceId = (await first.chooseSource())?.id ?? "";
+      const session = await first.startSession({ sourceId, includeSubfolders: true });
+      await first.updateSession(session.id, { destinationId: "dst-selects" });
+      await first.recordEvent(session.id, keep(1, 1));
+      const plan = await first.reviewPlan(session.id, 1);
+      const confirmed = await first.confirmPlan(plan.planId);
+      const planId = confirmed.kind === "confirmed" ? confirmed.planId : "";
+      await first.startApply(planId);
+      let status = await first.applyStatus(planId);
+      for (let i = 0; i < 200 && status.state.kind !== "ended"; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        status = await first.applyStatus(planId);
+      }
+      expect(status.state.kind).toBe("ended");
+      await first.closeApply(planId);
+
+      const again = createBackend({ storage });
+      expect((await again.chooseSource())?.status).toEqual({ kind: "applied", on: "28 Nov" });
+      const next = await again.startSession({ sourceId, includeSubfolders: true });
+      expect(next.resumed).toBe(false);
+      // The applied photo is held back as applied in the new session's plan (INV-04).
+      await again.updateSession(next.id, { keepMode: "move" });
+      await again.recordEvent(next.id, keep(1, 1));
+      const replan = await again.reviewPlan(next.id, 1);
+      expect(replan.held.map((h) => h.reason)).toEqual(["applied"]);
+    });
+  });
 });
